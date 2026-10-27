@@ -1,0 +1,137 @@
+name: 업무 데스크 윈도우용 ZIP
+
+# 교사 업무 데스크를 "Python 설치 없이" 쓰는 윈도우용 ZIP 으로 만들고, 윈도우에서 실제로 켜 봅니다.
+# - PR: 만든 ZIP 을 Actions 실행 화면의 Artifacts 에 올림 (머지 전 시험용)
+# - main 반영: Releases 의 "desk-latest" 에 올림 → 선생님은 항상 같은 주소에서 받음
+
+on:
+  pull_request:
+    paths-ignore:
+      - '**.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pypdf==6.17.0
+      - name: 업무 데스크 시험
+        run: python -m unittest discover -s tests -t . -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 학생 공유 링크 시험
+        run: node --test tests/pass-codec.test.cjs
+
+  windows-zip:
+    needs: tests
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'  # 로그에 한글을 찍을 수 있게
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 만들 때 쓸 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 윈도우용 ZIP 만들기
+        run: python tools/build_portable.py --out dist
+
+      - name: 받은 사람처럼 압축 풀기
+        shell: pwsh
+        run: Expand-Archive dist/teacher-desk-windows.zip -DestinationPath check
+
+      - name: 들어 있는 Python 으로 시험 전체 실행
+        working-directory: check/TeacherDesk/teacher-desk
+        run: python\python.exe -X utf8 -m unittest discover -s tests -t . -v
+
+      - name: start-desk.bat 이 들어 있는 Python 을 찾는지 확인
+        working-directory: check/TeacherDesk/teacher-desk
+        shell: cmd
+        run: |
+          echo.| start-desk.bat --check > check.txt 2>&1
+          type check.txt
+          findstr /L /C:"Python 3.12" check.txt || exit /b 1
+          findstr /L /C:"TeacherDesk" check.txt || exit /b 1
+
+      - name: 업무 데스크를 켜서 화면이 열리는지 확인
+        working-directory: check/TeacherDesk/teacher-desk
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath python\python.exe -ArgumentList 'desk.py', '--no-browser' -PassThru -NoNewWindow
+          $ok = $false
+          for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8770/
+              $ok = $r.Content -match 'desk-token'
+            } catch {}
+          }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw '업무 데스크 화면이 열리지 않았습니다' }
+          Write-Host '화면 열림 확인'
+
+      - name: 바탕화면 바로 가기 만들기 확인
+        working-directory: check/TeacherDesk/teacher-desk
+        shell: pwsh
+        run: |
+          cmd /c "echo.| make-desktop-shortcut.bat"
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) '업무 데스크.lnk'
+          if (-not (Test-Path $lnk)) { throw '바로 가기가 만들어지지 않았습니다' }
+          # WScript.Shell 은 영어판 윈도우에서 한글 이름 파일을 못 열어 영문 이름 복사본으로 확인
+          $copy = Join-Path $env:RUNNER_TEMP 'shortcut-check.lnk'
+          Copy-Item -LiteralPath $lnk -Destination $copy -Force
+          $t = (New-Object -ComObject WScript.Shell).CreateShortcut($copy).TargetPath
+          Write-Host "바로 가기 → $t"
+          if ($t -notlike '*start-desk.bat') { throw '바로 가기 대상이 잘못되었습니다' }
+
+      - name: 업데이트 도구 확인 (프로그램만 바뀌고 자료·설정은 그대로)
+        working-directory: check/TeacherDesk/teacher-desk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force data | Out-Null
+          Set-Content data\keep.txt 'keep'
+          Set-Content config.json '{"school_name": "keep"}'
+          Remove-Item desk\coolmsg.py
+          $zip = Resolve-Path ../../../dist/teacher-desk-windows.zip
+          $env:DESK_UPDATE_URL = ([uri]$zip.Path).AbsoluteUri
+          cmd /c "update-desk.bat /y"
+          if ($LASTEXITCODE -ne 0) { throw '업데이트 실패' }
+          if (-not (Test-Path desk\coolmsg.py)) { throw '프로그램 파일이 바뀌지 않았습니다' }
+          if ((Get-Content data\keep.txt) -ne 'keep') { throw '자료가 지워졌습니다' }
+          if (-not ((Get-Content config.json -Raw) -match 'keep')) { throw '설정이 지워졌습니다' }
+          Write-Host '업데이트 확인'
+
+      - name: PR 시험용으로 올리기 (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: teacher-desk-windows
+          path: dist/teacher-desk-windows.zip
+          retention-days: 30
+
+      - name: 배포 (Releases 의 desk-latest)
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="교사 업무 데스크 윈도우용 (Python 설치 없이 사용). 커밋 ${GITHUB_SHA::7}. 압축을 풀고 TeacherDesk/START-HERE.txt 를 보세요."
+          if gh release view desk-latest > /dev/null 2>&1; then
+            gh release upload desk-latest dist/teacher-desk-windows.zip --clobber
+            gh release edit desk-latest --notes "$notes"
+          else
+            gh release create desk-latest dist/teacher-desk-windows.zip --title "교사 업무 데스크 (윈도우용)" --notes "$notes" --target "$GITHUB_SHA"
+          fi

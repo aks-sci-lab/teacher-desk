@@ -1,0 +1,13 @@
+{
+  "port": 8770,
+  "school_name": "○○고등학교",
+  "grade": "2",
+  "class_no": "3",
+  "teacher_name": "홍길동",
+  "coolmessenger_folder": "C:\\Users\\선생님\\Documents\\CoolMessenger",
+  "edufine_folder": "C:\\Users\\선생님\\Documents\\공문",
+  "collect_times": ["09:00", "12:00", "15:00"],
+  "pass_page_url": "https://aks-sci-lab.github.io/teacher-desk/",
+  "telegram_token": "",
+  "telegram_detail": "titles"
+}

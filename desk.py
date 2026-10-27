@@ -1,0 +1,89 @@
+"""교사 업무 데스크 실행 파일.
+
+  python desk.py                 업무 데스크 켜기 (브라우저가 자동으로 열림)
+  python desk.py --no-browser    브라우저를 열지 않고 켜기
+  python desk.py --collect       지금 한 번 수집하고 끝내기
+  python desk.py --diagnose cool 쿨메신저 폴더 구조 진단 (결과는 data/diagnose-cool.json)
+  python desk.py --check         실행 환경 확인만 하고 끝내기 (윈도우용 ZIP 시험에 씀)
+"""
+
+import argparse
+import importlib.util
+import json
+import sys
+
+from desk.collect import SOURCES, Collector, diagnose
+from desk.config import Config
+from desk.db import DB
+from desk.scheduler import Scheduler
+from desk.server import App, serve
+from desk.telegram import Bot
+
+
+def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):  # 윈도우 명령 창·파일 출력에서 한글 깨짐 방지
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    p = argparse.ArgumentParser(description="교사 업무 데스크")
+    p.add_argument("--config", help="설정 파일 경로 (기본: config.json)")
+    p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--collect", action="store_true", help="한 번 수집하고 끝내기")
+    p.add_argument("--diagnose", choices=sorted(SOURCES), help="폴더 구조 진단")
+    p.add_argument("--check", action="store_true", help="실행 환경 확인만 하고 끝내기")
+    args = p.parse_args(argv)
+
+    if args.check:
+        from desk import VERSION
+        pdf = importlib.util.find_spec("pypdf") is not None
+        print(f"업무 데스크 {VERSION} · Python {sys.version.split()[0]} ({sys.executable})")
+        print(f"PDF 읽기(pypdf): {'준비됨' if pdf else '없음'}")
+        return 0
+
+    config = Config(args.config)
+    db = DB(config.data_dir / "desk.db")
+
+    if args.diagnose:
+        folder = config[SOURCES[args.diagnose]]
+        if not folder:
+            print("⚙ 설정에서 폴더를 먼저 지정하세요.")
+            return 1
+        result = diagnose(folder)
+        out = config.data_dir / f"diagnose-{args.diagnose}.json"
+        out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"진단 결과를 저장했습니다: {out}")
+        print("이 파일에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 개발 담당에게 전달하세요.")
+        return 0
+
+    bot = Bot(db, config)
+    collector = Collector(db, config, notify=bot.notify_collect)
+    bot.collector = collector
+
+    if args.collect:
+        stats = collector.run("manual")
+        print(json.dumps({k: v for k, v in stats.items() if k != "new_ids"}, ensure_ascii=False, indent=2))
+        return 0
+
+    app = App(db, config, collector, bot)
+    try:
+        httpd = serve(app, open_browser=not args.no_browser)
+    except OSError:
+        print(f"{config['port']}번 포트를 쓸 수 없습니다. 업무 데스크가 이미 켜져 있는지 확인하세요.")
+        return 1
+    scheduler = Scheduler(db, config, collector)
+    scheduler.start()
+    bot.start()
+    db.log("업무 데스크 시작")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        scheduler.stop()
+        bot.stop()
+        httpd.server_close()
+        db.log("업무 데스크 종료")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

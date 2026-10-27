@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="desk-token" content="__DESK_TOKEN__">
+<title>교사 업무 데스크</title>
+<link rel="stylesheet" href="/css/desk.css">
+</head>
+<body>
+<div id="app" class="side-left">
+    <nav id="activity" aria-label="기능" data-region="① 활동 막대">
+        <div id="activity-top"></div>
+        <div id="activity-bottom"></div>
+    </nav>
+    <aside id="side" data-region="② 목록 패널">
+        <header id="side-head">
+            <h2 id="side-title"></h2>
+            <div id="side-actions"></div>
+        </header>
+        <div id="side-body"></div>
+    </aside>
+    <div class="splitter v" id="split-side" title="끌어서 너비 조절"></div>
+    <main id="main">
+        <div id="tabs" role="tablist" data-region="③ 탭 막대">
+            <button id="back" class="icon-btn" title="목록으로">←</button>
+            <div id="tab-list"></div>
+        </div>
+        <div id="editor" data-region="④ 작업 영역"></div>
+        <div class="splitter h" id="split-bottom" title="끌어서 높이 조절"></div>
+        <section id="bottom" data-region="⑤ 하단 패널">
+            <header><span>기록</span><button class="icon-btn" id="bottom-close" title="하단 패널 닫기">✕</button></header>
+            <div id="log"></div>
+        </section>
+    </main>
+</div>
+<footer id="statusbar" data-region="⑥ 상태 표시줄"></footer>
+<div id="toasts" aria-live="polite"></div>
+<div id="print-area" aria-hidden="true"></div>
+<script src="/pass/pass-codec.js"></script>
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

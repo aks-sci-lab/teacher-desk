@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>조퇴증·외출증</title>
+<style>
+:root {
+    --bg: #f3f4f6; --card: #ffffff; --ink: #111827; --muted: #6b7280; --line: #e5e7eb;
+    --early: #c2410c; --early-soft: #ffedd5; --out: #1d4ed8; --out-soft: #dbeafe;
+    --ok: #15803d; --ok-soft: #dcfce7; --bad: #b91c1c; --bad-soft: #fee2e2;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0b0f17; --card: #151b26; --ink: #f3f4f6; --muted: #9ca3af; --line: #273042;
+        --early: #fb923c; --early-soft: #3a2314; --out: #60a5fa; --out-soft: #172554;
+        --ok: #4ade80; --ok-soft: #12331f; --bad: #f87171; --bad-soft: #3b1414;
+    }
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+    font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    display: flex; align-items: flex-start; justify-content: center; padding: 16px;
+}
+.card {
+    width: 100%; max-width: 420px; background: var(--card); border-radius: 20px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; border: 1px solid var(--line);
+}
+.head { padding: 20px 20px 16px; color: #fff; background: var(--kind); position: relative; overflow: hidden; }
+.head .school { font-size: 14px; opacity: .9; }
+.head h1 { margin: 4px 0 0; font-size: 34px; letter-spacing: 6px; }
+/* 움직이는 줄무늬: 화면 캡처 재사용을 눈으로 구별하기 위함 */
+.head::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(120deg, rgba(255,255,255,.14) 0 14px, transparent 14px 28px);
+    animation: slide 2.4s linear infinite;
+}
+@keyframes slide { from { background-position: 0 0; } to { background-position: 64px 0; } }
+.status { display: flex; align-items: center; gap: 10px; padding: 14px 20px; font-weight: 700; font-size: 17px; }
+.status.ok { background: var(--ok-soft); color: var(--ok); }
+.status.bad { background: var(--bad-soft); color: var(--bad); }
+.status .dot { width: 12px; height: 12px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.status .clock { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 20px; }
+dl { margin: 0; padding: 8px 20px 4px; }
+.row { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+dt { color: var(--muted); flex: none; }
+dd { margin: 0; text-align: right; font-weight: 600; word-break: keep-all; }
+.name { font-size: 24px; }
+.foot { padding: 12px 20px 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.empty { padding: 32px 20px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<main class="card" id="card">
+    <div class="empty">링크를 읽는 중…</div>
+</main>
+<script src="pass-codec.js"></script>
+<script src="pass-view.js"></script>
+</body>
+</html>

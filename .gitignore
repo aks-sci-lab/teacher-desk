@@ -1,0 +1,17 @@
+# 이 PC 의 설정(텔레그램 토큰·나이스 인증키)과 자료(학생 명단·조퇴 기록·공문) — 절대 올리지 않음
+config.json
+data/
+
+# 윈도우용 ZIP 만들 때 생기는 것
+dist/
+python/
+lib/
+
+# Python·Node
+__pycache__/
+*.py[cod]
+node_modules/
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
