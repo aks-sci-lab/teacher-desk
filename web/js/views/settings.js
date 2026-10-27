@@ -30,6 +30,13 @@ function pathField(key, label, hint, purpose, placeholder = '') {
     return el('div.field', el('span', label), el('div.row', input, browse), hint && el('span.hint', hint));
 }
 
+// 켬/끔 칸 (저장할 때 collectForm 이 checked 를 읽음)
+function checkField(key, label, hint) {
+    const input = el('input', { type: 'checkbox', checked: !!store.settings[key] });
+    input.dataset.key = key;
+    return el('label.check', input, label, hint && el('span.hint', hint));
+}
+
 function section(title, ...children) {
     return el('section.card', { style: 'margin-bottom: 16px' }, el('h3', title), children);
 }
@@ -135,6 +142,8 @@ function renderSettings(pane, tab) {
             el('div.row', el('button.btn.small', { onclick: coolCheck }, '🔌 연결 확인')),
             coolBox),
         section('🔄 자동 수집',
+            checkField('watch_enabled', '👁 실시간 감시 (권장)',
+                '쿨메신저 쪽지 파일과 아래 폴더가 바뀌면 바로 읽습니다. 몇 초마다 파일의 바뀐 시각·크기만 확인하므로 PC 에 부담이 거의 없습니다.'),
             pathField('edufine_folder', '에듀파인 공문 저장 폴더', '에듀파인에서 공문을 저장하는 폴더', 'edufine', '예: C:\\Users\\선생님\\Documents\\공문'),
             el('div.row', el('button.btn.small', { onclick: diagnose('edufine') }, '폴더 확인')),
             pathField('coolmessenger_folder', '(선택) 쿨메신저 받은 파일 폴더', '쿨메신저로 받은 한글·PDF 파일이 저장되는 폴더. 비워 두면 쪽지만 읽습니다.', 'coolfolder'),
@@ -163,6 +172,10 @@ function renderSettings(pane, tab) {
             el('p.small', '달력 → 📥 학사일정 → 🏫 나이스 에서 학교를 골라 학사일정을 가져올 때 씁니다. 인증키는 교육정보 개방 포털(open.neis.go.kr)에 가입하면 무료로 받습니다.'),
             el('label.field', el('span', '나이스 인증키'), neisKey),
             s.neis_school && s.neis_school.name ? el('p.small', `고른 학교: ${s.neis_school.name}`) : null),
+        section('⬆ 업데이트',
+            checkField('auto_update', '켤 때 새 버전 확인',
+                '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
+            el('p.small.muted', `지금 버전: ${st.version || ''}`)),
         section('🔗 학생 공유 페이지',
             textField('pass_page_url', '공유 페이지 주소', '조퇴증·외출증 QR 이 가리키는 주소 (저장소의 pass/ 폴더가 배포된 곳)')),
         section('🧩 화면 배치',

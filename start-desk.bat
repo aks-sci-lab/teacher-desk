@@ -28,6 +28,8 @@ if not defined PY (
 
 echo  업무 데스크를 켭니다. 이 창을 닫으면 업무 데스크가 꺼집니다.
 "%PY%" desk.py %*
+rem 20 = 새 버전으로 바꾸는 중 (업데이트 창이 끝나면 업무 데스크를 다시 켬)
+if "%errorlevel%"=="20" exit /b 0
 if errorlevel 1 (
     echo.
     echo  [오류] 업무 데스크가 멈췄습니다. 이 창의 글을 사진으로 찍어 보내 주세요.

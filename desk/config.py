@@ -23,6 +23,11 @@ DEFAULTS = {
     "coolmessenger_path": "",      # (선택) .udb 파일 경로를 직접 지정하면 이름보다 우선
     "coolmessenger_folder": "",    # (선택) 쿨메신저가 받은 파일을 저장하는 폴더
     "edufine_folder": "",
+    # 실시간 감시 (쿨메신저 쪽지 파일·폴더가 바뀌면 바로 수집), 몇 초마다 살펴볼지
+    "watch_enabled": True,
+    "watch_interval": 20,
+    # 켤 때 새 버전 확인·자동 업데이트 (윈도우용 ZIP 설치본만)
+    "auto_update": True,
     # 하루 수집 시각
     "collect_times": ["09:00", "12:00", "15:00"],
     # 학생 공유용 공개 페이지 주소 (저장소의 pass/ 폴더가 배포된 곳)
@@ -46,7 +51,9 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
+    "watch_enabled", "auto_update",
 }
+BOOL_KEYS = {"watch_enabled", "auto_update"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)
@@ -95,7 +102,11 @@ class Config:
         for k, v in changes.items():
             if k not in EDITABLE_KEYS:
                 continue
-            if k == "collect_times":
+            if k in BOOL_KEYS:
+                if not isinstance(v, bool):
+                    raise ValueError(f"{k} 는 켬/끔이어야 합니다")
+                clean[k] = v
+            elif k == "collect_times":
                 clean[k] = normalize_times(v)
             elif k == "telegram_detail":
                 if v not in ("counts", "titles", "summary"):

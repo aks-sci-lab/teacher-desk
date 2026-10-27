@@ -119,6 +119,7 @@ class Collector:
     def __init__(self, db, config, notify=None):
         self.db, self.config, self.notify = db, config, notify
         self.lock = threading.Lock()
+        self.last_watch_errors = set()
 
     def run(self, reason="manual", slot_keys=()):
         if not self.lock.acquire(blocking=False):
@@ -137,12 +138,18 @@ class Collector:
                     scan_folder(self.db, source, folder, stats)
             self.db.execute("UPDATE runs SET finished_at = ?, stats = ? WHERE id = ?",
                             (now_str(), json.dumps(stats, ensure_ascii=False), run_id))
-            msg = f"수집({'예약' if reason == 'schedule' else '수동' if reason == 'manual' else reason}): " \
-                  f"새 항목 {stats['items']}건, 일정 {stats['events']}건(마감 {stats['deadlines']}건)"
+            label = {"schedule": "예약", "manual": "수동", "watch": "실시간", "telegram": "텔레그램"}.get(reason, reason)
+            msg = f"수집({label}): 새 항목 {stats['items']}건, 일정 {stats['events']}건(마감 {stats['deadlines']}건)"
             if not stats["sources"]:
                 msg += " — 수집할 폴더가 설정되지 않았습니다"
-            self.db.log(msg)
-            for err in stats["errors"][:20]:
+            # 실시간 감시는 자주 돌므로 새 자료가 있거나 처음 보는 문제일 때만 기록
+            errors = stats["errors"][:20]
+            if reason == "watch":
+                errors = [e for e in errors if e not in self.last_watch_errors]
+                self.last_watch_errors = set(stats["errors"])
+            if reason != "watch" or stats["items"] or errors:
+                self.db.log(msg)
+            for err in errors:
                 self.db.log(err, "warn")
             if self.notify:
                 try:

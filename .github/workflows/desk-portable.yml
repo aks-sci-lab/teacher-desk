@@ -115,6 +115,37 @@ jobs:
           if (-not ((Get-Content config.json -Raw) -match 'keep')) { throw '설정이 지워졌습니다' }
           Write-Host '업데이트 확인'
 
+      - name: 켤 때 자동 업데이트 확인 (새 버전 있음 → 바꾸고 끝냄 / 없음 → 바로 켬)
+        working-directory: check/TeacherDesk/teacher-desk
+        shell: pwsh
+        run: |
+          $zip = Resolve-Path ../../../dist/teacher-desk-windows.zip
+          Set-Content $env:RUNNER_TEMP\newer.json '{"version": "99.0.0"}'
+          Set-Content data\keep2.txt 'keep'
+          Remove-Item desk\watcher.py
+          $env:DESK_UPDATE_JSON = ([uri]"$env:RUNNER_TEMP\newer.json").AbsoluteUri
+          $env:DESK_UPDATE_URL = ([uri]$zip.Path).AbsoluteUri
+          $env:DESK_NO_RELAUNCH = '1'
+          $p = Start-Process -FilePath python\python.exe -ArgumentList 'desk.py', '--no-browser' -PassThru -NoNewWindow -Wait
+          if ($p.ExitCode -ne 20) { throw "새 버전이 있을 때 종료 코드가 20 이 아님: $($p.ExitCode)" }
+          for ($i = 0; $i -lt 60 -and -not (Test-Path desk\watcher.py); $i++) { Start-Sleep -Seconds 1 }
+          if (-not (Test-Path desk\watcher.py)) { Get-Content data\update.log -ErrorAction SilentlyContinue; throw '자동 업데이트가 파일을 바꾸지 못했습니다' }
+          if ((Get-Content data\keep2.txt) -ne 'keep') { throw '자동 업데이트가 자료를 지웠습니다' }
+          Get-Content data\update.log
+          # 같은 버전이면 업데이트 없이 바로 켜짐
+          $v = & python\python.exe -c "import desk; print(desk.VERSION)"
+          Set-Content $env:RUNNER_TEMP\same.json ('{"version": "' + $v + '"}')
+          $env:DESK_UPDATE_JSON = ([uri]"$env:RUNNER_TEMP\same.json").AbsoluteUri
+          $p = Start-Process -FilePath python\python.exe -ArgumentList 'desk.py', '--no-browser' -PassThru -NoNewWindow
+          $ok = $false
+          for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+            Start-Sleep -Seconds 1
+            try { $ok = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8770/).Content -match 'desk-token' } catch {}
+          }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw '최신 버전일 때 바로 켜지지 않았습니다' }
+          Write-Host '자동 업데이트 확인'
+
       - name: PR 시험용으로 올리기 (Artifacts)
         uses: actions/upload-artifact@v4
         with:
@@ -128,10 +159,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="교사 업무 데스크 윈도우용 (Python 설치 없이 사용). 커밋 ${GITHUB_SHA::7}. 압축을 풀고 TeacherDesk/START-HERE.txt 를 보세요."
-          if gh release view desk-latest > /dev/null 2>&1; then
-            gh release upload desk-latest dist/teacher-desk-windows.zip --clobber
-            gh release edit desk-latest --notes "$notes"
-          else
-            gh release create desk-latest dist/teacher-desk-windows.zip --title "교사 업무 데스크 (윈도우용)" --notes "$notes" --target "$GITHUB_SHA"
+          version=$(python -c "import desk; print(desk.VERSION)")
+          printf '{"version": "%s", "commit": "%s"}\n' "$version" "${GITHUB_SHA::7}" > dist/latest.json
+          notes="교사 업무 데스크 ${version} 윈도우용 (Python 설치 없이 사용). 커밋 ${GITHUB_SHA::7}. 압축을 풀고 TeacherDesk/START-HERE.txt 를 보세요."
+          if ! gh release view desk-latest > /dev/null 2>&1; then
+            gh release create desk-latest --title "교사 업무 데스크 (윈도우용)" --notes "$notes" --target "$GITHUB_SHA"
           fi
+          # ZIP 을 먼저 올린 뒤 latest.json (켤 때 확인하는 버전 번호) 을 올림 → 새 버전을 알리는 순간 ZIP 이 이미 있음
+          gh release upload desk-latest dist/teacher-desk-windows.zip --clobber
+          gh release upload desk-latest dist/latest.json --clobber
+          gh release edit desk-latest --notes "$notes"

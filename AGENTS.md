@@ -16,7 +16,7 @@
 
 | 경로 | 내용 |
 |---|---|
-| `desk.py`, `desk/` | 로컬 서버(Python 표준 라이브러리). `server.py` API, `extract.py` 날짜·마감, `docs.py`·`cfb.py` hwp/hwpx/pdf, `collect.py` 수집, `coolmsg.py` 쿨메신저 .udb, `schoolcal.py`·`xlsx.py`·`neis.py` 학사일정, `scheduler.py` 9·12·15시, `telegram.py`, `picker.py` 찾아보기 창 |
+| `desk.py`, `desk/` | 로컬 서버(Python 표준 라이브러리). `server.py` API, `extract.py` 날짜·마감, `docs.py`·`cfb.py` hwp/hwpx/pdf, `collect.py` 수집, `coolmsg.py` 쿨메신저 .udb, `schoolcal.py`·`xlsx.py`·`neis.py` 학사일정, `scheduler.py` 9·12·15시, `watcher.py` 실시간 감시, `updater.py` 켤 때 업데이트, `telegram.py`, `picker.py` 찾아보기 창 |
 | `web/` | 화면 (순수 HTML/CSS/JS ES 모듈, VS Code 형태) |
 | `pass/` | 학생 폰용 조퇴증·외출증 페이지 (공개, 내용은 주소 `#` 뒤에만) |
 | `tests/` | Python 시험(`python -m unittest discover -s tests -t .`), `pass-codec.test.cjs`(`node --test`) |
@@ -53,9 +53,13 @@
 - 텔레그램: 롱 폴링, 연결 코드를 보낸 계정 하나만.
 - 화면: ① 활동 막대 ② 목록 패널 ③ 탭 ④ 작업 영역 ⑤ 하단 패널 ⑥ 상태 표시줄. 사용자가 🧩 화면 배치 → "배치 설명 복사"로 보내는 번호를 기준으로 고친다. 메뉴 '오늘' 은 '브리핑'(사용자 지정, 뷰 id 는 `today`).
 - 배포 형태: Python 으로 개발, 선생님에게는 Python 이 들어 있는 ZIP. `update-desk.bat` 은 이 저장소 Releases 를 먼저, 없으면 예전 저장소를 받는다.
+- 자동 업데이트(0.4.0, 사용자 요청): 켤 때 Releases 의 `latest.json`(워크플로가 ZIP 다음에 올림) 버전을 비교. 새 버전이면 PowerShell 업데이트 창을 띄우고 종료 코드 20 으로 끝냄 → 창이 python 종료를 기다려 `data`·`config.json` 빼고 덮어쓴 뒤 `start-desk.bat --no-update-check` 로 다시 켬. 윈도우용 ZIP(`python\python.exe` 있음)에서만, 인터넷이 안 되면 4초 뒤 그냥 켬.
+- 실시간 감시(0.4.0, 사용자 요청): 윈도우 전용 API 없이 표준 라이브러리로 `watch_interval`(20초)마다 파일의 바뀐 시각·크기만 비교, 두 번 연속 같으면(저장 끝남) 수집. 폴더당 5000개까지. 파일 1만 개 폴더(읽는 형식 5000개)에서 한 번에 약 75 ms(리눅스 측정). 9·12·15시 예약 수집은 보조로 유지.
 
 ## 진행 기록
 
 - 2026-10-26~27 (`arduino_experiments` 시절): 0.1.0 조퇴증·외출증·수신함·예약 수집·달력·텔레그램·화면 배치, 윈도우용 ZIP, 0.2.0 쿨메신저 이름 연동·업데이트 도구, 0.3.0 학사일정·검색 확대·브리핑·경로 직접 지정 — Claude Code
 - 2026-10-27: 새 저장소로 분리 (0.3.1): 공유 페이지 GitHub Pages, 저장소 구조 정리 — Claude Code
   - 확인 필요: 실제 쿨메신저 `.udb` 구조, 나이스 실제 응답, 실제 학사일정 파일, 한국어 윈도우에서 찾아보기 창
+- 2026-10-27: 0.4.0 켤 때 자동 업데이트(`latest.json` 비교 → 업데이트 창 → 다시 켬), 쿨메신저·에듀파인 폴더 실시간 감시 — Claude Code
+  - 확인 필요: 0.3.x 설치본은 `update-desk.bat` 을 한 번 눌러야 0.4.0 이 됨, 학교 PC 에서 PowerShell 실행 제한 여부
