@@ -122,14 +122,14 @@ jobs:
           $zip = Resolve-Path ../../../dist/teacher-desk-windows.zip
           Set-Content $env:RUNNER_TEMP\newer.json '{"version": "99.0.0"}'
           Set-Content data\keep2.txt 'keep'
-          Remove-Item desk\watcher.py
+          Remove-Item tests\test_bats.py
           $env:DESK_UPDATE_JSON = ([uri]"$env:RUNNER_TEMP\newer.json").AbsoluteUri
           $env:DESK_UPDATE_URL = ([uri]$zip.Path).AbsoluteUri
           $env:DESK_NO_RELAUNCH = '1'
           $p = Start-Process -FilePath python\python.exe -ArgumentList 'desk.py', '--no-browser' -PassThru -NoNewWindow -Wait
           if ($p.ExitCode -ne 20) { throw "새 버전이 있을 때 종료 코드가 20 이 아님: $($p.ExitCode)" }
-          for ($i = 0; $i -lt 60 -and -not (Test-Path desk\watcher.py); $i++) { Start-Sleep -Seconds 1 }
-          if (-not (Test-Path desk\watcher.py)) { Get-Content data\update.log -ErrorAction SilentlyContinue; throw '자동 업데이트가 파일을 바꾸지 못했습니다' }
+          for ($i = 0; $i -lt 60 -and -not (Test-Path tests\test_bats.py); $i++) { Start-Sleep -Seconds 1 }
+          if (-not (Test-Path tests\test_bats.py)) { Get-Content data\update.log -ErrorAction SilentlyContinue; throw '자동 업데이트가 파일을 바꾸지 못했습니다' }
           if ((Get-Content data\keep2.txt) -ne 'keep') { throw '자동 업데이트가 자료를 지웠습니다' }
           Get-Content data\update.log
           # 같은 버전이면 업데이트 없이 바로 켜짐
