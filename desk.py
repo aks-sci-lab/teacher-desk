@@ -44,6 +44,13 @@ def main(argv=None):
 
     config = Config(args.config)
     db = DB(config.data_dir / "desk.db")
+    try:
+        return run(args, config, db)
+    finally:
+        db.close()  # 업데이트 창이 프로그램 파일을 바꾸기 전에 자료 파일을 닫아 둠
+
+
+def run(args, config, db):
 
     if args.diagnose:
         folder = config[SOURCES[args.diagnose]]

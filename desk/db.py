@@ -102,6 +102,10 @@ class DB:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
+    def close(self):
+        with self.lock:
+            self.conn.close()
+
     # ---- 기본 ----
     def query(self, sql, args=()):
         with self.lock:
