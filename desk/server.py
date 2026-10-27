@@ -97,6 +97,7 @@ class App:
     def __init__(self, db, config, collector, bot):
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
+        self.watcher = None
 
 
 def make_handler(app):
@@ -252,6 +253,7 @@ def get_state(app, q, body):
             "pair_code": app.bot.pair_code() if app.bot else None,
         },
         "pdf_ready": pypdf_ready(),
+        "watch": {"enabled": bool(cfg["watch_enabled"]), "running": bool(app.watcher), "interval": cfg["watch_interval"]},
     }
 
 

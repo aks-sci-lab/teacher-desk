@@ -21,7 +21,8 @@ setStatus('layout', '🧩 화면 배치');
 function updateStatus(s) {
     setStatus('conn', '● 연결됨');
     const last = s.last_run ? s.last_run.finished_at.slice(11, 16) : '없음';
-    setStatus('collect', `⟳ 수집 ${last} · 다음 ${s.next_collect || '-'}`);
+    const watch = s.watch && s.watch.enabled && s.watch.running ? '👁 실시간 · ' : '';
+    setStatus('collect', `⟳ ${watch}수집 ${last} · 다음 ${s.next_collect || '-'}`);
     setStatus('telegram', `✈ 텔레그램 ${s.telegram.linked ? '연결됨' : s.settings.telegram_token_set ? '연결 대기' : '꺼짐'}`, s.telegram.status);
     setStatus('new', `📥 새 자료 ${s.counts.new_items}`);
     setBadge('inbox', s.counts.new_items);

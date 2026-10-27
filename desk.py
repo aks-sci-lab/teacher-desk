@@ -10,14 +10,17 @@
 import argparse
 import importlib.util
 import json
+import os
 import sys
 
+from desk import VERSION, updater
 from desk.collect import SOURCES, Collector, diagnose
-from desk.config import Config
+from desk.config import APP_DIR, Config
 from desk.db import DB
 from desk.scheduler import Scheduler
 from desk.server import App, serve
 from desk.telegram import Bot
+from desk.watcher import Watcher
 
 
 def main(argv=None):
@@ -30,10 +33,10 @@ def main(argv=None):
     p.add_argument("--collect", action="store_true", help="한 번 수집하고 끝내기")
     p.add_argument("--diagnose", choices=sorted(SOURCES), help="폴더 구조 진단")
     p.add_argument("--check", action="store_true", help="실행 환경 확인만 하고 끝내기")
+    p.add_argument("--no-update-check", action="store_true", help="켤 때 새 버전 확인하지 않기")
     args = p.parse_args(argv)
 
     if args.check:
-        from desk import VERSION
         pdf = importlib.util.find_spec("pypdf") is not None
         print(f"업무 데스크 {VERSION} · Python {sys.version.split()[0]} ({sys.executable})")
         print(f"PDF 읽기(pypdf): {'준비됨' if pdf else '없음'}")
@@ -41,6 +44,13 @@ def main(argv=None):
 
     config = Config(args.config)
     db = DB(config.data_dir / "desk.db")
+    try:
+        return run(args, config, db)
+    finally:
+        db.close()  # 업데이트 창이 프로그램 파일을 바꾸기 전에 자료 파일을 닫아 둠
+
+
+def run(args, config, db):
 
     if args.diagnose:
         folder = config[SOURCES[args.diagnose]]
@@ -53,6 +63,18 @@ def main(argv=None):
         print(f"진단 결과를 저장했습니다: {out}")
         print("이 파일에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 개발 담당에게 전달하세요.")
         return 0
+
+    # 켤 때 새 버전 확인 (윈도우용 ZIP 설치본만, 몇 초 안에 답이 없으면 그냥 켬)
+    plain_start = not (args.collect or args.no_update_check)
+    if plain_start and config["auto_update"] and (updater.is_portable(APP_DIR) or os.environ.get("DESK_UPDATE_JSON")):
+        print("새 버전이 있는지 확인하는 중…")
+        latest = updater.check(VERSION)
+        if latest:
+            print(f"새 버전 {latest['version']} 이 있습니다 (지금 {VERSION}). 업데이트 창이 열리고, 끝나면 다시 켜집니다.")
+            db.log(f"자동 업데이트 시작: {VERSION} → {latest['version']}")
+            updater.start_update(APP_DIR)
+            return updater.EXIT_UPDATING
+        print("최신 버전입니다.")
 
     bot = Bot(db, config)
     collector = Collector(db, config, notify=bot.notify_collect)
@@ -71,6 +93,9 @@ def main(argv=None):
         return 1
     scheduler = Scheduler(db, config, collector)
     scheduler.start()
+    watcher = Watcher(db, config, collector)
+    watcher.start()
+    app.watcher = watcher
     bot.start()
     db.log("업무 데스크 시작")
     try:
@@ -79,6 +104,7 @@ def main(argv=None):
         pass
     finally:
         scheduler.stop()
+        watcher.stop()
         bot.stop()
         httpd.server_close()
         db.log("업무 데스크 종료")
