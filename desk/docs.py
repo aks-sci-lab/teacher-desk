@@ -59,6 +59,7 @@ def tidy(text):
     text = fix_surrogates(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace(" ", " ")
     text = re.sub(r"[ \t　]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)   # 줄 앞뒤 빈칸 (HTML 태그 자리)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
     return text.strip()
 
@@ -72,9 +73,15 @@ def decode_text(data):
     return data.decode("utf-8", "replace")
 
 
+# 글자 꾸밈 태그: 글자 사이에 끼어 있어 지우기만 함 (공백으로 바꾸면 '계획 을' 처럼 낱말이 갈라짐)
+INLINE_TAGS = r"span|font|b|i|u|s|em|strong|a|small|big|sub|sup|mark|o:p"
+
+
 def html_text(s):
     s = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", s)
     s = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|li|h\d)>", "\n", s)
+    s = re.sub(rf"(?i)</?(?:{INLINE_TAGS})\b[^>]*>", "", s)
+    s = re.sub(r"(?i)</t[dh]>", "\t", s)
     s = re.sub(r"<[^>]+>", " ", s)
     return html.unescape(s)
 

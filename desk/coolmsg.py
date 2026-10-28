@@ -406,6 +406,19 @@ def read_new(path, last_rowid=None, now=None):
         return info, [m for m in memos if m["body"]], top
 
 
+def memos_for_rowids(path, rowids):
+    """이미 수신함에 들어간 쪽지들을 다시 읽음 {rowid: 쪽지} (글 정리 방식이 바뀌었을 때)."""
+    out = {}
+    with Snapshot(path) as conn:
+        info = _detect_or_fail(conn)
+        ids = list(rowids)
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            for m in _rows(conn, info, f"WHERE rowid IN ({','.join('?' * len(part))})", part, limit=len(part)):
+                out[m["rowid"]] = m
+    return out
+
+
 def images_for_rowids(path, rowids):
     """이미 수신함에 들어간 쪽지들의 사진 목록 {rowid: [src, ...]} (0.5.2 이전에 받은 쪽지용)."""
     out = {}

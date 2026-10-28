@@ -186,6 +186,16 @@ class DB:
             self.conn.commit()
             return item_id
 
+    def replace_events(self, item_id, events):
+        """한 항목의 일정을 새로 찾은 것으로 바꿈."""
+        with self.lock:
+            self.conn.execute("DELETE FROM events WHERE item_id = ?", (item_id,))
+            self.conn.executemany(
+                "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",
+                [(item_id, e["date"], e.get("end_date"), e.get("time"), e["kind"], e["category"], e["text"])
+                 for e in events])
+            self.conn.commit()
+
     def item(self, item_id):
         it = self.one("SELECT * FROM items WHERE id = ?", (item_id,))
         if not it:

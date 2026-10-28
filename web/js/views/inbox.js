@@ -203,7 +203,26 @@ function renderItem(pane, tab, it) {
     }
     if (it.doc_numbers.length) pane.append(el('p.small.muted', `문서번호: ${it.doc_numbers.join(', ')}`));
     if (it.images && it.images.length) pane.append(el('h2', `사진 ${it.images.length}장`), imageGrid(it));
-    pane.append(el('h2', '원문'), el('details.orig', { open: it.body.length < 1500 }, el('summary', `${it.body.length.toLocaleString()}자`), el('pre.text', it.body)));
+    pane.append(el('h2', '원문'), el('details.orig', { open: it.body.length < 1500 }, el('summary', `${it.body.length.toLocaleString()}자`), origText(it.body)));
+}
+
+// 원문을 읽기 쉽게: 문단마다 띄우고, '1.'·'가.'·'-' 로 시작하는 줄은 단계별로 들여 씀
+const LIST_LEVELS = [
+    [/^\d+\s*[.)]\s/, 1],            // 1.
+    [/^[가-하]\s*[.)]\s/, 2],          // 가.
+    [/^\(?\d+\)\s/, 3],              // 1) (1)
+    [/^[-·•※○◦□■▶▷*]\s?/, 3],         // - · ※
+];
+function origText(body) {
+    const box = el('div.orig-text');
+    for (const raw of body.split('\n')) {
+        const line = raw.trim();
+        if (!line) { box.append(el('div.gap')); continue; }
+        const lv = (LIST_LEVELS.find(([re]) => re.test(line)) || [null, 0])[1];
+        const cls = /^\(보낸 사람: .*\)$/.test(line) ? 'p sender' : `p lv${lv}`;
+        box.append(el('div', { className: cls }, line));
+    }
+    return box;
 }
 
 // 쿨메신저 사진: 인터넷 주소는 바로, 쪽지 안 그림·PC 파일은 업무 데스크에서 받아 보여 줌. 누르면 크게

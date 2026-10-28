@@ -185,6 +185,15 @@ def _lines(text):
             yield line
 
 
+# '가. 교육부 교육과정운영지원과-5058(2026. 10. 23.)' 같은 관련 공문 줄: 날짜는 공문 날짜라 일정이 아님
+P_REF_BEFORE = re.compile(r"-\s*\d{2,7}\s*\(\s*$")
+P_REF_LINE = re.compile(r"^\s*(?:\d+\s*[.)]\s*)?(?:관련|참고)\s*[:：]?\s*$|^\s*[가-하]\s*[.)]\s*.*-\s*\d{2,7}\s*\(\s*20\d{2}")
+
+
+def is_reference_line(line):
+    return bool(P_REF_LINE.search(line))
+
+
 def extract_events(text, ref):
     """글에서 일정 목록을 뽑습니다."""
     events = []
@@ -192,6 +201,8 @@ def extract_events(text, ref):
     for line in _lines(text):
         dates = find_dates(line, ref)
         for i, (start, end, d, end_d) in enumerate(dates):
+            if P_REF_BEFORE.search(line[:start]):
+                continue  # 문서번호(날짜): 관련 공문의 날짜
             nxt = dates[i + 1][0] if i + 1 < len(dates) else len(line)
             after = line[end:min(nxt, end + 25)]
             t = find_time(after)
@@ -241,6 +252,8 @@ def summarize(text, title=None, limit=4):
             continue
         if re.match(r"^(수신|경유|참조|발신|시행|접수|우\s*\d|전화|전송|공개|비공개|/)", line):
             continue
+        if is_reference_line(line):
+            continue  # '1. 관련' 과 그 아래 관련 공문 줄
         s = 0
         if P_FULL.search(line) or P_KMD.search(line) or P_DOT.search(line) or P_REL_WEEK.search(line):
             s += 3

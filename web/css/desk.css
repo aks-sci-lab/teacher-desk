@@ -629,3 +629,12 @@ section.card + .cards, .cards { margin-top: 12px; }
 .ai-new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; margin-bottom: 10px; border-radius: var(--radius); background: var(--accent-soft); font-weight: 700; }
 .ai-update { border: 1px dashed var(--accent); border-radius: var(--radius); padding: 8px 12px 0; margin-bottom: 12px; }
 .ai-update > h4 { margin: 0 0 8px; font-size: 0.95em; color: var(--accent); }
+
+/* 원문: 문단·목록 들여쓰기로 읽기 쉽게 */
+.orig-text { max-width: 820px; padding: 14px 18px; border-radius: var(--radius); background: var(--surface-2); line-height: 1.75; font-size: 1.02em; max-height: 620px; overflow: auto; }
+.orig-text .p { margin: 0; word-break: keep-all; overflow-wrap: anywhere; }
+.orig-text .gap { height: 0.7em; }
+.orig-text .lv1 { margin-top: 0.45em; font-weight: 600; }
+.orig-text .lv2 { padding-left: 1.4em; text-indent: -1.4em; margin-left: 1.4em; }
+.orig-text .lv3 { padding-left: 1.2em; text-indent: -1.2em; margin-left: 2.6em; }
+.orig-text .sender { margin-top: 0.8em; color: var(--muted); font-size: 0.9em; }
