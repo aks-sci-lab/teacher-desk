@@ -624,3 +624,8 @@ section.card + .cards, .cards { margin-top: 12px; }
 .img-grid img { max-width: 220px; max-height: 220px; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; object-fit: contain; background: var(--surface-2); }
 .img-grid img.big { max-width: 100%; max-height: none; cursor: zoom-out; }
 .img-missing { padding: 12px; border: 1px dashed var(--line); border-radius: 6px; font-size: 0.85em; color: var(--muted); }
+
+/* 요약 뒤 새 자료 알림 · 덧붙인 새 요약 */
+.ai-new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; margin-bottom: 10px; border-radius: var(--radius); background: var(--accent-soft); font-weight: 700; }
+.ai-update { border: 1px dashed var(--accent); border-radius: var(--radius); padding: 8px 12px 0; margin-bottom: 12px; }
+.ai-update > h4 { margin: 0 0 8px; font-size: 0.95em; color: var(--accent); }

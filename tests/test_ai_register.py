@@ -119,6 +119,37 @@ class AITests(unittest.TestCase):
             ai.weekly_summary(self.env.db, self.env.config)
         self.assertIn("Reasoning Budget", str(cm.exception))
 
+    def test_new_items_only(self):
+        db = self.env.db
+        add_text_item(db, "cool", "회의 11월 5일", title="회의", received_at=recent())
+        full = ai.weekly_summary(db, self.env.config)
+        self.assertEqual((len(ai.new_items(db, full)), full["updates"]), (0, []))
+        # 요약 뒤 새 쪽지 2건 → 새 것만 요약해 덧붙임
+        add_text_item(db, "cool", "체육대회 11월 20일", title="체육대회", received_at=recent(1))
+        add_text_item(db, "edufine", "연수 신청 11월 7일까지", title="연수", received_at=recent(1))
+        st = ai.Job(db, self.env.config).state()
+        self.assertEqual(st["new_count"], 2)
+        r = ai.update_summary(db, self.env.config)
+        prompt = self.fake.requests[-1]["messages"][1]["content"]
+        self.assertIn("새로 들어온 자료뿐", prompt)
+        self.assertIn("체육대회", prompt)
+        self.assertNotIn("[3]", prompt)                                       # 새 2건만 (예전 '회의' 빠짐)
+        self.assertNotIn("회의 11월 5일", prompt)
+        self.assertEqual((len(r["updates"]), r["updates"][0]["used"], len(ai.new_items(db, r))), (1, 2, 0))
+        self.assertEqual(r["text"], full["text"])                             # 전체 요약은 그대로
+        n = len(self.fake.requests)
+        ai.update_summary(db, self.env.config)                                # 새 것이 없으면 부르지 않음
+        self.assertEqual(len(self.fake.requests), n)
+        self.assertEqual(ai.weekly_summary(db, self.env.config)["updates"], [])  # 전체 다시 → 덧붙인 것 비움
+
+    def test_old_summary_without_seen_id(self):
+        db = self.env.db
+        add_text_item(db, "cool", "회의 11월 5일", received_at=recent())
+        db.set_meta("ai_weekly", {"at": "2099-01-01 00:00", "text": "## 꼭 할 일\n- 없음"})   # 0.5.7 까지의 요약
+        self.assertEqual(ai.new_items(db, db.get_meta("ai_weekly")), [])
+        db.set_meta("ai_weekly", {"at": "2000-01-01 00:00", "text": "## 꼭 할 일\n- 없음"})
+        self.assertEqual(len(ai.new_items(db, db.get_meta("ai_weekly"))), 1)
+
     def test_job_runs_in_background(self):
         add_text_item(self.env.db, "cool", "회의 11월 5일", received_at=recent())
         job = ai.Job(self.env.db, self.env.config)
@@ -218,6 +249,12 @@ class RegisterApiTests(unittest.TestCase):
             st, r = self.req("GET", "/api/ai/weekly")
             self.assertEqual((r["enabled"], r["running"], r["error"], r["result"]["model"]), (True, False, None, "qwen3-8b"))
             self.assertIn("협의록", r["result"]["text"])
+            add_text_item(self.env.db, "cool", "학부모 상담 11월 9일", received_at=recent())  # 요약 뒤 새 쪽지
+            self.assertEqual(self.req("GET", "/api/ai/weekly")[1]["new_count"], 1)
+            self.req("POST", "/api/ai/weekly", {"kind": "new"})
+            self.app.ai_job.thread.join(10)
+            st, r = self.req("GET", "/api/ai/weekly")
+            self.assertEqual((r["new_count"], len(r["result"]["updates"])), (0, 1))
             self.assertEqual(self.req("PUT", "/api/settings", {"ai_input_size": "huge"})[0], 400)
             # 요약 줄 지우기 → 상태에 남고, 되돌리면 빠짐
             key = "todo|10/30(금)|가족수당서류제출"

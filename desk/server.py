@@ -654,7 +654,7 @@ def ai_weekly_run(app, q, body):
         ai.check_local(app.config["ai_base"])
     except ai.AIError as e:
         raise ApiError(400, str(e))
-    app.ai_job.start()
+    app.ai_job.start("new" if body.get("kind") == "new" else "full")
     return app.ai_job.state()
 
 

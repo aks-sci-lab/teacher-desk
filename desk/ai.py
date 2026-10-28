@@ -112,7 +112,12 @@ def week_items(db, today=None, days=DAYS):
         "ORDER BY received_at DESC LIMIT ?", (since, MAX_ITEMS))
 
 
-def build_prompt(items, student_names=(), size="normal", today=None):
+NEW_INTRO = "아래는 마지막 요약 뒤에 새로 들어온 자료뿐이다. 이것만 요약해 줘."
+MAX_UPDATES = 10          # 하루 동안 덧붙인 '새로 들어온 것' 요약 (전체 다시 요약하면 비움)
+MAX_NEW_ITEMS = 30
+
+
+def build_prompt(items, student_names=(), size="normal", today=None, new=False):
     """자료 목록 → (보낼 글, 실제로 넣은 개수)."""
     per_item, limit = SIZES.get(size, SIZES["normal"])
     parts, used, total = [], 0, 0
@@ -127,24 +132,91 @@ def build_prompt(items, student_names=(), size="normal", today=None):
         used += 1
     d = today or date.today()
     head = INSTRUCTION.replace("{today}", f"{d.isoformat()}({WEEKDAYS[d.weekday()]})")
+    if new:
+        head = head.replace("아래 자료를 다음 형식으로만 요약해 줘", NEW_INTRO + " 다음 형식으로만 쓰고")
     return mask_names(head + "\n".join(parts), student_names), used
 
 
+def last_item_id(db):
+    """지금까지 들어온 쿨메신저·업무포털 자료 중 가장 큰 번호 (요약 뒤 새 자료를 가리는 기준)."""
+    row = db.one("SELECT MAX(id) AS n FROM items WHERE source IN ('cool', 'edufine')")
+    return row["n"] or 0
+
+
+def seen_id(db, result):
+    """이 요약(과 덧붙인 요약)이 본 마지막 자료 번호. 0.5.8 전 요약은 만든 시각으로 짐작."""
+    if not result:
+        return None
+    if "seen_id" in result:
+        return result["seen_id"]
+    row = db.one("SELECT MAX(id) AS n FROM items WHERE source IN ('cool', 'edufine') AND created_at <= ?",
+                 (result.get("at", "") + ":59",))
+    return row["n"] or 0
+
+
+def new_items(db, result, limit=MAX_NEW_ITEMS):
+    """요약 뒤에 새로 들어온 쿨메신저·업무포털 자료 (보관한 것 빼고)."""
+    since = seen_id(db, result)
+    if since is None:
+        return []
+    return db.query(
+        "SELECT id, source, title, body, received_at FROM items "
+        "WHERE source IN ('cool', 'edufine') AND id > ? AND status != 'archived' ORDER BY id DESC LIMIT ?",
+        (since, limit))
+
+
+def pick_model(config):
+    model = config["ai_model"] or (models(config["ai_base"]) or [None])[0]
+    if not model:
+        raise AIError("LM Studio 에 불러온 모델이 없습니다. LM Studio 에서 모델을 하나 불러오세요.")
+    return model
+
+
 def weekly_summary(db, config, today=None, timeout=TIMEOUT):
-    """지난 1주일 요약을 만들어 저장하고 돌려줌 {at, text, count, used, model, days}."""
+    """지난 1주일 요약을 만들어 저장하고 돌려줌 {at, text, count, used, model, days, ids, seen_id}."""
     base = config["ai_base"]
     check_local(base)
+    top = last_item_id(db)
     items = week_items(db, today)
     result = {"at": datetime.now().strftime("%Y-%m-%d %H:%M"), "count": len(items), "used": 0,
-              "model": "", "days": DAYS, "text": ""}
+              "model": "", "days": DAYS, "text": "", "seen_id": top, "updates": []}
     if not items:
         result["text"] = "지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문이 없습니다."
         db.set_meta("ai_weekly", result)
         return result
-    model = config["ai_model"] or (models(base) or [None])[0]
-    if not model:
-        raise AIError("LM Studio 에 불러온 모델이 없습니다. LM Studio 에서 모델을 하나 불러오세요.")
+    model = pick_model(config)
     prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today)
+    text = ask(base, model, prompt, timeout)
+    result.update(text=text, used=used, model=model, ids=[it["id"] for it in items[:used]])
+    db.set_meta("ai_weekly", result)
+    db.log(f"AI 요약: 지난 {DAYS}일 자료 {used}건 ({model})")
+    return result
+
+
+def update_summary(db, config, today=None, timeout=TIMEOUT):
+    """요약 뒤 새로 들어온 자료만 요약해 '🆕 새로 들어온 것'으로 덧붙임 (전체 요약이 없으면 전체)."""
+    check_local(config["ai_base"])
+    result = db.get_meta("ai_weekly")
+    if not result or not result.get("text"):
+        return weekly_summary(db, config, today, timeout)
+    top = last_item_id(db)
+    items = new_items(db, result)
+    if not items:
+        return result
+    model = pick_model(config)
+    prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today, new=True)
+    text = ask(config["ai_base"], model, prompt, timeout)
+    update = {"at": datetime.now().strftime("%Y-%m-%d %H:%M"), "text": text, "model": model,
+              "count": len(items), "used": used, "ids": [it["id"] for it in items[:used]]}
+    result["updates"] = ([update] + result.get("updates", []))[:MAX_UPDATES]
+    result["seen_id"] = top
+    db.set_meta("ai_weekly", result)
+    db.log(f"AI 요약: 새로 들어온 자료 {used}건 덧붙임 ({model})")
+    return result
+
+
+def ask(base, model, prompt, timeout=TIMEOUT):
+    """LM Studio 에 요약을 부탁하고 글만 돌려줌."""
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
     payload = {
@@ -171,11 +243,7 @@ def weekly_summary(db, config, today=None, timeout=TIMEOUT):
     if not text:
         raise AIError("AI 가 생각만 하다가 요약을 쓰지 못했습니다" + (" (답 길이 한도)" if finish == "length" else "")
                       + ". LM Studio 모델 설정에서 Reasoning Budget 을 줄이거나 끄세요.")
-    result.update(text=text, used=used, model=model,
-                  ids=[it["id"] for it in items[:used]])
-    db.set_meta("ai_weekly", result)
-    db.log(f"AI 요약: 지난 {DAYS}일 자료 {used}건 ({model})")
-    return result
+    return text
 
 
 class Job:
@@ -187,16 +255,18 @@ class Job:
         self.thread = None
         self.started_at = None
         self.error = None
+        self.kind = None   # full: 전체 다시 요약 / new: 새로 들어온 것만
 
     @property
     def running(self):
         return bool(self.thread and self.thread.is_alive())
 
-    def start(self):
+    def start(self, kind="full"):
         with self.lock:
             if self.running:
                 return False
             self.error = None
+            self.kind = "new" if kind == "new" else "full"
             self.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.thread = threading.Thread(target=self._run, name="ai-summary", daemon=True)
             self.thread.start()
@@ -204,7 +274,7 @@ class Job:
 
     def _run(self):
         try:
-            weekly_summary(self.db, self.config)
+            (update_summary if self.kind == "new" else weekly_summary)(self.db, self.config)
         except AIError as e:
             self.error = str(e)
         except Exception as e:  # 뒤에서 도는 일이 조용히 죽지 않게
@@ -212,10 +282,12 @@ class Job:
             self.db.log(f"AI 요약 오류: {type(e).__name__}: {e}", "error")
 
     def state(self):
+        result = self.db.get_meta("ai_weekly")
         return {"enabled": bool(self.config["ai_enabled"]), "running": self.running,
+                "kind": self.kind if self.running else None,
                 "started_at": self.started_at if self.running else None, "error": self.error,
-                "result": self.db.get_meta("ai_weekly"), "timeout": TIMEOUT,
-                "hidden": self.db.get_meta("ai_hidden", [])}
+                "result": result, "timeout": TIMEOUT, "hidden": self.db.get_meta("ai_hidden", []),
+                "new_count": len(new_items(self.db, result)) if result and result.get("text") else 0}
 
 
 MAX_HIDDEN = 300
