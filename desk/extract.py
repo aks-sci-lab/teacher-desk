@@ -200,18 +200,22 @@ def extract_events(text, ref):
     seen = set()
     for line in _lines(text):
         dates = find_dates(line, ref)
+        if not dates:
+            continue
+        # 줄 전체에서 보는 단서는 한 번만 (날짜가 많은 긴 줄에서 날짜마다 줄 전체를 다시 훑지 않게)
+        line_deadline = any(w in line for w in ("마감", "기한", "회신")) or (
+            "까지" in line and any(w in line for w in ("제출", "신청", "등록", "보고")))
+        line_category = classify_line(line, False)
         for i, (start, end, d, end_d) in enumerate(dates):
-            if P_REF_BEFORE.search(line[:start]):
-                continue  # 문서번호(날짜): 관련 공문의 날짜
+            if P_REF_BEFORE.search(line, max(0, start - 40), start):
+                continue  # 문서번호(날짜): 관련 공문의 날짜 (바로 앞 몇 글자만 봄)
             nxt = dates[i + 1][0] if i + 1 < len(dates) else len(line)
             after = line[end:min(nxt, end + 25)]
             t = find_time(after)
             near = line[end:min(len(line), end + 20)]
-            is_deadline = "까지" in near or any(w in line for w in ("마감", "기한", "회신"))
-            if not is_deadline and any(w in line for w in ("제출", "신청", "등록", "보고")) and "까지" in line:
-                is_deadline = True
+            is_deadline = "까지" in near or line_deadline
             kind = "deadline" if is_deadline else "event"
-            category = classify_line(line, is_deadline)
+            category = "제출·마감" if is_deadline else line_category
             key = (d.isoformat(), t, kind)
             if key in seen:
                 continue
