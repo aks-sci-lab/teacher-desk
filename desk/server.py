@@ -683,9 +683,14 @@ def post_collect(app, q, body):
 def get_diagnose(app, q, body):
     source = q.get("source")
     need(source in SOURCES, "진단할 폴더를 고르세요")
-    folder = app.config[SOURCES[source]]
-    need(folder, "폴더가 설정되지 않았습니다")
-    return diagnose(folder)
+    # 화면 칸에 적은 경로를 바로 확인 (저장하기 전에도), 없으면 저장된 설정
+    folder = (q.get("folder") or "").strip().strip('"') or app.config[SOURCES[source]]
+    need(folder, "폴더 경로를 먼저 입력하세요")
+    saved = app.config[SOURCES[source]]
+    res = diagnose(folder)
+    same = lambda a, b: os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))  # noqa: E731
+    res["saved"] = bool(saved) and same(folder, saved)
+    return res
 
 
 @api("GET", "/api/cool")

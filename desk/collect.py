@@ -46,7 +46,9 @@ def add_text_item(db, source, text, title=None, received_at=None, file_path=None
 
 # 윈도우가 파일 열기 자체를 거절할 때의 까닭 (파일 특성 값: OneDrive 등 '클라우드에만 있는 파일')
 CLOUD_ATTRS = 0x400000 | 0x40000 | 0x1000   # RECALL_ON_DATA_ACCESS · RECALL_ON_OPEN · OFFLINE
-CLOUD_REASON = "클라우드(OneDrive 등)에만 있고 이 PC 에는 없는 파일입니다. 파일 탐색기에서 폴더를 마우스 오른쪽 → '항상 이 장치에 유지'"
+CLOUD_REASON = ("클라우드(Synology Drive·OneDrive 등)에만 있고 이 PC 에는 내려받지 않은 파일입니다. "
+                "파일 탐색기에서 폴더를 마우스 오른쪽 → 'Synology Drive → 로컬에 유지(고정)' 또는 "
+                "OneDrive '항상 이 장치에 유지'를 누르거나, 동기화 프로그램이 켜져 있는지 확인하세요")
 BLOCKED_REASON = "윈도우가 파일 열기를 막았습니다. 문서보안(DRM)·백신 프로그램이 막았거나, 클라우드에만 있는 파일일 수 있습니다"
 
 
@@ -240,6 +242,7 @@ def diagnose(folder, limit=200):
     if not folder.is_dir():
         return {"error": f"폴더를 찾을 수 없습니다: {folder}"}
     by_ext, files, dbs = {}, [], []
+    supported = cloud = 0
     for root, dirs, names in os.walk(folder):
         for name in names:
             p = Path(root) / name
@@ -247,6 +250,9 @@ def diagnose(folder, limit=200):
                 st = p.stat()
             except OSError:
                 continue
+            is_cloud = bool(getattr(st, "st_file_attributes", 0) & CLOUD_ATTRS)
+            cloud += is_cloud
+            supported += p.suffix.lower() in SUPPORTED
             ext = p.suffix.lower() or "(없음)"
             e = by_ext.setdefault(ext, {"count": 0, "bytes": 0})
             e["count"] += 1
@@ -254,11 +260,14 @@ def diagnose(folder, limit=200):
             if len(files) < limit:
                 files.append({"path": str(p.relative_to(folder)), "bytes": st.st_size,
                               "modified": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
-                              "kind": sniff(p)})
-            if sniff(p) == "sqlite" and len(dbs) < 10:
+                              "kind": "클라우드에만 있음" if is_cloud else sniff(p)})
+            if not is_cloud and sniff(p) == "sqlite" and len(dbs) < 10:
                 dbs.append(sqlite_shape(p, folder))
     files.sort(key=lambda f: f["modified"], reverse=True)
-    return {"folder": str(folder), "extensions": by_ext, "recent_files": files[:60], "databases": dbs,
+    total = sum(e["count"] for e in by_ext.values())
+    return {"folder": str(folder), "total": total, "supported": supported, "cloud_only": cloud,
+            "cloud_hint": CLOUD_REASON if cloud else None,
+            "extensions": by_ext, "recent_files": files[:60], "databases": dbs,
             "note": "파일 이름·크기·형식과 데이터베이스의 표·열 이름만 담았습니다. 메시지 내용은 없습니다."}
 
 
