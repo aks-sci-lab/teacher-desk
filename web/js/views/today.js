@@ -20,6 +20,52 @@ function card(title, count, body, opts = {}) {
         body);
 }
 
+// 요약 글(마크다운 비슷함) → 화면: '## 제목' 은 굵게, [3] 은 3번 자료를 여는 링크
+function aiText(text, ids = []) {
+    return el('div.ai-text', text.split('\n').map(line => {
+        const head = line.match(/^#{1,4}\s*(.+)/);
+        if (head) return el('h4', head[1].replace(/\*\*/g, ''));
+        const parts = line.replace(/\*\*/g, '').split(/(\[\d+\])/);
+        return el('div', parts.map(p => {
+            const m = p.match(/^\[(\d+)\]$/);
+            const id = m && ids[Number(m[1]) - 1];
+            return id ? el('a', { href: '#', onclick: e => { e.preventDefault(); openItem(id); } }, p) : p;
+        }));
+    }));
+}
+
+// 🤖 지난 1주일 AI 요약 (LM Studio): 저장된 요약을 보여 주고, 오늘 만든 것이 없으면 새로 만듦
+function aiCard() {
+    const body = el('div', el('p.muted.small', '불러오는 중…'));
+    const show = (r, note) => {
+        const res = r.result;
+        clear(body,
+            res && res.text ? aiText(res.text, res.ids) : el('p.muted.small', '아직 요약이 없습니다.'),
+            res && res.at ? el('p.small.muted', `${res.at} · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
+            note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
+            el('div.row', el('button.btn.small', { onclick: () => run(true) }, '🤖 다시 요약')));
+    };
+    const run = async force => {
+        const st = await api.get('/api/ai/weekly');
+        if (!st.enabled) {
+            clear(body, el('p.small', '⚙ 설정 → 🤖 AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
+            return;
+        }
+        if (st.running || (!force && st.result && st.result.at && st.result.at.slice(0, 10) === todayIso())) {
+            show(st, st.running ? '요약하는 중입니다…' : null);
+            return;
+        }
+        clear(body, el('p.muted.small', '🤖 지난 1주일 자료를 요약하는 중… (모델에 따라 1~3분)'));
+        try {
+            show(await api.post('/api/ai/weekly'));
+        } catch (e) {
+            show(st, e.message);
+        }
+    };
+    run(false);
+    return card('🤖 지난 1주일 요약 (쿨메신저·업무포털)', null, body);
+}
+
 function renderToday(pane) {
     pane.append(el('p.muted', '불러오는 중…'));
     guarded(async () => {
@@ -35,6 +81,7 @@ function renderToday(pane) {
                 el('button.btn', { onclick: () => openForm({ kind: 'early' }) }, '🎫 조퇴증'),
                 el('button.btn', { onclick: () => openForm({ kind: 'out' }) }, '🎫 외출증'),
                 el('button.btn', { onclick: collectNow }, '⟳ 지금 수집')),
+            aiCard(),
             el('div.cards',
                 s.overdue.length ? card('⚠ 지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                 card('📌 오늘 일정', s.today.length, evList(s.today, '오늘 일정이 없습니다')),

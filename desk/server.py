@@ -9,6 +9,7 @@ import json
 import mimetypes
 import re
 import secrets
+import threading
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -16,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import base64
 import binascii
 
-from . import VERSION, coolmsg, extract, neis, picker, queries, schoolcal
+from . import VERSION, ai, coolmsg, extract, neis, picker, queries, schoolcal
 from .collect import SOURCES, add_text_item, diagnose
 from .config import APP_DIR
 from .db import now_str
@@ -98,6 +99,7 @@ class App:
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
         self.watcher = None
+        self.ai_lock = threading.Lock()   # AI 요약은 한 번에 하나만
 
 
 def make_handler(app):
@@ -376,7 +378,7 @@ def create_item(app, q, body):
 
 
 ITEM_LIST_SQL = """
-SELECT i.id, i.source, i.title, i.received_at, i.category, i.status,
+SELECT i.id, i.source, i.title, i.received_at, i.category, i.status, i.registered,
        (SELECT MIN(e.date) FROM events e WHERE e.item_id = i.id AND e.kind = 'deadline' AND e.done = 0
           AND e.date >= ?) AS next_deadline,
        (SELECT COUNT(*) FROM events e WHERE e.item_id = i.id) AS event_count
@@ -422,6 +424,9 @@ def update_item(app, q, body, item_id):
     if "category" in body:
         need(body["category"] in CATEGORIES, "분류가 잘못되었습니다")
         f["category"] = body["category"]
+    if "registered" in body:
+        need(isinstance(body["registered"], bool), "일정 등록 값이 잘못되었습니다")
+        f["registered"] = int(body["registered"])
     if f:
         app.db.execute(f"UPDATE items SET {', '.join(k + ' = ?' for k in f)} WHERE id = ?", (*f.values(), item_id))
     return app.db.item(int(item_id))
@@ -473,6 +478,8 @@ def create_event(app, q, body):
     if body.get("item_id") is not None:
         need(app.db.one("SELECT id FROM items WHERE id = ?", (body["item_id"],)), "없는 항목입니다", 404)
         f["item_id"] = body["item_id"]
+        # 일정을 직접 더하면 그 항목은 등록한 것으로 (더한 일정이 달력에 보이게)
+        app.db.execute("UPDATE items SET registered = 1 WHERE id = ?", (body["item_id"],))
     eid = app.db.execute(f"INSERT INTO events({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
     return app.db.one("SELECT * FROM events WHERE id = ?", (eid,))
 
@@ -567,6 +574,33 @@ def calendar_ics(app, q, body):
 @api("GET", "/api/today")
 def get_today(app, q, body):
     return queries.today_summary(app.db)
+
+
+@api("GET", "/api/ai/weekly")
+def ai_weekly_get(app, q, body):
+    return {"enabled": bool(app.config["ai_enabled"]), "running": app.ai_lock.locked(),
+            "result": app.db.get_meta("ai_weekly")}
+
+
+@api("POST", "/api/ai/weekly")
+def ai_weekly_run(app, q, body):
+    need(app.config["ai_enabled"], "⚙ 설정에서 AI 요약을 먼저 켜세요")
+    need(app.ai_lock.acquire(blocking=False), "이미 요약하는 중입니다", 409)
+    try:
+        return {"result": ai.weekly_summary(app.db, app.config)}
+    except ai.AIError as e:
+        raise ApiError(400, str(e))
+    finally:
+        app.ai_lock.release()
+
+
+@api("POST", "/api/ai/check")
+def ai_check(app, q, body):
+    base = text_field(body.get("base"), "AI 주소", 200) or app.config["ai_base"]
+    try:
+        return ai.check(base)
+    except ai.AIError as e:
+        raise ApiError(400, str(e))
 
 
 @api("GET", "/api/search")

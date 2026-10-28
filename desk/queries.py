@@ -7,13 +7,15 @@ from .db import decode_item
 EVENT_COLS = ("e.id, e.item_id, e.date, e.end_date, e.time, e.kind, e.category, e.text, e.done, "
               # 학사일정은 묶음 제목 대신 행사 이름(e.text)이 보이게
               "CASE WHEN i.source = 'school' THEN NULL ELSE i.title END AS item_title, i.source AS item_source")
+# 달력·브리핑·텔레그램에는 수신함에서 체크한(등록한) 항목의 일정과 따로 넣은 일정만
+REGISTERED = "(i.id IS NULL OR i.registered = 1)"
 
 
 def events_between(db, start, end, include_done=True):
     """start~end 와 겹치는 일정 (기간 일정은 끝 날짜까지 포함)."""
     sql = (f"SELECT {EVENT_COLS} FROM events e LEFT JOIN items i ON i.id = e.item_id "
            "WHERE e.date <= ? AND COALESCE(e.end_date, e.date) >= ? "
-           "AND (i.status IS NULL OR i.status != 'archived')")
+           f"AND (i.status IS NULL OR i.status != 'archived') AND {REGISTERED}")
     if not include_done:
         sql += " AND e.done = 0"
     return db.query(sql + " ORDER BY e.date, COALESCE(e.time, '99'), e.id", (end.isoformat(), start.isoformat()))
@@ -25,7 +27,7 @@ def today_summary(db, today=None):
     overdue = db.query(
         f"SELECT {EVENT_COLS} FROM events e LEFT JOIN items i ON i.id = e.item_id "
         "WHERE e.kind = 'deadline' AND e.done = 0 AND e.date < ? AND e.date >= ? "
-        "AND (i.status IS NULL OR i.status NOT IN ('archived', 'done')) ORDER BY e.date",
+        f"AND (i.status IS NULL OR i.status NOT IN ('archived', 'done')) AND {REGISTERED} ORDER BY e.date",
         (today.isoformat(), (today - timedelta(days=14)).isoformat()))
     todays = events_between(db, today, today)
     upcoming = events_between(db, today + timedelta(days=1), week_end, include_done=False)
@@ -61,7 +63,7 @@ def search(db, q, limit=30):
                      f"WHERE {w} ORDER BY received_at DESC LIMIT ?", (*a, limit))
     w, a = _terms_where(["e.text", "e.category", "e.date", "i.title"], terms)
     events = db.query(f"SELECT {EVENT_COLS} FROM events e LEFT JOIN items i ON i.id = e.item_id "
-                      f"WHERE {w} ORDER BY e.date DESC LIMIT ?", (*a, limit))
+                      f"WHERE {w} AND {REGISTERED} ORDER BY e.date DESC LIMIT ?", (*a, limit))
     w, a = _terms_where(["student_name", "CAST(student_number AS TEXT)", "reason", "note", "serial", "date",
                          "CASE kind WHEN 'out' THEN '외출' ELSE '조퇴' END"], terms)
     passes = db.query(f"SELECT * FROM passes WHERE {w} ORDER BY date DESC, id DESC LIMIT ?", (*a, limit))

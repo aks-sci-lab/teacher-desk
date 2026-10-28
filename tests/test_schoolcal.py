@@ -162,8 +162,13 @@ class FakeNeis:
                     days = ["20260302:입학식", "20260720:여름방학", "20260721:여름방학", "20260722:여름방학",
                             "20260723:여름방학", "20260724:여름방학", "20260727:여름방학",
                             "20260307:토요휴업일", "20270212:졸업식"]
-                    body = {"SchoolSchedule": [{"head": [{"list_total_count": len(days)}]},
-                                               {"row": [{"AA_YMD": d.split(":")[0], "EVENT_NM": d.split(":")[1]} for d in days]}]}
+                    mine = {"ATPT_OFCDC_SC_CODE": q.get("ATPT_OFCDC_SC_CODE"), "SD_SCHUL_CODE": q.get("SD_SCHUL_CODE")}
+                    other = {"ATPT_OFCDC_SC_CODE": "B10", "SD_SCHUL_CODE": "7010000"}
+                    rows = [{"AA_YMD": d.split(":")[0], "EVENT_NM": d.split(":")[1], **mine} for d in days]
+                    rows.append({"AA_YMD": "20260515", "EVENT_NM": "다른 학교 체육대회", **other})
+                    if not q.get("KEY"):  # 인증키가 없으면 나이스가 아무 학교 것이나 몇 건 보냄
+                        rows = [{**r, **other} for r in rows[:5]]
+                    body = {"SchoolSchedule": [{"head": [{"list_total_count": len(rows)}]}, {"row": rows}]}
                 data = json.dumps(body, ensure_ascii=False).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -193,10 +198,12 @@ class NeisTests(unittest.TestCase):
         self.assertEqual(neis.search_schools("없는학교", "KEY1", self.fake.base), [])
         r = neis.schedule("N10", "8140000", 2026, "KEY1", self.fake.base)
         self.assertEqual(ev(r), [("2026-03-02", None, "입학식"), ("2026-07-20", "2026-07-27", "여름방학"),
-                                 ("2027-02-12", None, "졸업식")])   # 토요휴업일 빼고, 주말 건너 이어진 방학은 한 기간
+                                 ("2027-02-12", None, "졸업식")])   # 토요휴업일·다른 학교 것 빼고, 주말 건너 이어진 방학은 한 기간
         path, q = self.fake.calls[-1]
         self.assertEqual((q["AA_FROM_YMD"], q["AA_TO_YMD"], q["SD_SCHUL_CODE"], q["KEY"]), ("20260301", "20270228", "8140000", "KEY1"))
-        self.assertTrue(neis.schedule("N10", "1", 2027, "", self.fake.base)["sample"])  # 인증키 없음
+        with self.assertRaises(neis.NeisError) as cm:                                    # 인증키 없음 → 다른 학교 것뿐
+            neis.schedule("N10", "1", 2027, "", self.fake.base)
+        self.assertIn("다른 학교", str(cm.exception))
         self.assertEqual(self.fake.calls[-1][1].get("AA_TO_YMD"), "20280229")          # 윤년
 
     def test_errors(self):
@@ -224,6 +231,8 @@ class SearchTests(unittest.TestCase):
             self.assertEqual(len(queries.search(db, "치과")["passes"]), 1)              # 메모
             self.assertEqual(len(queries.search(db, "외출 김가온")["passes"]), 1)
             self.assertEqual(queries.search(db, "도윤서")["students"][0]["number"], 3)  # 학생 명단
+            self.assertEqual(len(queries.search(db, "11월 3일")["events"]), 0)   # 체크(등록) 전에는 일정 아님
+            db.execute("UPDATE items SET registered = 1")
             self.assertEqual(len(queries.search(db, "11월 3일")["events"]), 1)
             self.assertEqual(queries.search(db, "  ")["students"], [])
             self.assertEqual(queries.search(db, "50%")["items"], [])                     # % 는 글자 그대로

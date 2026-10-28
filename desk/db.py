@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS items (
     category TEXT,
     status TEXT DEFAULT 'new',       -- new / read / done / archived
     doc_numbers TEXT,                -- JSON 배열
-    file_path TEXT
+    file_path TEXT,
+    registered INTEGER DEFAULT 0     -- 1: 수신함에서 체크함 → 이 항목의 일정이 달력·브리핑에 들어감
 );
 CREATE INDEX IF NOT EXISTS items_hash ON items(content_hash);
 
@@ -100,7 +101,15 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(items)")}
+        if "registered" not in cols:
+            # 0.4.2: 수신함에서 체크한 메시지만 일정 등록 (사용자 요청). 직접 입력·학사일정은 등록된 것으로
+            self.conn.execute("ALTER TABLE items ADD COLUMN registered INTEGER DEFAULT 0")
+            self.conn.execute("UPDATE items SET registered = 1 WHERE source IN ('paste', 'school')")
 
     def close(self):
         with self.lock:
@@ -147,15 +156,21 @@ class DB:
             self.conn.commit()
 
     # ---- 수신 항목 ----
-    def add_item(self, source, title, body, received_at, analysis, content_hash=None, file_path=None):
-        """분석 결과(extract.analyze)와 함께 항목과 일정을 한 번에 저장."""
+    def add_item(self, source, title, body, received_at, analysis, content_hash=None, file_path=None,
+                 registered=None):
+        """분석 결과(extract.analyze)와 함께 항목과 일정을 한 번에 저장.
+
+        자동 수집한 메시지·공문의 일정은 '후보'로만 저장 (수신함에서 체크해야 달력에 들어감).
+        """
+        if registered is None:
+            registered = source in ("paste", "school")
         with self.lock:
             cur = self.conn.execute(
                 "INSERT INTO items(source, title, body, received_at, created_at, content_hash, summary, "
-                "category, doc_numbers, file_path) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "category, doc_numbers, file_path, registered) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (source, title, body, received_at, now_str(), content_hash,
                  json.dumps(analysis["summary"], ensure_ascii=False), analysis["category"],
-                 json.dumps(analysis["doc_numbers"], ensure_ascii=False), file_path))
+                 json.dumps(analysis["doc_numbers"], ensure_ascii=False), file_path, int(bool(registered))))
             item_id = cur.lastrowid
             self.conn.executemany(
                 "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",

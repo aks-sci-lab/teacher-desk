@@ -379,6 +379,9 @@ label.check .hint { font-size: 0.8em; color: var(--muted); }
 .list li:hover { background: var(--surface-2); }
 .list li.on { background: var(--accent-soft); }
 .list li.unread .ttl { font-weight: 800; }
+.list li.reg { display: flex; gap: 8px; align-items: flex-start; }
+.list li.reg > input[type=checkbox] { margin-top: 3px; flex: none; width: 16px; height: 16px; cursor: pointer; }
+.list li.reg > .body { flex: 1; min-width: 0; }
 .list .ttl { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .meta { display: flex; gap: 6px; align-items: center; font-size: 0.8em; color: var(--muted); margin-top: 2px; flex-wrap: wrap; }
 .list .group { padding: 8px var(--pad) 4px; font-size: 0.8em; font-weight: 700; color: var(--muted); cursor: default; background: var(--surface-2); }
@@ -575,3 +578,9 @@ body.layout-edit [data-region]::after {
     #print-area { display: block !important; }
     .slip { border-width: 1.5px; page-break-inside: avoid; }
 }
+
+/* 브리핑 AI 요약 */
+.ai-text { line-height: 1.6; font-size: 0.95em; }
+.ai-text h4 { margin: 10px 0 2px; font-size: 1em; }
+.ai-text div { min-height: 0.4em; }
+section.card + .cards, .cards { margin-top: 12px; }
