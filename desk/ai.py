@@ -28,17 +28,25 @@ SYSTEM = (
     "너는 한국 중·고등학교 담임 교사의 업무 비서다. 지난 1주일 동안 받은 쿨메신저 쪽지와 업무포털 공문을 읽고 "
     "교사가 1분 안에 파악할 수 있게 한국어로 요약한다. 자료에 없는 내용은 지어내지 않는다."
 )
-INSTRUCTION = """아래 자료를 다음 형식으로 요약해 줘. 해당하는 것이 없는 칸은 '없음'.
+INSTRUCTION = """오늘은 {today}이다. 아래 자료를 다음 형식으로만 요약해 줘 (앞뒤 인사말 없이). 해당하는 것이 없는 칸은 '- 없음'.
 
 ## 꼭 할 일 (마감 순)
-- 날짜 · 할 일 · 자료 번호 [n]
+- 10/30(금) · 할 일 [n]
 ## 다가오는 행사·회의
-- 날짜 · 내용 [n]
+- 11/04(화) 13:30 · 내용 [n]
 ## 알아 둘 내용
-- 한 줄씩 [n]
+- 내용 [n]
+
+규칙:
+- 한 줄은 35자 안쪽으로 짧게, 명사형으로 끝내기 (예: '협의록 제출', '교과서 수량 확인')
+- 날짜는 '10/28(수)' 모양으로 줄 맨 앞에, 날짜 다음에 ' · '. 날짜 없는 할 일은 '상시 · '
+- 꼭 할 일은 최대 10개, 행사·회의는 최대 6개, 알아 둘 내용은 중요한 것만 최대 8개
+- 같은 일은 한 줄로 합치고 자료 번호를 [3, 31] 처럼 함께 적기
+- 이미 지난 마감은 빼기
 
 자료:
 """
+WEEKDAYS = "월화수목금토일"
 
 
 class AIError(Exception):
@@ -104,7 +112,7 @@ def week_items(db, today=None, days=DAYS):
         "ORDER BY received_at DESC LIMIT ?", (since, MAX_ITEMS))
 
 
-def build_prompt(items, student_names=(), size="normal"):
+def build_prompt(items, student_names=(), size="normal", today=None):
     """자료 목록 → (보낼 글, 실제로 넣은 개수)."""
     per_item, limit = SIZES.get(size, SIZES["normal"])
     parts, used, total = [], 0, 0
@@ -117,7 +125,9 @@ def build_prompt(items, student_names=(), size="normal"):
         parts.append(part)
         total += len(part)
         used += 1
-    return mask_names(INSTRUCTION + "\n".join(parts), student_names), used
+    d = today or date.today()
+    head = INSTRUCTION.replace("{today}", f"{d.isoformat()}({WEEKDAYS[d.weekday()]})")
+    return mask_names(head + "\n".join(parts), student_names), used
 
 
 def weekly_summary(db, config, today=None, timeout=TIMEOUT):
@@ -134,7 +144,7 @@ def weekly_summary(db, config, today=None, timeout=TIMEOUT):
     model = config["ai_model"] or (models(base) or [None])[0]
     if not model:
         raise AIError("LM Studio 에 불러온 모델이 없습니다. LM Studio 에서 모델을 하나 불러오세요.")
-    prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"])
+    prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today)
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
     payload = {

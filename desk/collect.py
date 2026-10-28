@@ -44,7 +44,35 @@ def add_text_item(db, source, text, title=None, received_at=None, file_path=None
             "deadlines": sum(1 for e in analysis["events"] if e["kind"] == "deadline")}
 
 
-def scan_folder(db, source, folder, stats):
+# 윈도우가 파일 열기 자체를 거절할 때의 까닭 (파일 특성 값: OneDrive 등 '클라우드에만 있는 파일')
+CLOUD_ATTRS = 0x400000 | 0x40000 | 0x1000   # RECALL_ON_DATA_ACCESS · RECALL_ON_OPEN · OFFLINE
+CLOUD_REASON = "클라우드(OneDrive 등)에만 있고 이 PC 에는 없는 파일입니다. 파일 탐색기에서 폴더를 마우스 오른쪽 → '항상 이 장치에 유지'"
+BLOCKED_REASON = "윈도우가 파일 열기를 막았습니다. 문서보안(DRM)·백신 프로그램이 막았거나, 클라우드에만 있는 파일일 수 있습니다"
+
+
+def read_problem(path, err):
+    """OSError → 선생님이 알아들을 수 있는 까닭."""
+    try:
+        attrs = getattr(os.stat(path), "st_file_attributes", 0)
+    except OSError:
+        attrs = 0
+    if attrs & CLOUD_ATTRS:
+        return CLOUD_REASON
+    if err.errno in (1, 13, 22):  # EPERM · EACCES · EINVAL ('Invalid argument')
+        return BLOCKED_REASON
+    return f"읽기 실패 ({err.strerror or err})"
+
+
+def long_path(path):
+    """윈도우는 260자가 넘는 경로를 그냥은 못 여는 경우가 있어 \\\\?\\ 를 붙임."""
+    if os.name == "nt":
+        full = str(Path(path).resolve())
+        if len(full) >= 250 and not full.startswith("\\\\?\\"):
+            return Path("\\\\?\\" + full)
+    return Path(path)
+
+
+def scan_folder(db, source, folder, stats, retry_failed=False):
     folder = Path(folder)
     if not folder.is_dir():
         stats["errors"].append(f"{SOURCE_NAMES[source]} 폴더를 찾을 수 없습니다: {folder}")
@@ -57,18 +85,20 @@ def scan_folder(db, source, folder, stats):
                 continue
             files.append(Path(root) / name)
     files.sort(key=lambda p: p.stat().st_mtime)
+    failed = {}
     for path in files[-MAX_FILES_PER_RUN:]:
         try:
             st = path.stat()
         except OSError:
             continue
         key = str(path)
-        seen = db.one("SELECT mtime, size FROM files_seen WHERE path = ?", (key,))
-        if seen and seen["mtime"] == st.st_mtime and seen["size"] == st.st_size:
+        seen = db.one("SELECT mtime, size, error FROM files_seen WHERE path = ?", (key,))
+        if seen and seen["mtime"] == st.st_mtime and seen["size"] == st.st_size \
+                and not (seen["error"] and retry_failed):
             continue
-        item_id = None
+        item_id, error = None, None
         try:
-            text = read_document(path)
+            text = read_document(long_path(path))
             received = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
             # 공문은 저장할 때 파일 이름이 곧 제목인 경우가 많음
             title = path.stem if source == "edufine" else None
@@ -82,12 +112,20 @@ def scan_folder(db, source, folder, stats):
         except DocError as e:
             stats["errors"].append(f"{path.name}: {e}")
         except OSError as e:
-            stats["errors"].append(f"{path.name}: 읽기 실패 ({e.strerror})")
-            continue  # 다음 수집 때 다시 시도
-        db.execute("INSERT INTO files_seen(path, mtime, size, item_id) VALUES(?,?,?,?) "
+            # 같은 까닭으로 매번 실패하지 않게 기록해 둠 → 파일이 바뀌거나 '지금 수집'을 누르면 다시 시도
+            error = read_problem(path, e)
+            failed.setdefault(error, []).append(path.name)
+        db.execute("INSERT INTO files_seen(path, mtime, size, item_id, error) VALUES(?,?,?,?,?) "
                    "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, size=excluded.size, "
-                   "item_id=COALESCE(excluded.item_id, files_seen.item_id)",
-                   (key, st.st_mtime, st.st_size, item_id))
+                   "item_id=COALESCE(excluded.item_id, files_seen.item_id), error=excluded.error",
+                   (key, st.st_mtime, st.st_size, item_id, error))
+    # 읽지 못한 파일은 까닭별로 한 줄씩 (19개면 19줄 대신 1줄)
+    for reason, names in failed.items():
+        if len(names) <= 2:
+            stats["errors"] += [f"{n}: {reason}" for n in names]
+        else:
+            stats["errors"].append(f"{SOURCE_NAMES[source]} 파일 {len(names)}개를 읽지 못했습니다 — {reason} "
+                                   f"(예: {', '.join(names[:3])} …)")
 
 
 def repair_comp_items(db, path, last):
@@ -170,7 +208,7 @@ class Collector:
                 folder = self.config[key]
                 if folder:
                     stats["sources"].append(source)
-                    scan_folder(self.db, source, folder, stats)
+                    scan_folder(self.db, source, folder, stats, retry_failed=reason in ("manual", "telegram"))
             self.db.execute("UPDATE runs SET finished_at = ?, stats = ? WHERE id = ?",
                             (now_str(), json.dumps(stats, ensure_ascii=False), run_id))
             label = {"schedule": "예약", "manual": "수동", "watch": "실시간", "telegram": "텔레그램"}.get(reason, reason)

@@ -20,17 +20,80 @@ function card(title, count, body, opts = {}) {
         body);
 }
 
-// 요약 글(마크다운 비슷함) → 화면: '## 제목' 은 굵게, [3] 은 3번 자료를 여는 링크
-function aiText(text, ids = []) {
-    return el('div.ai-text', text.split('\n').map(line => {
+// ---------------------------------------------------------------- AI 요약 보기
+// 요약 글(마크다운 비슷함)을 칸으로 나눠 보여 줌: 칸마다 색, 날짜에 D-day, 자료 번호는 누르면 그 자료가 열림
+const AI_KINDS = [
+    { test: /할\s*일|마감/, cls: 'todo', icon: '⏰', title: '꼭 할 일' },
+    { test: /행사|회의|일정/, cls: 'event', icon: '🗓', title: '다가오는 행사·회의' },
+    { test: /.*/, cls: 'note', icon: '📌', title: '알아 둘 내용' },
+];
+const SHOW_FIRST = { todo: 10, event: 6, note: 5 };
+
+function parseAi(text) {
+    const sections = [];
+    let cur = null;
+    for (const raw of text.split('\n')) {
+        const line = raw.replace(/\*\*/g, '').trim();
+        if (!line) continue;
         const head = line.match(/^#{1,4}\s*(.+)/);
-        if (head) return el('h4', head[1].replace(/\*\*/g, ''));
-        const parts = line.replace(/\*\*/g, '').split(/(\[\d+\])/);
-        return el('div', parts.map(p => {
-            const m = p.match(/^\[(\d+)\]$/);
-            const id = m && ids[Number(m[1]) - 1];
-            return id ? el('a', { href: '#', onclick: e => { e.preventDefault(); openItem(id); } }, p) : p;
-        }));
+        if (head) {
+            const kind = AI_KINDS.find(k => k.test.test(head[1]));
+            cur = { ...kind, rows: [] };
+            sections.push(cur);
+            continue;
+        }
+        if (!cur) continue;   // 맨 앞 인사말 같은 것은 버림
+        let body = line.replace(/^[-*•·]\s*/, '');
+        if (/^없음\.?$/.test(body)) continue;
+        const refs = [];
+        body = body.replace(/\[(\d+(?:\s*[,，]\s*\d+)*)\]/g, (_, nums) => { refs.push(...nums.split(/[,，]/).map(Number)); return ''; }).trim();
+        // '10/30(금) · 할 일' → 날짜와 내용
+        let when = '';
+        const m = body.match(/^([^·]{1,24}?)\s+·\s+(.+)$/);
+        if (m && /\d|상시|매주|매일|즉시/.test(m[1])) { when = m[1].trim(); body = m[2].trim(); }
+        cur.rows.push({ when, text: body.replace(/\s*·\s*$/, ''), refs });
+    }
+    return sections.filter(s => s.rows.length);
+}
+
+// '10/30(금)' · '11월 3일' → 오늘·내일·D-3·지남
+function dday(when) {
+    const m = when.match(/(\d{1,2})\s*[\/.월]\s*(\d{1,2})/);
+    if (!m) return null;
+    const today = new Date(todayIso() + 'T00:00:00');
+    let d = new Date(today.getFullYear(), Number(m[1]) - 1, Number(m[2]));
+    if (d - today < -180 * 86400000) d = new Date(today.getFullYear() + 1, Number(m[1]) - 1, Number(m[2]));
+    const n = Math.round((d - today) / 86400000);
+    if (n < 0) return { label: '지남', cls: 'past' };
+    if (n === 0) return { label: '오늘', cls: 'soon' };
+    if (n === 1) return { label: '내일', cls: 'soon' };
+    return { label: `D-${n}`, cls: n <= 3 ? 'soon' : '' };
+}
+
+function aiText(text, ids = []) {
+    const sections = parseAi(text);
+    if (!sections.length) return el('div.ai-text', text);   // 형식이 다르면 글 그대로
+    const refChip = n => {
+        const id = ids[n - 1];
+        return id ? el('a.ai-ref', { href: '#', title: '이 자료 열기', onclick: e => { e.preventDefault(); openItem(id); } }, n)
+                  : el('span.ai-ref', n);
+    };
+    const row = r => {
+        const dd = r.when && dday(r.when);
+        return el('li.ai-row',
+            r.when ? el('span.ai-when', r.when, dd && el('span.ai-dday', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
+            el('span.ai-txt', r.text),
+            r.refs.length ? el('span.ai-refs', r.refs.map(refChip)) : null);
+    };
+    return el('div.ai-sections', sections.map(s => {
+        const first = SHOW_FIRST[s.cls] ?? 6;
+        const list = el('ul.ai-list', s.rows.slice(0, first).map(row));
+        const more = s.rows.length > first && el('button.btn.small.ai-more', { onclick: () => {
+            list.append(...s.rows.slice(first).map(row));
+            more.remove();
+        } }, `더 보기 (${s.rows.length - first})`);
+        return el('section', { className: `ai-sec ${s.cls}` },
+            el('h4', `${s.icon} ${s.title}`, el('span.muted', ` ${s.rows.length}`)), list, more || null);
     }));
 }
 
