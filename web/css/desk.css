@@ -581,8 +581,10 @@ body.layout-edit [data-region]::after {
 
 /* 브리핑 AI 요약 */
 .ai-text { line-height: 1.6; font-size: 0.95em; white-space: pre-wrap; }
-.ai-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 8px; }
-.ai-sec { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: var(--radius); padding: 8px 12px; background: var(--surface); }
+/* 칸 높이가 달라도 빈 곳이 없게 신문처럼 단을 채움 (할 일이 길면 행사·알아 둘 내용이 옆 단으로) */
+.ai-sections { columns: 2 340px; column-gap: 12px; margin-bottom: 8px; }
+.ai-sections .ai-sec { break-inside: avoid; margin-bottom: 12px; }
+.ai-sec { display: block; border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: var(--radius); padding: 8px 12px; background: var(--surface); }
 .ai-sec.todo { border-left-color: var(--c-deadline, var(--danger)); }
 .ai-sec.event { border-left-color: var(--accent); }
 .ai-sec h4 { margin: 0 0 6px; font-size: 1em; }
@@ -599,6 +601,15 @@ body.layout-edit [data-region]::after {
 a.ai-ref:hover { background: var(--accent); color: var(--accent-ink); }
 .ai-more { margin-top: 6px; }
 section.card + .cards, .cards { margin-top: 12px; }
+/* 브리핑: 넓은 화면은 왼쪽 AI 요약 · 오른쪽 카드 한 줄 (화면 폭을 다 씀) */
+.brief { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.brief > .card { margin: 0; }
+@media (min-width: 1400px) {
+    .brief { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
+    .brief > .cards { margin-top: 0; grid-template-columns: 1fr; }
+    .brief.no-ai { grid-template-columns: minmax(0, 1fr); }
+    .brief.no-ai > .cards { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
 
 /* 쿨메신저 사진 */
 .img-grid { display: flex; flex-wrap: wrap; gap: 8px; }

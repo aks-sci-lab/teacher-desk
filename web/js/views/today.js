@@ -27,7 +27,7 @@ const AI_KINDS = [
     { test: /행사|회의|일정/, cls: 'event', icon: '🗓', title: '다가오는 행사·회의' },
     { test: /.*/, cls: 'note', icon: '📌', title: '알아 둘 내용' },
 ];
-const SHOW_FIRST = { todo: 10, event: 6, note: 5 };
+const SHOW_FIRST = { todo: 10, event: 6, note: 8 };
 
 function parseAi(text) {
     const sections = [];
@@ -130,6 +130,7 @@ function aiCard() {
     const run = async force => {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
+            body.closest('.brief')?.classList.add('no-ai');   // AI 를 안 쓰면 카드가 화면 폭을 다 씀
             clear(body, el('p.small', '⚙ 설정 → 🤖 AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
             return;
         }
@@ -163,8 +164,8 @@ function renderToday(pane) {
                 el('button.btn', { onclick: () => openForm({ kind: 'early' }) }, '🎫 조퇴증'),
                 el('button.btn', { onclick: () => openForm({ kind: 'out' }) }, '🎫 외출증'),
                 el('button.btn', { onclick: collectNow }, '⟳ 지금 수집')),
-            aiCard(),
-            el('div.cards',
+            // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
+            el('div.brief', aiCard(), el('div.cards',
                 s.overdue.length ? card('⚠ 지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                 card('📌 오늘 일정', s.today.length, evList(s.today, '오늘 일정이 없습니다')),
                 card('⏰ 7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '다가오는 마감이 없습니다')),
@@ -185,12 +186,12 @@ function renderToday(pane) {
                     el('div', `마지막 수집: ${s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'}`),
                     el('div', `쿨메신저: ${store.settings.coolmessenger_path || store.settings.coolmessenger_name || '미설정'}${store.settings.coolmessenger_folder ? ' (+ 받은 파일 폴더)' : ''}`),
                     el('div', `에듀파인 폴더: ${store.settings.edufine_folder || '미설정'}`),
-                    el('div', `텔레그램: ${st?.telegram.linked ? '연결됨' : '연결 안 됨'}`)))));
+                    el('div', `텔레그램: ${st?.telegram.linked ? '연결됨' : '연결 안 됨'}`))))));
     })();
 }
 
 export function openToday() {
-    openTab({ id: 'today', title: '📋 브리핑', refresh: true, render: renderToday });
+    openTab({ id: 'today', title: '📋 브리핑', wide: true, refresh: true, render: renderToday });
 }
 
 registerView({
