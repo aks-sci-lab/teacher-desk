@@ -1,7 +1,8 @@
 // 🎫 조퇴증·외출증: 명단 → 작성 → 미리보기 → 인쇄 → 기록 → 학생 공유(QR)
 import { api } from '../api.js';
 import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad } from '../ui.js';
-import { registerView, openTab, refreshSide, findTab, emit, on } from '../shell.js';
+import { registerView, openTab, refreshSide, findTab, emit, on, showView } from '../shell.js';
+import { openSettings } from './settings.js';
 import { store, loadStudents } from '../store.js';
 
 const KIND = { early: '조퇴', out: '외출' };
@@ -69,6 +70,19 @@ export function slipNode(p, copyLabel, qr) {
         el('div.sign',
             el('div.date', `발급 ${p.serial ? `No. ${p.serial}` : ''}`),
             el('div.who', `${longDate(p.date)}`, el('br'), `담임  ${s.teacher_name || '　　　　'}`, el('span.stamp', '(인)'))));
+}
+
+// 미리보기 칸 폭에 맞춰 양식을 줄여 보여 줌 (인쇄 크기는 그대로)
+function fitPreview(box) {
+    const fit = () => {
+        const slip = box.querySelector('.slip');
+        if (!slip || !box.clientWidth) return;
+        slip.style.zoom = '';
+        const room = box.clientWidth - 24;
+        slip.style.zoom = String(Math.min(1, room / slip.offsetWidth).toFixed(3));
+    };
+    new ResizeObserver(fit).observe(box);
+    return fit;
 }
 
 async function printPass(p, copies = 2) {
@@ -150,8 +164,10 @@ export function openForm(init = {}) {
         id, refresh: !editing, title: editing ? `✎ ${init.student_name}` : `🎫 새 ${KIND[p.kind]}증`,
         render(pane, tab) {
             const preview = el('div.preview-box');
+            const fit = fitPreview(preview);
             const redraw = () => {
                 clear(preview, slipNode({ ...p, serial: p.serial || '(저장하면 번호가 붙습니다)' }, null, null));
+                fit();
                 tab.setTitle(editing ? `✎ ${p.student_name}` : `🎫 새 ${KIND[p.kind]}증`);
             };
             const set = (k, v) => { p[k] = v; redraw(); };
@@ -167,7 +183,7 @@ export function openForm(init = {}) {
 
             // 학생 고르기: 명단이 있으면 선택, 없거나 '직접 입력'이면 글자 입력
             const nameInput = el('input', { type: 'text', value: p.student_name, placeholder: '이름', oninput: e => set('student_name', e.target.value) });
-            const numInput = el('input', { type: 'text', inputMode: 'numeric', value: p.student_number ?? '', placeholder: '번호', style: 'width: 70px',
+            const numInput = el('input.num', { type: 'text', inputMode: 'numeric', value: p.student_number ?? '', placeholder: '번호',
                 oninput: e => set('student_number', /^\d+$/.test(e.target.value) ? Number(e.target.value) : null) });
             let studentField;
             if (store.students.length) {
@@ -181,12 +197,12 @@ export function openForm(init = {}) {
                 store.students.map(s => el('option', { value: s.id, selected: s.name === p.student_name && s.number === p.student_number }, `${s.number}번 ${s.name}`)),
                 el('option', { value: 'manual' }, '직접 입력…'));
                 const known = store.students.some(s => s.name === p.student_name && s.number === p.student_number);
-                const manual = el('div.row', { hidden: !(p.student_name && !known) }, numInput, nameInput);
+                const manual = el('span.manual', { hidden: !(p.student_name && !known) }, numInput, nameInput);
                 if (p.student_name && !known) sel.value = 'manual';
-                studentField = el('div', sel, manual);
+                studentField = el('div.student-row', sel, manual);
                 setTimeout(() => sel.focus(), 0);
             } else {
-                studentField = el('div.row', numInput, nameInput);
+                studentField = el('div.student-row', el('span.manual', numInput, nameInput));
                 setTimeout(() => nameInput.focus(), 0);
             }
 
@@ -209,29 +225,37 @@ export function openForm(init = {}) {
                 if (printAfter) await printPass(saved);
             };
 
+            // 학교·학년·반·담임 이름이 비어 있으면 양식에 빈칸으로 인쇄됨 → 안내
+            const st = store.settings;
+            const missing = [!st.school_name && '학교', !st.grade && '학년', !st.class_no && '반', !st.teacher_name && '담임 이름'].filter(Boolean);
+            const timeField = (label, key) => el('label.field', el('span', label),
+                el('input', { type: 'time', value: p[key], onchange: e => set(key, e.target.value) }));
+
             pane.append(
                 el('h1', editing ? `${KIND[p.kind]}증 고치기` : `${KIND[p.kind]}증 쓰기`),
-                el('p.sub', '오른쪽 미리보기가 그대로 인쇄됩니다. A4 한 장에 학생 보관용·담임 보관용 2장이 나옵니다.'),
+                el('p.sub', '미리보기가 그대로 인쇄됩니다. A4 한 장에 학생 보관용·담임 보관용 2장이 나옵니다.'),
                 el('div.pass-layout',
-                    el('div',
+                    el('div.pass-form',
                         el('div.field', el('span', '종류'), kindSeg),
                         el('div.field', el('span', '학생'), studentField),
-                        el('div.grid2',
+                        el('div.pass-times', { className: p.kind === 'out' ? 'pass-times three' : 'pass-times' },
                             el('label.field', el('span', '날짜'), el('input', { type: 'date', value: p.date, onchange: e => set('date', e.target.value) })),
-                            el('label.field', el('span', p.kind === 'out' ? '나가는 시각' : '조퇴 시각'),
-                                el('input', { type: 'time', value: p.time_out, onchange: e => set('time_out', e.target.value) }))),
-                        p.kind === 'out' && el('label.field', el('span', '복귀 예정 시각'),
-                            el('input', { type: 'time', value: p.time_return, onchange: e => set('time_return', e.target.value) })),
+                            timeField(p.kind === 'out' ? '나가는 시각' : '조퇴 시각', 'time_out'),
+                            p.kind === 'out' && timeField('복귀 예정', 'time_return')),
                         el('div.field', el('span', '사유'), reasonInput,
-                            el('div.row', REASONS[p.kind].map(r => el('button.chip', { onclick: () => { reasonInput.value = r; set('reason', r); } }, r)))),
-                        el('label.check', el('input', { type: 'checkbox', checked: p.guardian_ok, onchange: e => set('guardian_ok', e.target.checked) }), '보호자 연락(동의) 확인'),
+                            el('div.chips', REASONS[p.kind].map(r => el('button.chip', { onclick: () => { reasonInput.value = r; set('reason', r); } }, r)))),
                         el('label.field', el('span', '비고 (선택)'), el('input', { type: 'text', value: p.note, onchange: e => set('note', e.target.value) })),
-                        el('label.check', el('input', { type: 'checkbox', checked: p.share_reason, onchange: e => set('share_reason', e.target.checked) }),
-                            '학생 공유 링크에 사유 포함', el('span.hint', '(기본: 빼기 — 링크가 다른 사람에게 전달될 수 있어서)')),
-                        el('div.row',
+                        el('div.pass-checks',
+                            el('label.check', el('input', { type: 'checkbox', checked: p.guardian_ok, onchange: e => set('guardian_ok', e.target.checked) }), '보호자 연락(동의) 확인'),
+                            el('label.check', el('input', { type: 'checkbox', checked: p.share_reason, onchange: e => set('share_reason', e.target.checked) }),
+                                '학생 공유 링크에 사유 포함', el('span.hint', '(기본: 빼기 — 링크가 다른 사람에게 전달될 수 있어서)'))),
+                        el('div.row.pass-actions',
                             el('button.btn.primary', { onclick: guarded(() => save(true)) }, editing ? '💾 저장하고 인쇄' : '🖨 발급하고 인쇄'),
                             el('button.btn', { onclick: guarded(() => save(false)) }, editing ? '저장' : '발급만'))),
-                    preview));
+                    el('div.pass-preview',
+                        preview,
+                        missing.length > 0 && el('p.hint.small', `${missing.join('·')} 칸이 비어 있어 빈칸으로 인쇄됩니다. `,
+                            el('a', { href: '#', onclick: e => { e.preventDefault(); showView('settings'); openSettings(); } }, '⚙ 설정에서 넣기')))));
             redraw();
         },
     });
@@ -252,6 +276,8 @@ export function openPass(p, refresh = false) {
                 emit('data-changed');
                 tab.rerender();
             };
+            const previewBox = el('div.preview-box.wide', slipNode(p, null, null));
+            fitPreview(previewBox);
             const statusText = { issued: '발급됨', returned: `복귀 확인 (${(p.returned_at || '').slice(11, 16)})`, cancelled: '발급 취소됨' }[p.status];
             pane.append(
                 el('h1', `${KIND[p.kind]}증 · ${p.student_name}`),
@@ -275,7 +301,7 @@ export function openPass(p, refresh = false) {
                         el('a.btn', { href: `/pass/#${url.split('#')[1]}`, target: '_blank', rel: 'noopener' }, '👀 학생 화면 미리보기')))
                     : el('p.muted', '⚙ 설정에서 공유 페이지 주소를 입력하면 QR 이 만들어집니다.'),
                 el('h2', '미리보기'),
-                el('div.preview-box', slipNode(p, null, null)));
+                previewBox);
             if (url) {
                 qrBox.append(el('span.muted', 'QR 만드는 중…'));
                 qrDataUrl(url).then(src => {
