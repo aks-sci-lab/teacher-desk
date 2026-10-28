@@ -65,6 +65,24 @@ class ReadableTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_reclean_failure_does_not_stop_new_memos(self):
+        env = Env()
+        local = Path(env.tmp.name) / "local"
+        memo = local / "CoolMessenger" / "Memo"
+        memo.mkdir(parents=True)
+        recent = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        make_udb(memo / "홍길동.udb", "a", [("교무부", "회의", comp("<div>11월 3일 회의</div>"), recent)])
+        (env.edu / "공문.txt").write_text("11월 5일 행사", encoding="utf-8")
+        env.config.values.update(coolmessenger_name="홍길동", coolmessenger_folder="")
+        try:
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(local)}), \
+                    patch("desk.collect.reclean_cool_items", side_effect=RuntimeError("뜻밖")):
+                s = Collector(env.db, env.config).run("manual")
+            self.assertEqual(s["items"], 2, s)          # 새 쪽지 + 에듀파인 공문은 그대로 받음
+            self.assertTrue(any("다시 정리 실패" in e for e in s["errors"]), s)
+        finally:
+            env.close()
+
 
 if __name__ == "__main__":
     unittest.main()
