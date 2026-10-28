@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS files_seen (
     path TEXT PRIMARY KEY,
     mtime REAL,
     size INTEGER,
-    item_id INTEGER
+    item_id INTEGER,
+    error TEXT                       -- 읽지 못한 까닭 (수동 수집 때 다시 시도)
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -111,6 +112,8 @@ class DB:
             # 0.4.2: 수신함에서 체크한 메시지만 일정 등록 (사용자 요청). 직접 입력·학사일정은 등록된 것으로
             self.conn.execute("ALTER TABLE items ADD COLUMN registered INTEGER DEFAULT 0")
             self.conn.execute("UPDATE items SET registered = 1 WHERE source IN ('paste', 'school')")
+        if "error" not in {r[1] for r in self.conn.execute("PRAGMA table_info(files_seen)")}:
+            self.conn.execute("ALTER TABLE files_seen ADD COLUMN error TEXT")  # 0.5.5
         if "images" not in cols:
             self.conn.execute("ALTER TABLE items ADD COLUMN images TEXT")  # 0.5.2: 쿨메신저 사진
 
