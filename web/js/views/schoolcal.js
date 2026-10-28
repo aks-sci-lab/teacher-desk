@@ -22,7 +22,7 @@ function fileToBase64(file) {
 
 export function openSchoolCal() {
     openTab({
-        id: 'schoolcal', title: '📥 학사일정 가져오기',
+        id: 'schoolcal', title: '학사일정 가져오기',
         render(pane) {
             let year = defaultYear();
             let source = 'file';
@@ -73,7 +73,7 @@ export function openSchoolCal() {
                         const res = await api.post('/api/schoolcal/save', { school_year: year, events, origin, replace: replace.checked });
                         toast(`학사일정 ${res.count}건을 달력에 넣었습니다${res.replaced ? ' (이전 것은 바꿈)' : ''}`);
                         emit('data-changed');
-                    }) }, '📅 ', count, '건 달력에 넣기')));
+                    }) }, '', count, '건 달력에 넣기')));
             };
 
             const renderSource = () => {
@@ -133,7 +133,7 @@ export function openSchoolCal() {
                 }
             };
 
-            const seg = el('div.seg', [['file', '📄 파일'], ['paste', '📋 붙여넣기'], ['neis', '🏫 나이스']].map(([k, label]) =>
+            const seg = el('div.seg', [['file', '파일'], ['paste', '붙여넣기'], ['neis', '나이스']].map(([k, label]) =>
                 el('button', { className: k === source ? 'on' : '', onclick: e => {
                     source = k;
                     seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.currentTarget));

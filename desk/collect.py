@@ -89,6 +89,74 @@ def long_path(path):
     return Path(path)
 
 
+def item_file(config, file_path):
+    """항목의 원본 파일 (에듀파인·받은 파일 폴더 안에 아직 있는 문서만), 없으면 None. 화면·텔레그램 공용."""
+    fp = file_path or ""
+    if not fp or "#" in fp:
+        return None
+    roots = [config[k] for k in SOURCES.values() if config[k]]
+    try:
+        p = Path(fp).resolve()
+        allowed = [os.path.normcase(str(Path(r).resolve())).rstrip("\\/") + os.sep for r in roots]
+        name = os.path.normcase(str(p))
+        if p.is_file() and any(name.startswith(a) for a in allowed):
+            return p
+    except OSError:
+        pass
+    return None
+
+
+# 에듀파인에서 내려받은 파일 이름 앞의 '(천상고등학교-13551 (본문) 울산광역시교육청 중등교육과) '
+P_EDU_PREFIX = re.compile(r"^\([^()]*\((?:본문|붙임\d*)\)[^)]*\)\s*")
+
+
+def edufine_title(text, stem):
+    """공문 제목: 본문의 '제목' 줄, 없으면 파일 이름 (앞의 문서번호·기관 묶음은 뗌)."""
+    return extract.subject_line(text) or P_EDU_PREFIX.sub("", stem).strip() or stem
+
+
+def retitle_edufine(db):
+    """예전에 파일 이름을 그대로 제목으로 넣은 공문을 한 번 다시 이름 붙임 (손으로 고친 제목은 그대로)."""
+    if db.get_meta("edufine_title") == 1:
+        return 0
+    n = 0
+    for r in db.query("SELECT id, title, body, file_path FROM items WHERE source = 'edufine' AND file_path IS NOT NULL"):
+        stem = Path(r["file_path"]).stem
+        if r["title"] != stem[:len(r["title"])] or not r["title"]:
+            continue
+        new = edufine_title(r["body"] or "", stem)[:200]
+        if new != r["title"]:
+            db.execute("UPDATE items SET title = ? WHERE id = ?", (new, r["id"]))
+            n += 1
+    db.set_meta("edufine_title", 1)
+    return n
+
+
+def drop_admin_events(db):
+    """예전에 시행·접수 날짜나 표어('오늘이 행복한 …')에서 잘못 뽑은 일정 후보를 한 번 지움.
+    달력에 넣지 않은 항목의, 규칙으로 찾았고 손대지 않은(내용이 원문 그대로인) 일정만."""
+    if db.get_meta("admin_events") == 1:
+        return 0
+    rows = db.query("SELECT e.id, e.date, e.text, i.body, i.received_at FROM events e JOIN items i ON i.id = e.item_id "
+                    "WHERE i.registered = 0 AND e.source IS NULL")
+    gone = []
+    for r in rows:
+        body = r["body"] or ""
+        if not r["text"] or r["text"] not in body:
+            continue  # 손으로 고친 일정
+        try:
+            ref = datetime.strptime(r["received_at"][:10], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        # 지금 규칙으로는 그 줄에서 일정이 하나도 안 나옴 (날짜만 고친 일정은 남김)
+        if extract.event_context(body, r["date"], ref) is None and not extract.extract_events(r["text"], ref):
+            gone.append(r["id"])
+    for eid in gone:
+        db.execute("DELETE FROM events WHERE id = ?", (eid,))
+    db.set_meta("admin_events", 1)
+    return len(gone)
+
+
 def scan_folder(db, source, folder, stats, retry_failed=False):
     folder = Path(folder)
     if not folder.is_dir():
@@ -119,8 +187,7 @@ def scan_folder(db, source, folder, stats, retry_failed=False):
         try:
             text = read_document(long_path(path))
             received = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-            # 공문은 저장할 때 파일 이름이 곧 제목인 경우가 많음
-            title = path.stem if source == "edufine" else None
+            title = edufine_title(text, path.stem) if source == "edufine" else None
             res = add_text_item(db, source, text, title=title, received_at=received, file_path=key)
             if res:
                 item_id = res["id"]
@@ -287,6 +354,11 @@ class Collector:
                     stats["sources"].append("cool")
                     scan_cool_memo(self.db, self.config["coolmessenger_name"], stats,
                                    self.config["coolmessenger_path"])
+                try:
+                    retitle_edufine(self.db)
+                    drop_admin_events(self.db)
+                except Exception as e:  # 예전 자료 정리가 실패해도 수집은 계속
+                    stats["errors"].append(f"예전 자료 정리 실패: {e}")
                 for source, key in SOURCES.items():
                     folder = self.config[key]
                     if folder:

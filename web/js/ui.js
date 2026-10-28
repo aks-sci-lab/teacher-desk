@@ -122,9 +122,52 @@ export function eventLine(e, onOpen) {
         + (e.time ? ` ${e.time}` : '');
     const title = e.item_title || e.text;
     return el('div', { className: `ev ${e.kind}${e.done ? ' done' : ''}` },
-        el('span.when', (e.kind === 'deadline' ? '⏰ ' : '') + when),
+        el('span.when', when),
         catBadge(e.category),
         onOpen ? el('a', { onclick: () => onOpen(e), title: e.text }, title) : el('span', { title: e.text }, title));
+}
+
+// 'D-3'·'오늘'·'지남' (날짜 칸 옆 작은 표시)
+export function ddayInfo(iso) {
+    const n = Math.round((parseIso(iso) - parseIso(todayIso())) / 86400000);
+    if (n < 0) return { label: '지남', cls: 'past', n };
+    if (n === 0) return { label: '오늘', cls: 'soon', n };
+    if (n === 1) return { label: '내일', cls: 'soon', n };
+    return { label: `D-${n}`, cls: n <= 3 ? 'soon' : '', n };
+}
+
+// 글 속 날짜·시각을 굵게 (눈에 띄게). 글자는 textContent 로만 넣음
+const P_DATE_MARK = /(20\d{2}\s*[.\-/년]\s*\d{1,2}\s*[.\-/월]\s*\d{1,2}\s*[.일]?\s*(?:\(\s*[월화수목금토일]\s*\))?|\d{1,2}\s*월\s*\d{1,2}\s*일\s*(?:\(\s*[월화수목금토일]\s*\))?|(?<![\d.])\d{1,2}\s*[./]\s*\d{1,2}\s*\.?\s*\(\s*[월화수목금토일]\s*\)|(?<![\d:])\d{1,2}:\d{2}(?![\d:]))(\s*까지)?/g;
+export function markDates(text) {
+    const out = [];
+    let last = 0;
+    for (const m of text.matchAll(P_DATE_MARK)) {
+        if (m.index > last) out.push(text.slice(last, m.index));
+        out.push(el('span.dt', m[0]));
+        last = m.index + m[0].length;
+    }
+    if (last < text.length) out.push(text.slice(last));
+    return out;
+}
+
+// 팝업 창: modal({ title, body, actions }) → { close, box }. Esc·바깥을 누르면 닫힘
+export function modal({ title, body, actions = [], wide = false }) {
+    const prev = document.activeElement;
+    const close = () => {
+        back.remove();
+        document.removeEventListener('keydown', onKey);
+        prev?.focus?.();
+    };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    const box = el('div.modal', { role: 'dialog', ariaModal: 'true', tabIndex: -1, className: `modal${wide ? ' wide' : ''}` },
+        el('header.modal-head', el('h2', title), el('div.modal-actions', actions,
+            el('button.icon-btn', { title: '닫기 (Esc)', onclick: () => close() }, '✕'))),
+        el('div.modal-body', body));
+    const back = el('div.modal-back', { onclick: e => { if (e.target === back) close(); } }, box);
+    document.body.append(back);
+    document.addEventListener('keydown', onKey);
+    box.focus();
+    return { close, box };
 }
 
 export function debounce(fn, ms = 300) {

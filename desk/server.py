@@ -19,8 +19,8 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, ai, coolmsg, extract, neis, picker, queries, schoolcal
-from .collect import SOURCES, add_text_item, diagnose
+from . import VERSION, ai, coolmsg, extract, neis, picker, queries, schoolcal, timetable
+from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
 from .ics import to_ics
@@ -36,7 +36,7 @@ MAX_BODY = 20 * 1024 * 1024  # 학사일정 파일 올리기(base64) 때문에 �
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
        # 쿨메신저 사진·스티커가 인터넷 주소일 수 있어 http(s) 그림은 허용 (스크립트·연결은 이 PC 만)
-       "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+       "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
 class ApiError(Exception):
@@ -255,6 +255,8 @@ def get_state(app, q, body):
         "counts": {
             "new_items": db.one("SELECT COUNT(*) AS n FROM items WHERE status = 'new'")["n"],
             "students": db.one("SELECT COUNT(*) AS n FROM students")["n"],
+            # 텔레그램으로 발급하면 화면이 알아채고 목록을 새로 고침
+            "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
         },
         "telegram": {
             "status": app.bot.status if app.bot else "꺼짐",
@@ -341,15 +343,7 @@ def list_passes(app, q, body):
 
 @api("POST", "/api/passes")
 def create_pass(app, q, body):
-    f = pass_fields(body)
-    with app.db.lock:
-        n = app.db.one("SELECT COUNT(*) AS n FROM passes WHERE date = ?", (f["date"],))["n"] + 1
-        f["serial"] = f["date"].replace("-", "") + f"-{n:02d}"
-        f["created_at"] = now_str()
-        cols = ", ".join(f)
-        pid = app.db.execute(f"INSERT INTO passes({cols}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
-    app.db.log(f"{'조퇴증' if f['kind'] == 'early' else '외출증'} 발급 {f['serial']}")
-    return app.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
+    return queries.issue_pass(app.db, pass_fields(body))
 
 
 @api("PATCH", r"/api/passes/(\d+)")
@@ -419,7 +413,44 @@ def get_item(app, q, body, item_id):
     # 인터넷 사진은 주소 그대로, 나머지(쪽지 안 그림·PC 파일)는 /images/n 으로 받게 (큰 그림을 목록에 싣지 않음)
     it["images"] = [{"n": n, "url": s if s.lower().startswith(("http://", "https://")) else None}
                     for n, s in enumerate(it.get("images") or [])]
+    # 일정 후보 자세히: 날짜가 나온 원문 줄과 앞뒤 줄
+    try:
+        ref = datetime.strptime(it["received_at"][:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        ref = date.today()
+    for e in it.get("events") or []:
+        e["context"] = extract.event_context(it.get("body") or "", e["date"], ref)
+    p = _item_file(app, it)
+    it["file"] = {"name": p.name, "ext": p.suffix.lower(), "pdf": p.suffix.lower() == ".pdf",
+                  "can_open": hasattr(os, "startfile")} if p else None
     return it
+
+
+def _item_file(app, it):
+    return item_file(app.config, it.get("file_path"))
+
+
+@api("GET", r"/api/items/(\d+)/file")
+def item_original_pdf(app, q, body, item_id):
+    """원본 PDF (원문 창에서 원래 양식 그대로 보기)."""
+    it = app.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
+    need(it, "없는 항목입니다", 404)
+    p = _item_file(app, it)
+    need(p and p.suffix.lower() == ".pdf", "원본 PDF 파일을 찾을 수 없습니다 (폴더에서 옮겼거나 지워짐)", 404)
+    need(p.stat().st_size <= 50 * 1024 * 1024, "파일이 너무 큽니다", 413)
+    return 200, p.read_bytes(), "application/pdf", {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+@api("POST", r"/api/items/(\d+)/open")
+def open_item_file(app, q, body, item_id):
+    """원본 파일을 이 PC 의 기본 프로그램(한글·PDF 보기)으로 엶 (윈도우)."""
+    it = app.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
+    need(it, "없는 항목입니다", 404)
+    p = _item_file(app, it)
+    need(p, "원본 파일을 찾을 수 없습니다 (폴더에서 옮겼거나 지워짐)", 404)
+    need(hasattr(os, "startfile"), "파일 열기는 윈도우에서만 됩니다")
+    os.startfile(str(p))  # noqa: S606 — 수집 폴더 안의 그 항목 파일만
+    return {"ok": True}
 
 
 def _image_roots(app):
@@ -642,7 +673,180 @@ def calendar_ics(app, q, body):
 # ---- 대시보드·검색·수집 ----
 @api("GET", "/api/today")
 def get_today(app, q, body):
-    return queries.today_summary(app.db)
+    s = queries.today_summary(app.db)
+    s["lessons"] = queries.my_lessons(app.db, app.config, date.today())
+    return s
+
+
+# ---- 내 시간표·수업 교체 ----
+def _tt(app):
+    tt = app.db.get_meta("timetable")
+    need(tt, "시간표를 먼저 불러오세요 (시간표 → 시간표 엑셀 불러오기)", 404)
+    return tt
+
+
+def _tid(tt, value):
+    need(isinstance(value, int) or (isinstance(value, str) and value.isdigit()), "선생님을 고르세요")
+    tid = int(value)
+    need(0 <= tid < len(tt["teachers"]), "없는 선생님입니다", 404)
+    return tid
+
+
+@api("POST", "/api/timetable")
+def timetable_import(app, q, body):
+    """학교 시간표 엑셀(base64) 읽어 저장. 교체 기록은 새 시간표와 맞지 않을 수 있어 비움."""
+    name = text_field(body.get("filename"), "파일 이름", 200, True)
+    try:
+        data = base64.b64decode(body.get("data") or "", validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError(400, "파일을 읽을 수 없습니다")
+    need(data, "빈 파일입니다")
+    words = body.get("lock_words")
+    if words is not None:
+        need(isinstance(words, list) and all(isinstance(w, str) for w in words) and len(words) <= 30, "잠글 과목 이름이 잘못되었습니다")
+        words = [w.strip()[:20] for w in words if w.strip()]
+    try:
+        tt, sheets = timetable.parse_file(data, text_field(body.get("sheet"), "시트", 100) or None, words)
+    except timetable.TimetableError as e:
+        raise ApiError(400, str(e))
+    tt.update(file=name, sheets=sheets, at=now_str(), lock_words=words if words is not None else timetable.LOCK_WORDS)
+    app.db.set_meta("timetable", tt)
+    for sw in app.db.get_meta("timetable_swaps") or []:
+        for eid in sw.get("event_ids") or []:
+            app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+    app.db.set_meta("timetable_swaps", [])
+    me = timetable.find_teacher(tt, app.config["teacher_name"])
+    if me is not None:
+        app.db.set_meta("timetable_me", me)
+    else:
+        app.db.set_meta("timetable_me", None)
+    lessons = sum(len(t["lessons"]) for t in tt["teachers"])
+    locked = sum(1 for t in tt["teachers"] for l in t["lessons"].values() if l["locked"])
+    app.db.log(f"시간표 불러옴: 교사 {len(tt['teachers'])}명, 수업 {lessons}개 (잠금 {locked}개)")
+    return timetable_get(app, q, {})
+
+
+@api("GET", "/api/timetable")
+def timetable_get(app, q, body):
+    tt = app.db.get_meta("timetable")
+    if not tt:
+        return {"loaded": False}
+    return {
+        "loaded": True, "file": tt.get("file"), "sheet": tt.get("sheet"), "sheets": tt.get("sheets") or [], "at": tt.get("at"),
+        "days": tt["days"], "slots": tt["slots"], "lock_words": tt.get("lock_words") or [],
+        "teachers": [{"id": t["id"], "name": t["name"], "dept": t["dept"], "count": len(t["lessons"])} for t in tt["teachers"]],
+        "me": app.db.get_meta("timetable_me"),
+        "swaps": app.db.get_meta("timetable_swaps") or [],
+        "lessons": sum(len(t["lessons"]) for t in tt["teachers"]),
+        "locked": sum(1 for t in tt["teachers"] for l in t["lessons"].values() if l["locked"]),
+    }
+
+
+@api("DELETE", "/api/timetable")
+def timetable_delete(app, q, body):
+    for sw in app.db.get_meta("timetable_swaps") or []:
+        for eid in sw.get("event_ids") or []:
+            app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+    for k in ("timetable", "timetable_swaps", "timetable_me"):
+        app.db.set_meta(k, None)
+    return {"ok": True}
+
+
+@api("PUT", "/api/timetable/me")
+def timetable_me(app, q, body):
+    tt = _tt(app)
+    app.db.set_meta("timetable_me", _tid(tt, body.get("teacher")))
+    return {"ok": True}
+
+
+@api("GET", "/api/timetable/week")
+def timetable_week(app, q, body):
+    """한 선생님의 그 주 시간표 (교체 반영) + 날마다 학사일정·막힌 까닭."""
+    tt = _tt(app)
+    tid = _tid(tt, q.get("teacher", ""))
+    mon = timetable.monday(date.fromisoformat(check_date(q.get("date") or date.today().isoformat())))
+    swaps = app.db.get_meta("timetable_swaps") or []
+    cur = timetable.week_state(tt, mon, swaps)[tid]
+    evs = queries.school_day_events(app.db, mon, mon + timedelta(days=6))
+    today = date.today()
+    days = []
+    for i, name in enumerate(tt["days"]):
+        d = mon + timedelta(days=i)
+        days.append({"date": d.isoformat(), "name": name, "events": evs.get(d.isoformat(), []),
+                     "block": timetable.block_reason(evs, d, None, today) if d >= today else None, "past": d < today})
+    grid = {}
+    for k, l in cur.items():
+        d = mon + timedelta(days=int(k.split("-")[0]))
+        grid[k] = {**l, "block": timetable.block_reason(evs, d, timetable.grade_of(l["cls"]), today)}
+    return {"monday": mon.isoformat(), "days": days, "grid": grid, "teacher": tid}
+
+
+@api("GET", "/api/timetable/candidates")
+def timetable_candidates(app, q, body):
+    tt = _tt(app)
+    tid = _tid(tt, q.get("teacher", ""))
+    key = q.get("key") or ""
+    need(any(s["key"] == key for s in tt["slots"]), "교시가 잘못되었습니다")
+    when = date.fromisoformat(check_date(q.get("date")))
+    need(when.weekday() == int(key.split("-")[0]), "고른 날짜의 요일이 그 수업의 요일과 다릅니다")
+    mon = timetable.monday(when)
+    evs = queries.school_day_events(app.db, mon, mon + timedelta(days=6))
+    try:
+        cands = timetable.find_candidates(tt, tid, key, when, app.db.get_meta("timetable_swaps") or [], evs,
+                                          two_step=q.get("two", "1") != "0")
+    except timetable.TimetableError as e:
+        raise ApiError(400, str(e))
+    me = tt["teachers"][tid]["name"]
+    for c in cands:
+        c["request"] = timetable.request_text(c, me)
+    return {"candidates": cands}
+
+
+@api("POST", "/api/timetable/swaps")
+def timetable_swap_add(app, q, body):
+    """고른 후보를 교체로 기록: 그 주의 시간표·오늘 내 수업에 반영하고, 내 수업이 옮겨진 날은 달력에 적음."""
+    tt = _tt(app)
+    moves = body.get("moves")
+    need(isinstance(moves, list) and 2 <= len(moves) <= 4, "교체 내용이 잘못되었습니다")
+    swaps = app.db.get_meta("timetable_swaps") or []
+    keys = {s["key"] for s in tt["slots"]}
+    clean = []
+    for m in moves:
+        need(isinstance(m, dict) and m.get("from") in keys and m.get("to") in keys, "교체 내용이 잘못되었습니다")
+        tid = _tid(tt, m.get("tid"))
+        fd, td = check_date(m.get("from_date")), check_date(m.get("to_date"))
+        mon = timetable.monday(date.fromisoformat(fd))
+        need(timetable.monday(date.fromisoformat(td)) == mon, "교체는 같은 주 안에서만 됩니다")
+        cur = timetable.week_state(tt, mon, swaps)[tid]
+        need((cur.get(m["from"]) or {}).get("id") == m.get("lesson"), "시간표가 바뀌어 이 교체를 적용할 수 없습니다. 후보를 다시 찾아 주세요")
+        l = cur[m["from"]]
+        clean.append({"tid": tid, "name": tt["teachers"][tid]["name"], "cls": l["cls"], "subj": l["subj"], "lesson": l["id"],
+                      "from": m["from"], "to": m["to"], "from_date": fd, "to_date": td,
+                      "from_label": timetable.slot_label(tt, m["from"], mon), "to_label": timetable.slot_label(tt, m["to"], mon)})
+    me = app.db.get_meta("timetable_me")
+    event_ids = []
+    for m in clean:
+        if m["tid"] != me:
+            continue
+        text = f"시간표 교체: {m['to_label'][m['to_label'].index(')') + 2:]} {m['cls']} {m['subj']} (원래 {m['from_label']})"
+        event_ids.append(app.db.execute(
+            "INSERT INTO events(item_id, date, kind, category, text) VALUES(NULL, ?, 'event', '수업·평가', ?)",
+            (m["to_date"], text[:160])))
+    sw = {"id": secrets.token_hex(4), "at": now_str(), "moves": clean, "event_ids": event_ids}
+    app.db.set_meta("timetable_swaps", (swaps + [sw])[-200:])
+    app.db.log(f"시간표 교체 기록: {clean[0]['from_label']} → {clean[0]['to_label']} ({len({m['tid'] for m in clean})}명)")
+    return sw
+
+
+@api("DELETE", r"/api/timetable/swaps/([0-9a-f]+)")
+def timetable_swap_delete(app, q, body, sid):
+    swaps = app.db.get_meta("timetable_swaps") or []
+    sw = next((x for x in swaps if x["id"] == sid), None)
+    need(sw, "없는 교체 기록입니다", 404)
+    for eid in sw.get("event_ids") or []:
+        app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+    app.db.set_meta("timetable_swaps", [x for x in swaps if x["id"] != sid])
+    return {"ok": True}
 
 
 @api("GET", "/api/ai/weekly")
