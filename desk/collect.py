@@ -89,12 +89,28 @@ def scan_folder(db, source, folder, stats):
                    (key, st.st_mtime, st.st_size, item_id))
 
 
+def repair_comp_items(db, path, last):
+    """0.4.0 까지 압축된 쪽지({COMP}...)가 풀리지 않은 채 들어간 항목을 지우고, 그 쪽지부터 다시 읽게 함."""
+    bad = db.query("SELECT id, file_path FROM items WHERE source = 'cool' AND file_path LIKE ? "
+                   "AND (body LIKE '{COMP}%' OR title LIKE '{COMP}%')", (f"{path}#%",))
+    if not bad:
+        return last
+    rowids = [int(r["file_path"].rsplit("#", 1)[1]) for r in bad if r["file_path"].rsplit("#", 1)[1].isdigit()]
+    for r in bad:
+        db.execute("DELETE FROM items WHERE id = ?", (r["id"],))
+    db.log(f"쿨메신저: 압축된 쪽지 {len(bad)}건을 풀어서 다시 읽습니다")
+    if rowids and last is not None:
+        return min(last, min(rowids) - 1)
+    return last
+
+
 def scan_cool_memo(db, name, stats, path=""):
     """쿨메신저 쪽지 기록에서 지난번 이후 새 쪽지만 가져옴 (경로를 직접 지정했으면 그 파일)."""
     try:
         path = coolmsg.resolve(name, path)
         key = f"cool_last_rowid:{path}"
-        _, memos, top = coolmsg.read_new(path, db.get_meta(key))
+        last = repair_comp_items(db, path, db.get_meta(key))
+        _, memos, top = coolmsg.read_new(path, last)
     except coolmsg.CoolError as e:
         stats["errors"].append(f"쿨메신저: {e}")
         return
