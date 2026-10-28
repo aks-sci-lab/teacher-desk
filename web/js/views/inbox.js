@@ -202,7 +202,28 @@ function renderItem(pane, tab, it) {
                 el('span.ttl', r.title), el('span.meta', srcBadge(r.source), r.received_at.slice(0, 16))))));
     }
     if (it.doc_numbers.length) pane.append(el('p.small.muted', `문서번호: ${it.doc_numbers.join(', ')}`));
+    if (it.images && it.images.length) pane.append(el('h2', `사진 ${it.images.length}장`), imageGrid(it));
     pane.append(el('h2', '원문'), el('details.orig', { open: it.body.length < 1500 }, el('summary', `${it.body.length.toLocaleString()}자`), el('pre.text', it.body)));
+}
+
+// 쿨메신저 사진: 인터넷 주소는 바로, 쪽지 안 그림·PC 파일은 업무 데스크에서 받아 보여 줌. 누르면 크게
+function imageGrid(it) {
+    const grid = el('div.img-grid');
+    for (const im of it.images) {
+        const img = el('img', { alt: `사진 ${im.n + 1}`, loading: 'lazy', referrerPolicy: 'no-referrer',
+            onclick: () => img.classList.toggle('big'),
+            onerror: () => img.replaceWith(el('div.img-missing', '사진을 불러올 수 없습니다')) });
+        grid.append(img);
+        if (im.url) {
+            img.src = im.url;
+        } else {
+            api.get(`/api/items/${it.id}/images/${im.n}`)
+                .then(res => res.blob())
+                .then(b => { img.src = URL.createObjectURL(b); })
+                .catch(e => img.replaceWith(el('div.img-missing', e.message)));
+        }
+    }
+    return grid;
 }
 
 registerView({

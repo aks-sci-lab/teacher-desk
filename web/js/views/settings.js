@@ -106,6 +106,9 @@ function renderSettings(pane, tab) {
             d ? el('div',
                 el('p', { style: 'color: var(--ok); font-weight: 700' }, `✅ 연결됨 — 쪽지 ${d.rows.toLocaleString()}개`),
                 el('p.small.muted', `읽는 곳: 표 ${d.table} · 내용 ${d.body}${d.title ? ' · 제목 ' + d.title : ''}${d.date ? ' · 날짜 ' + d.date : ' · 날짜 열 없음'}${d.sender ? ' · 보낸 사람 ' + d.sender : ''}`),
+                r.images && Object.keys(r.images.kinds).length
+                    ? el('p.small.muted', `최근 쪽지의 사진: ${Object.entries(r.images.kinds).map(([k, n]) => `${k} ${n}장`).join(', ')}${r.images.hosts.length ? ' (' + r.images.hosts.join(', ') + ')' : ''}`)
+                    : el('p.small.muted', '최근 쪽지 200개에서 사진을 찾지 못했습니다.'),
                 el('p.small', '최근 쪽지:'),
                 el('ul.small', r.recent.map(m => el('li', `${m.when || ''} ${m.sender ? '[' + m.sender + '] ' : ''}${m.title}`))),
                 el('p.small.muted', '맞으면 아래 "설정 저장"을 누르세요. 처음 수집 때 최근 30일 쪽지를 가져옵니다.'))
