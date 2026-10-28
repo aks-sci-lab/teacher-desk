@@ -153,7 +153,20 @@ function renderWeek(pane, tab) {
             })));
         }
 
-        const teacherSel = el('select', { onchange: e => { viewTid = Number(e.target.value); picked = null; tab.rerender(); } },
+        // '나' 정하기·바꾸기 (브리핑의 오늘 내 수업·텔레그램·교체 후보가 이 선생님 기준)
+        const setMe = guarded(async id => {
+            await api.put('/api/timetable/me', { teacher: id });
+            await loadTimetable();
+            viewTid = info.me;
+            picked = null;
+            toast(`'나'를 ${teacherName(info.me)} 선생님으로 정했습니다`);
+            emit('timetable-changed');
+            tab.rerender();
+        });
+        const meSel = el('select', { onchange: e => e.target.value !== '' && setMe(Number(e.target.value)) },
+            el('option', { value: '', selected: info.me == null }, '— 선택 —'),
+            info.teachers.map(t => el('option', { value: t.id, selected: t.id === info.me }, `${t.name}${t.dept ? ' · ' + t.dept : ''}`)));
+        const teacherSel = el('select', { title: '볼 선생님', onchange: e => { viewTid = Number(e.target.value); picked = null; tab.rerender(); } },
             info.teachers.map(t => el('option', { value: t.id, selected: t.id === tid }, `${t.name}${t.dept ? ' · ' + t.dept : ''}${t.id === info.me ? ' (나)' : ''}`)));
         const move = n => () => { week = addDays(mon, n); picked = null; tab.rerender(); };
         // pane.append 는 false·null 을 글자로 넣으므로 빈 것은 거름
@@ -165,16 +178,11 @@ function renderWeek(pane, tab) {
                     el('b.tt-week', `${md(mon)} ~ ${md(addDays(mon, info.days.length - 1))}`),
                     el('button.btn.small', { onclick: move(7), title: '다음 주' }, '▶'),
                     el('button.btn.small', { onclick: () => { week = todayIso(); picked = null; tab.rerender(); } }, '이번 주')),
-                el('span.spacer'), teacherSel),
+                el('span.spacer'),
+                el('label.tt-view', '보기 ', teacherSel),
+                !mine && el('button.btn.small.primary', { onclick: () => setMe(tid), title: '브리핑의 오늘 내 수업·텔레그램·교체 후보를 이 선생님 기준으로' }, `이 선생님을 '나'로`)),
             info.me == null && el('div.tt-me',
-                '내 이름을 시간표에서 고르세요 (설정의 담임 이름과 같으면 저절로 찾습니다): ',
-                el('select', { onchange: guarded(async e => {
-                    await api.put('/api/timetable/me', { teacher: Number(e.target.value) });
-                    await loadTimetable();
-                    viewTid = info.me;
-                    emit('timetable-changed');
-                    tab.rerender();
-                }) }, el('option', { value: '' }, '— 선택 —'), info.teachers.map(t => el('option', { value: t.id }, t.name)))),
+                '내 이름을 시간표에서 고르세요 (설정의 담임 이름과 같으면 저절로 찾습니다): ', meSel),
             el('div.tt-bar', mine
                 ? (picked
                     ? el('span', el('b', `${md(picked.date)} ${info.days[Number(picked.key.split('-')[0])]} ${picked.key.split('-')[1]}교시 ${wk.grid[picked.key]?.cls || ''} ${wk.grid[picked.key]?.subj || ''}`),
@@ -183,7 +191,7 @@ function renderWeek(pane, tab) {
                             : ' — 그 주 안에서 바꿀 자리가 없습니다. 다른 주를 보세요.',
                         el('button.btn.small', { onclick: () => { picked = null; tab.rerender(); } }, '선택 해제'))
                     : '바꿀 수업을 누르면 그 주 안에서 바꿀 수 있는 자리가 초록 칸으로 나옵니다.')
-                : '다른 선생님 시간표는 보기만 합니다.'),
+                : el('span', `${teacherName(tid)} 선생님 시간표는 보기만 합니다. 내 시간표라면 위의 [이 선생님을 '나'로] 를 누르세요.`)),
             el('div.tt-wrap', el('table.tt', el('thead', head), el('tbody', rows))),
             picked && picked.cands.length > 0 && el('section.tt-cands',
                 el('h2', '교체 후보'),
@@ -195,7 +203,9 @@ function renderWeek(pane, tab) {
                         el('span.muted.small', `선생님 ${c.teachers}명`)),
                     el('div.mv', c.moves.slice(1).map(m => el('div', `${m.name} · ${m.cls} ${m.subj} ${m.from_label} → ${m.to_label}`))))))),
             el('p.small.muted.tt-foot', `${info.file} · ${info.sheet} · 선생님 ${info.teachers.length}명 · 수업 ${info.lessons}개 (잠금 ${info.locked}개) · ${info.at} 불러옴`),
-            el('details.tt-more', el('summary', '시간표 파일 바꾸기·지우기'), importBox(() => tab.rerender()),
+            el('details.tt-more', el('summary', "'나' 바꾸기 · 시간표 파일 바꾸기·지우기"),
+                info.me != null && el('label.field.tt-me-field', el('span', "나 (오늘 내 수업·텔레그램·교체 후보 기준)"), meSel),
+                importBox(() => tab.rerender()),
                 el('button.btn.small.danger', { onclick: guarded(async () => {
                     if (!confirm('불러온 시간표와 교체 기록을 지울까요?')) return;
                     await api.del('/api/timetable');
