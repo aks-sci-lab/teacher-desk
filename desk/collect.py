@@ -50,6 +50,12 @@ CLOUD_REASON = ("클라우드(Synology Drive·OneDrive 등)에만 있고 이 PC 
                 "파일 탐색기에서 폴더를 마우스 오른쪽 → 'Synology Drive → 로컬에 유지(고정)' 또는 "
                 "OneDrive '항상 이 장치에 유지'를 누르거나, 동기화 프로그램이 켜져 있는지 확인하세요")
 BLOCKED_REASON = "윈도우가 파일 열기를 막았습니다. 문서보안(DRM)·백신 프로그램이 막았거나, 클라우드에만 있는 파일일 수 있습니다"
+# 윈도우 클라우드 파일 오류 번호 (파이썬은 모르는 번호를 모두 'Invalid argument' 로 보여 줌)
+CLOUD_PROVIDER_OFF = 362          # ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING
+SYNC_REASON = ("동기화 프로그램(Synology Drive·OneDrive 등)이 이 파일을 아직 동기화 중이거나 멈춰 있어 열 수 없습니다. "
+               "동기화 프로그램 창에서 상태(일시 중지·오류·로그인)를 확인하고, 파일 옆 🔄 표시가 ✅ 로 바뀐 뒤 '지금 수집'을 누르세요")
+PROVIDER_OFF_REASON = ("동기화 프로그램(Synology Drive·OneDrive 등)이 꺼져 있어 파일을 열 수 없습니다. "
+                       "동기화 프로그램을 켜고 로그인한 뒤 '지금 수집'을 누르세요")
 
 
 def read_problem(path, err):
@@ -58,11 +64,17 @@ def read_problem(path, err):
         attrs = getattr(os.stat(path), "st_file_attributes", 0)
     except OSError:
         attrs = 0
+    win = getattr(err, "winerror", None)
+    code = f" [윈도우 오류 {win}]" if win else ""
+    if win == CLOUD_PROVIDER_OFF:
+        return PROVIDER_OFF_REASON + code
+    if win and 358 <= win <= 399:   # ERROR_CLOUD_FILE_* (동기화 중·잠김·요청 취소 등)
+        return SYNC_REASON + code
     if attrs & CLOUD_ATTRS:
-        return CLOUD_REASON
+        return CLOUD_REASON + code
     if err.errno in (1, 13, 22):  # EPERM · EACCES · EINVAL ('Invalid argument')
-        return BLOCKED_REASON
-    return f"읽기 실패 ({err.strerror or err})"
+        return BLOCKED_REASON + code
+    return f"읽기 실패 ({err.strerror or err}){code}"
 
 
 def long_path(path):

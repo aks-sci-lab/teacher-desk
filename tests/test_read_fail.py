@@ -55,6 +55,16 @@ class ReadFailTests(unittest.TestCase):
             self.assertIn("클라우드", collect.read_problem(p, OSError(errno.EINVAL, "Invalid argument")))
         self.assertIn("문서보안", collect.read_problem(p, OSError(errno.EACCES, "Permission denied")))
         self.assertIn("읽기 실패", collect.read_problem(p, OSError(errno.EIO, "I/O error")))
+        # 윈도우가 주는 진짜 오류 번호 (파이썬은 'Invalid argument' 로만 보여 줌)
+        e = OSError(errno.EINVAL, "Invalid argument")
+        e.winerror = 362
+        self.assertIn("꺼져 있어", collect.read_problem(p, e))
+        e.winerror = 375                                                  # 동기화 중인 클라우드 파일
+        msg = collect.read_problem(p, e)
+        self.assertIn("동기화 중", msg)
+        self.assertIn("[윈도우 오류 375]", msg)
+        e.winerror = 87
+        self.assertIn("[윈도우 오류 87]", collect.read_problem(p, e))
         if os.name != "nt":                                             # 긴 경로 처리는 윈도우에서만
             self.assertEqual(collect.long_path(p), p)
 
