@@ -580,9 +580,24 @@ body.layout-edit [data-region]::after {
 }
 
 /* 브리핑 AI 요약 */
-.ai-text { line-height: 1.6; font-size: 0.95em; }
-.ai-text h4 { margin: 10px 0 2px; font-size: 1em; }
-.ai-text div { min-height: 0.4em; }
+.ai-text { line-height: 1.6; font-size: 0.95em; white-space: pre-wrap; }
+.ai-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.ai-sec { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: var(--radius); padding: 8px 12px; background: var(--surface); }
+.ai-sec.todo { border-left-color: var(--c-deadline, var(--danger)); }
+.ai-sec.event { border-left-color: var(--accent); }
+.ai-sec h4 { margin: 0 0 6px; font-size: 1em; }
+.ai-list { list-style: none; margin: 0; padding: 0; }
+.ai-row { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-top: 1px solid var(--line); line-height: 1.45; }
+.ai-row:first-child { border-top: 0; }
+.ai-when { flex: none; min-width: 6.2em; font-weight: 700; font-size: 0.9em; white-space: nowrap; }
+.ai-dday { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 9px; font-size: 0.8em; font-weight: 700; background: var(--surface-2); color: var(--muted); }
+.ai-dday.soon { background: var(--danger-soft); color: var(--danger); }
+.ai-dday.past { text-decoration: line-through; }
+.ai-txt { flex: 1; min-width: 0; }
+.ai-refs { flex: none; display: flex; gap: 3px; }
+.ai-ref { display: inline-block; min-width: 1.6em; padding: 0 4px; border-radius: 4px; text-align: center; font-size: 0.78em; background: var(--accent-soft); color: var(--accent); text-decoration: none; }
+a.ai-ref:hover { background: var(--accent); color: var(--accent-ink); }
+.ai-more { margin-top: 6px; }
 section.card + .cards, .cards { margin-top: 12px; }
 
 /* 쿨메신저 사진 */

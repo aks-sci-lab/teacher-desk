@@ -138,6 +138,9 @@ class AITests(unittest.TestCase):
         prompt, used = ai.build_prompt(items)
         self.assertLess(len(prompt), ai.TOTAL_CHARS + 1000)
         self.assertLess(used, 40)
+        p, _ = ai.build_prompt(items[:1], today=date(2026, 10, 28))
+        self.assertIn("오늘은 2026-10-28(수)", p)                              # 지난 마감을 빼고 D-day 를 맞추게
+        self.assertIn("35자", p)
         short, used_short = ai.build_prompt(items, size="short")
         self.assertLess(len(short), 6000 + 1000)
         self.assertLess(used_short, used)
