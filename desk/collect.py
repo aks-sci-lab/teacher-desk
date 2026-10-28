@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import coolmsg, extract
 from .db import now_str
-from .docs import SUPPORTED, DocError, read_document
+from .docs import SUPPORTED, DocError, fix_surrogates, read_document
 
 SOURCES = {"edufine": "edufine_folder", "cool": "coolmessenger_folder"}
 SOURCE_NAMES = {"edufine": "에듀파인", "cool": "쿨메신저", "paste": "직접 입력", "school": "학사일정"}
@@ -28,7 +28,8 @@ def content_hash(text):
 
 def add_text_item(db, source, text, title=None, received_at=None, file_path=None, ref=None):
     """글 하나를 분석해 수신함에 저장. 같은 내용이 이미 있으면 None."""
-    text = text.strip()
+    text = fix_surrogates(text).strip()
+    title = fix_surrogates(title) if title else title
     if not text:
         return None
     h = content_hash(text)
