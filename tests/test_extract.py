@@ -85,6 +85,13 @@ class AnalyzeTests(unittest.TestCase):
         extract.analyze("11월" * 30000 + " 교무과-12", REF)
         self.assertLess(time.monotonic() - start, 3)
 
+    def test_many_dates_on_one_line_fast(self):
+        # 날짜가 아주 많은 한 줄 (줄바꿈 없는 표 등): 예전에는 날짜마다 줄 전체를 다시 훑어 수십 초
+        import time
+        start = time.monotonic()
+        extract.analyze("11월 3일 제출 " * 20000, REF)
+        self.assertLess(time.monotonic() - start, 3)
+
     def test_no_dates(self):
         a = extract.analyze("교직원 여러분 수고 많으셨습니다.", REF)
         self.assertEqual(a["events"], [])

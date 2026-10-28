@@ -193,7 +193,7 @@ def cool_title(title, body):
     return title
 
 
-CLEAN_VERSION = 2   # 0.5.9: 글자 꾸밈 태그 사이 빈칸 없애기·관련 공문 날짜 빼기·잘린 제목
+CLEAN_VERSION = 2   # 0.5.10: 글자 꾸밈 태그 사이 빈칸 없애기·관련 공문 날짜 빼기·잘린 제목
 
 
 def cool_text(m):
@@ -205,10 +205,10 @@ def reclean_cool_items(db, path):
     key = f"cool_clean:{path}"
     if (db.get_meta(key) or 0) >= CLEAN_VERSION:
         return
-    rows = db.query("SELECT id, title, body, registered, received_at FROM items WHERE source = 'cool' AND file_path LIKE ?",
-                    (f"{path}#%",))
+    rows = db.query("SELECT id, title, body, registered, received_at, file_path FROM items "
+                    "WHERE source = 'cool' AND file_path LIKE ?", (f"{path}#%",))
     ids = {}
-    for r in db.query("SELECT id, file_path FROM items WHERE source = 'cool' AND file_path LIKE ?", (f"{path}#%",)):
+    for r in rows:
         tail = r["file_path"].rsplit("#", 1)[1]
         if tail.isdigit():
             ids[int(tail)] = r["id"]
@@ -243,7 +243,12 @@ def scan_cool_memo(db, name, stats, path=""):
         key = f"cool_last_rowid:{path}"
         last = repair_comp_items(db, path, db.get_meta(key))
         fill_missing_images(db, path)
-        reclean_cool_items(db, path)
+        try:
+            reclean_cool_items(db, path)
+        except coolmsg.CoolError:
+            raise
+        except Exception as e:  # 다시 정리하다 실패해도 새 쪽지 받기는 계속 (다음 수집 때 다시 시도)
+            stats["errors"].append(f"쿨메신저: 받은 쪽지 다시 정리 실패 ({type(e).__name__}: {e})")
         _, memos, top = coolmsg.read_new(path, last)
     except coolmsg.CoolError as e:
         stats["errors"].append(f"쿨메신저: {e}")
