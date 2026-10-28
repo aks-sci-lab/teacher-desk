@@ -14,6 +14,8 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
+from . import extract
+
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 DAYS = 7
 MAX_ITEMS = 60
@@ -188,6 +190,7 @@ def weekly_summary(db, config, today=None, timeout=TIMEOUT):
     prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today)
     text = ask(base, model, prompt, timeout)
     result.update(text=text, used=used, model=model, ids=[it["id"] for it in items[:used]])
+    result["applied"] = apply_summary(db, text, result["ids"], today)
     db.set_meta("ai_weekly", result)
     db.log(f"AI 요약: 지난 {DAYS}일 자료 {used}건 ({model})")
     return result
@@ -208,11 +211,101 @@ def update_summary(db, config, today=None, timeout=TIMEOUT):
     text = ask(config["ai_base"], model, prompt, timeout)
     update = {"at": datetime.now().strftime("%Y-%m-%d %H:%M"), "text": text, "model": model,
               "count": len(items), "used": used, "ids": [it["id"] for it in items[:used]]}
+    update["applied"] = apply_summary(db, text, update["ids"], today)
     result["updates"] = ([update] + result.get("updates", []))[:MAX_UPDATES]
     result["seen_id"] = top
     db.set_meta("ai_weekly", result)
     db.log(f"AI 요약: 새로 들어온 자료 {used}건 덧붙임 ({model})")
     return result
+
+
+# ---------------------------------------------------------------- 요약으로 분류하기
+# 요약 줄 '- 10/30(금) · 할 일 [3, 7]' 을 읽어, 그 자료(메시지·공문)의 분류와 일정 후보를 고침.
+# AI 에게 따로 묻지 않으므로 시간이 더 들지 않음. 달력에 넣은(체크한) 항목은 건드리지 않음.
+P_HEAD = re.compile(r"^#{1,4}\s*(.+)")
+P_ROW = re.compile(r"^[-*•·]\s*(.+)$")
+P_REFS = re.compile(r"\[(\d+(?:\s*[,，]\s*\d+)*)\]")
+P_MD = re.compile(r"(\d{1,2})\s*[/.월]\s*(\d{1,2})")
+
+
+def parse_summary(text):
+    """요약 글 → [(칸, 날짜 글, 내용, [자료 번호])]. 칸: todo / event / note."""
+    rows, kind = [], None
+    for raw in text.splitlines():
+        line = raw.replace("**", "").strip()
+        head = P_HEAD.match(line)
+        if head:
+            h = head.group(1)
+            kind = "todo" if re.search(r"할\s*일|마감", h) else "event" if re.search(r"행사|회의|일정", h) else "note"
+            continue
+        m = P_ROW.match(line)
+        if not m or not kind:
+            continue
+        body = m.group(1)
+        refs = [int(n) for g in P_REFS.findall(body) for n in re.split(r"[,，]", g)]
+        body = P_REFS.sub("", body).strip()
+        when, _, what = body.partition(" · ")
+        if not what:
+            when, what = "", body
+        rows.append((kind, when.strip(), what.strip(), refs))
+    return rows
+
+
+def row_date(when, today):
+    m = P_MD.search(when)
+    if not m:
+        return None
+    try:
+        d = date(today.year, int(m.group(1)), int(m.group(2)))
+    except ValueError:
+        return None
+    if (d - today).days < -180:      # 12월에 받은 '1/5' 는 다음 해
+        d = d.replace(year=d.year + 1)
+    elif (d - today).days > 185:
+        d = d.replace(year=d.year - 1)
+    return d
+
+
+def apply_summary(db, text, ids, today=None):
+    """요약에 나온 날짜·칸으로 자료의 분류와 일정 후보를 맞춤 → {'added', 'changed', 'items'}."""
+    today = today or date.today()
+    added = changed = 0
+    touched = set()
+    for kind, when, what, refs in parse_summary(text):
+        if kind == "note":
+            continue
+        d = row_date(when, today)
+        ev_kind = "deadline" if kind == "todo" else "event"
+        category = "제출·마감" if kind == "todo" else (extract.classify_line(what, False) or "행사")
+        for n in refs:
+            if not (1 <= n <= len(ids)):
+                continue
+            item = db.one("SELECT id, registered FROM items WHERE id = ?", (ids[n - 1],))
+            if not item or item["registered"]:
+                continue   # 달력에 넣은 항목은 선생님이 확인한 것이므로 그대로
+            if item["id"] not in touched:
+                db.execute("UPDATE items SET category = ? WHERE id = ?", (category, item["id"]))
+                touched.add(item["id"])
+            if not d:
+                continue
+            t = extract.find_time(when + " " + what)
+            same = db.one("SELECT id, kind, time FROM events WHERE item_id = ? AND date = ? ORDER BY id LIMIT 1",
+                          (item["id"], d.isoformat()))
+            if same:
+                # 마감은 일정으로 낮추지 않음 (같은 일이 '할 일'과 '행사'에 함께 나오기도 함)
+                to_deadline = ev_kind == "deadline" and same["kind"] != "deadline"
+                if to_deadline:
+                    db.execute("UPDATE events SET kind = 'deadline', category = ?, time = COALESCE(time, ?) WHERE id = ?",
+                               (category, t, same["id"]))
+                    changed += 1
+                elif t and not same["time"]:
+                    db.execute("UPDATE events SET time = ? WHERE id = ?", (t, same["id"]))
+                    changed += 1
+            else:
+                db.execute("INSERT INTO events(item_id, date, time, kind, category, text, source) "
+                           "VALUES(?, ?, ?, ?, ?, ?, 'ai')", (item["id"], d.isoformat(), t, ev_kind, category, what[:160]))
+                added += 1
+    return {"added": added, "changed": changed, "items": len(touched)}
 
 
 def ask(base, model, prompt, timeout=TIMEOUT):
