@@ -1,6 +1,7 @@
 name: 학생 공유 페이지 (GitHub Pages)
 
 # pass/ (조퇴증·외출증 학생 폰 화면)를 https://aks-sci-lab.github.io/teacher-desk/ 에 올립니다.
+# pass/timetable/ 은 시간표 교체 도우미 (…/teacher-desk/timetable/, 엑셀은 브라우저 안에서만 읽음).
 # 처음 한 번: 저장소 Settings → Pages → Source 를 "GitHub Actions" 로 바꿔야 합니다.
 # 증 내용은 주소 # 뒤에만 있어 이 사이트에는 학생 정보가 저장되지 않습니다.
 
