@@ -8,6 +8,7 @@
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -176,6 +177,63 @@ def fill_missing_images(db, path):
                    (json.dumps(found.get(rowid, []), ensure_ascii=False), item_id))
 
 
+def squash(s):
+    return re.sub(r"\s+", "", s or "")
+
+
+def cool_title(title, body):
+    """쿨메신저 제목은 앞 몇 글자에서 잘려 있음 ('… 표창 관련 공') → 본문 첫 줄이 그 제목으로 시작하면 첫 줄로."""
+    if not title:
+        return None
+    first = extract.make_title(body)
+    if len(squash(first)) > len(squash(title)) and squash(first).startswith(squash(title)):
+        return first
+    return title
+
+
+CLEAN_VERSION = 2   # 0.5.9: 글자 꾸밈 태그 사이 빈칸 없애기·관련 공문 날짜 빼기·잘린 제목
+
+
+def cool_text(m):
+    return m["body"] + (f"\n\n(보낸 사람: {m['sender']})" if m["sender"] else "")
+
+
+def reclean_cool_items(db, path):
+    """글 정리 방식이 바뀌면 이미 받은 쿨메신저 쪽지를 한 번 다시 정리 (일정은 달력에 넣지 않은 것만 다시 찾음)."""
+    key = f"cool_clean:{path}"
+    if (db.get_meta(key) or 0) >= CLEAN_VERSION:
+        return
+    rows = db.query("SELECT id, title, body, registered, received_at FROM items WHERE source = 'cool' AND file_path LIKE ?",
+                    (f"{path}#%",))
+    ids = {}
+    for r in db.query("SELECT id, file_path FROM items WHERE source = 'cool' AND file_path LIKE ?", (f"{path}#%",)):
+        tail = r["file_path"].rsplit("#", 1)[1]
+        if tail.isdigit():
+            ids[int(tail)] = r["id"]
+    memos = coolmsg.memos_for_rowids(path, ids) if ids else {}
+    by_id = {r["id"]: r for r in rows}
+    changed = 0
+    for rowid, item_id in ids.items():
+        m, it = memos.get(rowid), by_id.get(item_id)
+        if not m or not it or not m["body"]:
+            continue
+        text = fix_surrogates(cool_text(m)).strip()
+        title = cool_title(m["title"], m["body"]) or it["title"]
+        if text == it["body"] and title == it["title"]:
+            continue
+        ref = datetime.strptime(it["received_at"][:10], "%Y-%m-%d").date()
+        a = extract.analyze(text, ref=ref, title=title)
+        db.execute("UPDATE items SET title = ?, body = ?, summary = ?, doc_numbers = ?, content_hash = ? WHERE id = ?",
+                   (a["title"], text, json.dumps(a["summary"], ensure_ascii=False),
+                    json.dumps(a["doc_numbers"], ensure_ascii=False), content_hash(text), item_id))
+        if not it["registered"]:  # 아직 달력에 넣지 않은 일정 후보만 새로 찾은 것으로
+            db.replace_events(item_id, a["events"])
+        changed += 1
+    db.set_meta(key, CLEAN_VERSION)
+    if changed:
+        db.log(f"쿨메신저: 받은 쪽지 {changed}건을 읽기 쉽게 다시 정리했습니다")
+
+
 def scan_cool_memo(db, name, stats, path=""):
     """쿨메신저 쪽지 기록에서 지난번 이후 새 쪽지만 가져옴 (경로를 직접 지정했으면 그 파일)."""
     try:
@@ -183,16 +241,15 @@ def scan_cool_memo(db, name, stats, path=""):
         key = f"cool_last_rowid:{path}"
         last = repair_comp_items(db, path, db.get_meta(key))
         fill_missing_images(db, path)
+        reclean_cool_items(db, path)
         _, memos, top = coolmsg.read_new(path, last)
     except coolmsg.CoolError as e:
         stats["errors"].append(f"쿨메신저: {e}")
         return
     for m in memos:
-        text = m["body"]
-        if m["sender"]:
-            text += f"\n\n(보낸 사람: {m['sender']})"
+        text = cool_text(m)
         received = (m["when"] or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
-        res = add_text_item(db, "cool", text, title=m["title"] or None, received_at=received,
+        res = add_text_item(db, "cool", text, title=cool_title(m["title"], m["body"]), received_at=received,
                             file_path=f"{path}#{m['rowid']}", images=m.get("images") or [])
         if res:
             stats["items"] += 1
