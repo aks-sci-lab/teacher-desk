@@ -177,7 +177,9 @@ function renderItem(pane, tab, it) {
             el('option', { value: 'event', selected: e.kind === 'event' }, '일정'))),
         el('td', el('select', { onchange: ev => evPatch(e, { category: ev.target.value }) },
             CATEGORIES.map(c => el('option', { value: c, selected: c === e.category }, c)))),
-        el('td', el('input', { type: 'text', value: e.text, onchange: ev => evPatch(e, { text: ev.target.value }) }),
+        el('td', el('div.row', { style: 'flex-wrap: nowrap; gap: 4px' },
+                el('input', { type: 'text', value: e.text, style: 'flex: 1', onchange: ev => evPatch(e, { text: ev.target.value }) }),
+                e.source === 'ai' && el('span.ai-mark', { title: '브리핑 AI 요약에서 찾은 일정입니다' }, '🤖')),
             e.end_date && el('div.small.muted', `~ ${e.end_date} 까지`)),
         el('td', el('button.icon-btn', { title: '일정 지우기', onclick: guarded(async () => {
             await api.del(`/api/events/${e.id}`);

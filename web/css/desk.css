@@ -40,6 +40,7 @@
     --c-class: #2563eb;
     --c-school: #0d9488;
     --c-ref: #6b7280;
+    --c-family: #8d6e63;
 }
 
 :root[data-theme="dark"] {
@@ -69,6 +70,7 @@
     --c-class: #6aa1ff;
     --c-school: #2dd4bf;
     --c-ref: #98a1b3;
+    --c-family: #c8a99c;
 }
 
 :root.compact { --pad: 8px; }
@@ -305,6 +307,8 @@ a { color: var(--accent); }
 }
 .icon-btn:hover { background: var(--surface-2); }
 
+[hidden] { display: none !important; }
+
 input[type=text], input[type=date], input[type=time], input[type=password], input[type=search], select, textarea {
     padding: 6px 8px;
     border: 1px solid var(--line);
@@ -360,6 +364,7 @@ label.check .hint { font-size: 0.8em; color: var(--muted); }
 .cat-행사 { background: var(--c-event); }
 .cat-수업·평가 { background: var(--c-class); }
 .cat-학사 { background: var(--c-school); }
+.cat-경조사 { background: var(--c-family); }
 .cat-참고 { background: var(--c-ref); }
 .src-cool { background: #e0f2fe; color: #0369a1; }
 .src-edufine { background: #ede9fe; color: #5b21b6; }
@@ -457,12 +462,28 @@ ul.summary li { margin: 2px 0; }
 .cal .chipev.done { opacity: .45; text-decoration: line-through; }
 
 /* 조퇴증·외출증 */
-.pass-layout { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 24px; align-items: start; }
+.pass-layout { display: grid; grid-template-columns: minmax(320px, 440px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.pass-form .field > .seg { align-self: flex-start; }
+.pass-form .field { margin-bottom: 14px; }
+.student-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.student-row select { flex: 1 1 170px; }
+.student-row .manual { display: flex; gap: 8px; flex: 2 1 200px; min-width: 0; }
+.student-row .manual .num { width: 64px; flex: none; }
+.student-row .manual input:not(.num) { flex: 1; }
+.pass-times { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 0 10px; }
+.pass-times.three { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr); }
+.pass-form .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.pass-form .chips .chip { padding: 4px 12px; }
+.pass-checks { padding: 10px 12px 0; margin-bottom: 14px; border-radius: var(--radius); background: var(--surface-2); }
+.pass-checks label.check { margin-bottom: 10px; }
+.pass-actions .btn.primary { flex: 1; justify-content: center; }
+.pass-preview { position: sticky; top: 0; max-width: 720px; }
+.pass-preview .hint { margin-top: 8px; color: var(--muted); }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button { border: 0; padding: 6px 16px; background: var(--surface); cursor: pointer; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
-.preview-box { background: var(--surface-2); border-radius: var(--radius); padding: 16px; overflow: auto; }
-.preview-box .slip { zoom: .8; }
+.preview-box { background: var(--surface-2); border-radius: var(--radius); padding: 12px; overflow: hidden; }
+.preview-box.wide { max-width: 720px; }
 .qr-box { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
 .qr-box img { width: 160px; height: 160px; image-rendering: pixelated; background: #fff; padding: 6px; border-radius: 8px; }
 .linkbox { font-family: Consolas, monospace; font-size: 0.8em; word-break: break-all; color: var(--muted); max-width: 420px; }
@@ -565,9 +586,11 @@ body.layout-edit [data-region]::after {
     #app.show-main #main { display: flex; }
     #back { display: inline-grid; margin: 4px; }
     #statusbar { display: none; }
-    .pass-layout { grid-template-columns: 1fr; }
+    .pass-layout { grid-template-columns: minmax(0, 1fr); }
+    .pass-times.three { grid-template-columns: 1fr 1fr; }
+    .pass-times.three > :first-child { grid-column: 1 / -1; }
+    .pass-preview { position: static; }
     .cal .day { min-height: 64px; }
-    .preview-box .slip { zoom: .5; }
 }
 
 /* ---------- 인쇄: 증 양식만 ---------- */
@@ -638,3 +661,6 @@ section.card + .cards, .cards { margin-top: 12px; }
 .orig-text .lv2 { padding-left: 1.4em; text-indent: -1.4em; margin-left: 1.4em; }
 .orig-text .lv3 { padding-left: 1.2em; text-indent: -1.2em; margin-left: 2.6em; }
 .orig-text .sender { margin-top: 0.8em; color: var(--muted); font-size: 0.9em; }
+
+/* AI 요약에서 찾은 일정 표시 */
+.ai-mark { font-size: 0.8em; margin-left: 4px; cursor: help; }

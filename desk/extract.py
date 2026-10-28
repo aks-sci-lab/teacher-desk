@@ -12,10 +12,12 @@ from datetime import date, timedelta
 
 WEEKDAYS = "월화수목금토일"
 
-CATEGORIES = ["제출·마감", "회의", "연수", "행사", "수업·평가", "학사", "참고"]
+CATEGORIES = ["제출·마감", "회의", "연수", "행사", "수업·평가", "학사", "경조사", "참고"]
 
 DEADLINE_WORDS = ("마감", "기한", "제출", "회신", "까지", "보고", "신청", "등록")
 CATEGORY_WORDS = [
+    # 부고·결혼 안내에도 '연수'·'행사' 같은 낱말이 섞여 있어 가장 먼저 봄
+    ("경조사", ("부고", "별세", "발인", "빈소", "장례", "영결", "조의", "부의", "결혼", "화혼", "혼례", "돌잔치")),
     ("회의", ("회의", "협의회", "위원회", "협의", "상담", "면담")),
     ("연수", ("연수", "워크숍", "컨설팅", "설명회", "교육 실시", "직무교육")),
     ("행사", ("행사", "대회", "축제", "체험", "운동회", "졸업식", "입학식", "수학여행",
@@ -226,9 +228,17 @@ def extract_events(text, ref):
                 "time": t,
                 "kind": kind,
                 "category": category,
-                "text": line[:160],
+                "text": event_text(line)[:160],
             })
     return events
+
+
+# 일정 내용 앞의 번호·기호 ('1. ', '가) ', '♥ ', '- ')
+P_LEAD = re.compile(r"^\s*(?:(?:\d{1,2}|[가-하])\s*[.)]\s+|[-·•♥♡★☆※▶▷■□●○◎◆◇]+\s*)")
+
+
+def event_text(line):
+    return P_LEAD.sub("", line).strip() or line
 
 
 def find_doc_numbers(text):

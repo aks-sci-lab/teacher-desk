@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS events (
     kind TEXT NOT NULL,              -- deadline / event
     category TEXT,
     text TEXT,
-    done INTEGER DEFAULT 0
+    done INTEGER DEFAULT 0,
+    source TEXT                      -- NULL: 규칙으로 찾음 / ai: 브리핑 AI 요약에서 찾음
 );
 CREATE INDEX IF NOT EXISTS events_date ON events(date);
 
@@ -114,6 +115,8 @@ class DB:
             self.conn.execute("UPDATE items SET registered = 1 WHERE source IN ('paste', 'school')")
         if "error" not in {r[1] for r in self.conn.execute("PRAGMA table_info(files_seen)")}:
             self.conn.execute("ALTER TABLE files_seen ADD COLUMN error TEXT")  # 0.5.5
+        if "source" not in {r[1] for r in self.conn.execute("PRAGMA table_info(events)")}:
+            self.conn.execute("ALTER TABLE events ADD COLUMN source TEXT")  # 0.5.11
         if "images" not in cols:
             self.conn.execute("ALTER TABLE items ADD COLUMN images TEXT")  # 0.5.2: 쿨메신저 사진
 

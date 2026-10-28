@@ -131,6 +131,15 @@ function aiText(text, ids = [], hiddenList = []) {
 // 🤖 지난 1주일 AI 요약 (LM Studio): 저장된 요약을 보여 주고, 오늘 만든 것이 없으면 새로 만듦
 const AUTO_GAP_MS = 10 * 60 * 1000;
 
+// 요약으로 수신함의 분류·일정 후보를 고친 수 (달력에 넣지 않은 메시지만)
+function appliedNote(res, updates) {
+    const all = [res?.applied, ...updates.map(u => u.applied)].filter(Boolean);
+    const items = all.reduce((n, a) => n + a.items, 0);
+    const added = all.reduce((n, a) => n + a.added, 0);
+    if (!items) return '';
+    return el('p.small.muted', `🤖 요약에 맞춰 수신함 메시지 ${items}건의 분류를 정리하고 일정 후보 ${added}건을 더했습니다 (달력에 넣은 메시지는 그대로).`);
+}
+
 function aiCard() {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
     const show = (r, note) => {
@@ -148,6 +157,7 @@ function aiCard() {
                 aiText(u.text, u.ids, r.hidden))),
             res && res.text ? aiText(res.text, res.ids, r.hidden) : el('p.muted.small', '아직 요약이 없습니다.'),
             res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
+            appliedNote(res, updates),
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
             el('div.row', el('button.btn.small', { onclick: () => run('full') }, '🤖 전체 다시 요약')));
     };
