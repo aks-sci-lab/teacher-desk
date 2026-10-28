@@ -99,16 +99,18 @@ def scan_folder(db, source, folder, stats, retry_failed=False):
         for name in names:
             if name.startswith(("~$", ".")) or Path(name).suffix.lower() not in SUPPORTED:
                 continue
-            files.append(Path(root) / name)
-    files.sort(key=lambda p: p.stat().st_mtime)
+            path = Path(root) / name
+            try:  # 살펴보는 사이 지워졌거나 열 수 없는 파일은 건너뜀 (수집 전체가 멈추지 않게)
+                files.append((path.stat(), path))
+            except OSError:
+                continue
+    files.sort(key=lambda f: f[0].st_mtime)
+    # 파일마다 묻지 않고 한 번에 읽어 둠
+    seen_rows = {r["path"]: r for r in db.query("SELECT path, mtime, size, error FROM files_seen")}
     failed = {}
-    for path in files[-MAX_FILES_PER_RUN:]:
-        try:
-            st = path.stat()
-        except OSError:
-            continue
+    for st, path in files[-MAX_FILES_PER_RUN:]:
         key = str(path)
-        seen = db.one("SELECT mtime, size, error FROM files_seen WHERE path = ?", (key,))
+        seen = seen_rows.get(key)
         if seen and seen["mtime"] == st.st_mtime and seen["size"] == st.st_size \
                 and not (seen["error"] and retry_failed):
             continue
@@ -217,16 +219,22 @@ class Collector:
             run_id = self.db.execute("INSERT INTO runs(started_at, reason, slot_keys) VALUES(?,?,?)",
                                      (now_str(), reason, json.dumps(list(slot_keys))))
             stats = {"items": 0, "events": 0, "deadlines": 0, "errors": [], "new_ids": [], "sources": []}
-            if self.config["coolmessenger_name"] or self.config["coolmessenger_path"]:
-                stats["sources"].append("cool")
-                scan_cool_memo(self.db, self.config["coolmessenger_name"], stats, self.config["coolmessenger_path"])
-            for source, key in SOURCES.items():
-                folder = self.config[key]
-                if folder:
-                    stats["sources"].append(source)
-                    scan_folder(self.db, source, folder, stats, retry_failed=reason in ("manual", "telegram"))
-            self.db.execute("UPDATE runs SET finished_at = ?, stats = ? WHERE id = ?",
-                            (now_str(), json.dumps(stats, ensure_ascii=False), run_id))
+            run_error = None
+            try:
+                if self.config["coolmessenger_name"] or self.config["coolmessenger_path"]:
+                    stats["sources"].append("cool")
+                    scan_cool_memo(self.db, self.config["coolmessenger_name"], stats,
+                                   self.config["coolmessenger_path"])
+                for source, key in SOURCES.items():
+                    folder = self.config[key]
+                    if folder:
+                        stats["sources"].append(source)
+                        scan_folder(self.db, source, folder, stats, retry_failed=reason in ("manual", "telegram"))
+            except Exception as e:  # 예상 못 한 오류: 그때까지 모은 것은 남기고 기록 (수집 기록이 '진행 중'으로 남지 않게)
+                run_error = f"{type(e).__name__}: {e}"
+                stats["errors"].append(f"수집 중 오류: {run_error}")
+            self.db.execute("UPDATE runs SET finished_at = ?, stats = ?, error = ? WHERE id = ?",
+                            (now_str(), json.dumps(stats, ensure_ascii=False), run_error, run_id))
             label = {"schedule": "예약", "manual": "수동", "watch": "실시간", "telegram": "텔레그램"}.get(reason, reason)
             msg = f"수집({label}): 새 항목 {stats['items']}건, 일정 {stats['events']}건(마감 {stats['deadlines']}건)"
             if not stats["sources"]:

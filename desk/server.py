@@ -145,7 +145,11 @@ def make_handler(app):
             self.wfile.write(body)
 
         def read_json(self):
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise ApiError(400, "Content-Length 가 잘못되었습니다")
+            need(length >= 0, "Content-Length 가 잘못되었습니다")  # 음수면 read(-1) 이 연결이 끊길 때까지 기다림
             need(length <= MAX_BODY, "보낸 자료가 너무 큽니다", 413)
             raw = self.rfile.read(length) if length else b"{}"
             try:
