@@ -56,6 +56,35 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(e.collector.run("manual")["items"], 0)
         self.assertEqual(len(e.notified), 2)
 
+    def test_file_vanishing_during_scan_does_not_stop_collect(self):
+        e = self.env
+        (e.cool / "a.txt").write_text("11월 3일 회의", encoding="utf-8")
+        gone = e.cool / "b.txt"
+        gone.write_text("11월 4일 행사", encoding="utf-8")
+        real_walk = os.walk
+
+        def walk(folder, *a, **k):  # 목록을 만든 뒤 파일이 지워진 상황
+            for root, dirs, names in real_walk(folder, *a, **k):
+                if gone.exists():
+                    gone.unlink()
+                yield root, dirs, names + (["b.txt"] if Path(root) == e.cool and "b.txt" not in names else [])
+
+        from unittest import mock
+        with mock.patch("desk.collect.os.walk", walk):
+            s = e.collector.run("manual")
+        self.assertEqual(s["items"], 1, s)
+
+    def test_unexpected_error_finishes_run(self):
+        e = self.env
+        from unittest import mock
+        with mock.patch("desk.collect.scan_folder", side_effect=RuntimeError("뜻밖")):
+            s = e.collector.run("manual")
+        self.assertTrue(any("뜻밖" in x for x in s["errors"]), s)
+        run = e.db.one("SELECT * FROM runs ORDER BY id DESC LIMIT 1")
+        self.assertIsNotNone(run["finished_at"])
+        self.assertIn("뜻밖", run["error"])
+        self.assertFalse(e.collector.lock.locked())
+
     def test_modified_file_with_new_content_is_collected_again(self):
         e = self.env
         p = e.cool / "a.txt"
