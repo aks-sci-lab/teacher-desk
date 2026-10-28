@@ -188,7 +188,7 @@ class Bot:
             return None
         today = today or date.today()
         detail = self.config["telegram_detail"]
-        lines = [f"📥 새 자료 {stats['items']}건 · 일정 {stats['events']}건 (마감 {stats['deadlines']}건)"]
+        lines = [f"📥 새 자료 {stats['items']}건 · 일정 후보 {stats['events']}건 (마감 {stats['deadlines']}건)"]
         ids = stats.get("new_ids") or []
         if ids and detail != "counts":
             marks = ",".join("?" * len(ids))
@@ -201,7 +201,7 @@ class Bot:
                 f"WHERE e.item_id IN ({marks}) AND e.kind = 'deadline' AND e.date >= ? ORDER BY e.date LIMIT 3",
                 ids + [today.isoformat()])
             if evs:
-                lines.append("\n가까운 마감")
+                lines.append("\n가까운 마감 후보 (수신함에서 체크하면 달력에 들어갑니다)")
                 lines += [fmt_event(e, today, detail) for e in evs]
         return "\n".join(lines)
 

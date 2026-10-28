@@ -36,6 +36,10 @@ DEFAULTS = {
     "neis_key": "",
     "neis_school": {},
     "neis_api_base": "https://open.neis.go.kr/hub",
+    # 브리핑 '지난 1주일 AI 요약': 이 PC 의 LM Studio 로컬 서버 (모델 이름을 비우면 불러온 첫 모델)
+    "ai_enabled": False,
+    "ai_base": "http://127.0.0.1:1234/v1",
+    "ai_model": "",
     # 텔레그램
     "telegram_token": "",
     "telegram_detail": "titles",  # counts: 개수만 / titles: 제목까지 / summary: 요약까지
@@ -51,9 +55,9 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
-    "watch_enabled", "auto_update",
+    "watch_enabled", "auto_update", "ai_enabled", "ai_base", "ai_model",
 }
-BOOL_KEYS = {"watch_enabled", "auto_update"}
+BOOL_KEYS = {"watch_enabled", "auto_update", "ai_enabled"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)
@@ -116,6 +120,15 @@ class Config:
                 if not (isinstance(v, dict) and all(isinstance(v.get(x, ""), str) for x in ("name", "atpt", "code"))):
                     raise ValueError("학교 정보가 잘못되었습니다")
                 clean[k] = {x: v.get(x, "")[:80] for x in ("name", "atpt", "code", "office")}
+            elif k == "ai_base":
+                if not isinstance(v, str):
+                    raise ValueError("AI 주소는 글자여야 합니다")
+                from .ai import AIError, check_local
+                try:
+                    check_local(v.strip())
+                except AIError as e:
+                    raise ValueError(str(e))
+                clean[k] = v.strip()
             elif k == "layout":
                 if not isinstance(v, dict):
                     raise ValueError("layout 은 객체여야 합니다")

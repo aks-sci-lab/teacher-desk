@@ -23,6 +23,14 @@ export const collectNow = guarded(async () => {
     emit('data-changed');
 });
 
+// 체크 = 이 메시지의 일정을 달력·브리핑에 등록 (체크를 풀면 빠짐, 일정 자체는 남음)
+const setRegistered = guarded(async (id, on) => {
+    await api.patch(`/api/items/${id}`, { registered: on });
+    toast(on ? '일정을 달력에 넣었습니다' : '일정을 달력에서 뺐습니다');
+    emit('data-changed');
+    findTab(`item-${id}`)?.rerender();
+});
+
 // ---------------------------------------------------------------- 목록 패널
 function renderSide(body, actions) {
     actions.append(
@@ -42,15 +50,21 @@ function renderSide(body, actions) {
     }
     for (const it of items) {
         list.append(el('li', {
-            className: [it.status === 'new' && 'unread', findTab(`item-${it.id}`) && 'on'].filter(Boolean).join(' '),
+            className: ['reg', it.status === 'new' && 'unread', findTab(`item-${it.id}`) && 'on'].filter(Boolean).join(' '),
             onclick: () => openItem(it.id),
         },
-        el('span.ttl', it.title),
-        el('span.meta', srcBadge(it.source), catBadge(it.category),
-            it.next_deadline && el('span', { style: 'color: var(--c-deadline); font-weight: 700' }, `⏰ ${dayLabel(it.next_deadline)}`),
-            el('span', it.received_at.slice(5, 16)))));
+        el('input', { type: 'checkbox', checked: !!it.registered,
+            title: it.event_count ? `체크하면 일정 ${it.event_count}건이 달력·브리핑에 들어갑니다` : '체크하면 이 메시지의 일정이 달력·브리핑에 들어갑니다',
+            onclick: e => e.stopPropagation(),
+            onchange: e => setRegistered(it.id, e.target.checked) }),
+        el('div.body',
+            el('span.ttl', it.title),
+            el('span.meta', srcBadge(it.source), catBadge(it.category),
+                it.event_count ? el('span', it.registered ? `📅 ${it.event_count}` : `일정 후보 ${it.event_count}`) : null,
+                it.next_deadline && el('span', { style: 'color: var(--c-deadline); font-weight: 700' }, `⏰ ${dayLabel(it.next_deadline)}`),
+                el('span', it.received_at.slice(5, 16))))));
     }
-    body.append(list);
+    body.append(el('p.small.muted', { style: 'margin: 6px var(--pad)' }, '☑ 체크한 메시지의 일정만 달력·브리핑에 들어갑니다.'), list);
 }
 
 // ---------------------------------------------------------------- 분석 결과 미리보기 (붙여넣기 화면)
@@ -132,6 +146,9 @@ function renderItem(pane, tab, it) {
         el('div.row', { style: 'margin: 8px 0 4px' },
             srcBadge(it.source), catSel, el('span.muted.small', `받은 때 ${it.received_at.slice(0, 16)}`),
             el('span.spacer'),
+            it.registered
+                ? el('button.btn', { onclick: () => patch({ registered: false }), title: '이 메시지의 일정을 달력·브리핑에서 뺍니다' }, '☑ 일정 등록됨')
+                : el('button.btn.primary', { onclick: () => patch({ registered: true }) }, '📅 일정 등록'),
             it.status !== 'done'
                 ? el('button.btn', { onclick: () => patch({ status: 'done' }) }, '✔ 처리 완료')
                 : el('button.btn', { onclick: () => patch({ status: 'read' }) }, '↺ 다시 진행 중으로'),
@@ -168,7 +185,8 @@ function renderItem(pane, tab, it) {
             tab.rerender();
         }) }, '🗑'))));
     pane.append(
-        el('h2', `일정 ${it.events.length}건`),
+        el('h2', it.registered ? `일정 ${it.events.length}건 (달력에 들어감)` : `일정 후보 ${it.events.length}건`),
+        !it.registered && it.events.length ? el('p.small.muted', '아직 달력에 들어가지 않았습니다. 위의 📅 일정 등록을 누르거나 수신함 목록에서 체크하세요.') : '',  // pane.append 는 null 을 글자로 넣음
         el('div', { style: 'overflow-x: auto' }, el('table.tbl',
             el('thead', el('tr', ['끝냄', '날짜', '시각', '종류', '분류', '내용', ''].map(h => el('th', h)))),
             el('tbody', rows))),

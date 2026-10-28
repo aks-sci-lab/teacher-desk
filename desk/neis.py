@@ -21,8 +21,22 @@ class NeisError(Exception):
     pass
 
 
+MAX_PAGES = 5
+
+
 def _get(base, endpoint, params, key):
-    q = {"Type": "json", "pIndex": 1, "pSize": 1000, **params}
+    """모든 쪽(한 쪽 1000건)을 이어서 받음."""
+    rows = []
+    for page in range(1, MAX_PAGES + 1):
+        part, total = _get_page(base, endpoint, params, key, page)
+        rows += part
+        if not part or total is None or len(rows) >= total:
+            break
+    return rows
+
+
+def _get_page(base, endpoint, params, key, page):
+    q = {"Type": "json", "pIndex": page, "pSize": 1000, **params}
     if key:
         q["KEY"] = key
     url = f"{base.rstrip('/')}/{endpoint}?{urllib.parse.urlencode(q)}"
@@ -36,12 +50,15 @@ def _get(base, endpoint, params, key):
     if endpoint not in body:
         res = body.get("RESULT", {})
         if res.get("CODE") == "INFO-200":   # 해당하는 데이터가 없습니다
-            return []
+            return [], 0
         raise NeisError(f"나이스 오류: {res.get('MESSAGE') or res.get('CODE') or '알 수 없음'}")
-    rows = []
+    rows, total = [], None
     for part in body[endpoint]:
         rows += part.get("row", [])
-    return rows
+        for h in part.get("head", []):
+            if "list_total_count" in h:
+                total = h["list_total_count"]
+    return rows, total
 
 
 def search_schools(name, key="", base="https://open.neis.go.kr/hub"):
@@ -58,8 +75,12 @@ def schedule(atpt, code, school_year, key="", base="https://open.neis.go.kr/hub"
     rows = _get(base, "SchoolSchedule", {"ATPT_OFCDC_SC_CODE": atpt, "SD_SCHUL_CODE": code,
                                          "AA_FROM_YMD": start.strftime("%Y%m%d"),
                                          "AA_TO_YMD": end.strftime("%Y%m%d")}, key)
+    # 그 학교 것만 (인증키가 없거나 잘못되면 나이스가 여러 학교의 일정을 섞어 보냄)
+    mine = [r for r in rows if r.get("SD_SCHUL_CODE") == code and r.get("ATPT_OFCDC_SC_CODE", atpt) == atpt]
+    if rows and not mine:
+        raise NeisError("나이스가 다른 학교의 일정만 보냈습니다. ⚙ 설정의 나이스 인증키를 확인하세요.")
     days = []
-    for r in rows:
+    for r in mine:
         name = (r.get("EVENT_NM") or "").strip()
         ymd = r.get("AA_YMD") or ""
         if not name or name in SKIP_EVENTS or len(ymd) != 8:

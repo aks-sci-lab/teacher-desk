@@ -16,7 +16,7 @@
 
 | 경로 | 내용 |
 |---|---|
-| `desk.py`, `desk/` | 로컬 서버(Python 표준 라이브러리). `server.py` API, `extract.py` 날짜·마감, `docs.py`·`cfb.py` hwp/hwpx/pdf, `collect.py` 수집, `coolmsg.py` 쿨메신저 .udb, `schoolcal.py`·`xlsx.py`·`neis.py` 학사일정, `scheduler.py` 9·12·15시, `watcher.py` 실시간 감시, `updater.py` 켤 때 업데이트, `telegram.py`, `picker.py` 찾아보기 창 |
+| `desk.py`, `desk/` | 로컬 서버(Python 표준 라이브러리). `server.py` API, `extract.py` 날짜·마감, `docs.py`·`cfb.py` hwp/hwpx/pdf, `collect.py` 수집, `coolmsg.py` 쿨메신저 .udb, `schoolcal.py`·`xlsx.py`·`neis.py` 학사일정, `scheduler.py` 9·12·15시, `watcher.py` 실시간 감시, `ai.py` LM Studio 1주일 요약, `updater.py` 켤 때 업데이트, `telegram.py`, `picker.py` 찾아보기 창 |
 | `web/` | 화면 (순수 HTML/CSS/JS ES 모듈, VS Code 형태) |
 | `pass/` | 학생 폰용 조퇴증·외출증 페이지 (공개, 내용은 주소 `#` 뒤에만) |
 | `tests/` | Python 시험(`python -m unittest discover -s tests -t .`), `pass-codec.test.cjs`(`node --test`) |
@@ -29,7 +29,7 @@
 - 빌드 도구 없음. Python 은 표준 라이브러리만 (PDF 만 선택 `pypdf`). 화면 외부 라이브러리는 CDN(jsdelivr)만.
 - 화면 문구와 주석은 한국어.
 - **학생 이름·조퇴 사유·공문·쪽지는 이 PC 의 `data/desk.db` 에만.** 클라우드·텔레그램·로그로 보내지 않는다 (텔레그램은 인원수·제목까지). `config.json`·`data/` 는 커밋하지 않는다.
-- 분석은 AI 없이 규칙 기반. AI 요약은 학교 정보보안 지침 확인 후에만.
+- 분석은 AI 없이 규칙 기반. AI 는 브리핑의 1주일 요약에만, **이 PC 의 LM Studio(127.0.0.1)로만** (사용자 결정 2026-10-28, 학생 이름은 가려서). 인터넷 AI 로 보내지 않는다.
 - 서버는 `127.0.0.1` 전용, 토큰·Host·Origin 검사.
 - `.bat` 은 CP949·CRLF. `if ( … )` 묶음 안 echo 에 괄호 금지 (`tests/test_bats.py` 가 검사).
 - ZIP 안 배치는 `TeacherDesk/teacher-desk` + `TeacherDesk/pass` 로 유지한다 (설치된 `update-desk.bat` 이 이 배치를 기대함).
@@ -51,6 +51,9 @@
 - 쿨메신저 쪽지: `%LOCALAPPDATA%\CoolMessenger\Memo\<이름>.udb` (사용자 확인). 이름만 넣거나 파일 경로를 직접 지정. `.udb` 구조는 미확인이라 SQLite 로 보고 표·열 자동 인식, 복사본을 읽기 전용으로. 내용이 `{COMP}` 로 시작하면 base64(zlib(UTF-16LE HTML)) 압축 (사용자 화면으로 확인, 0.4.1).
 - 학사일정: 양식 고정 없이 **읽기 → 미리보기에서 고치기 → 저장**. 엑셀 달력표/목록/글 자동 판별, 연도 없는 날짜는 학년도(3~12월=학년도, 1~2월=다음 해). 가장 범용적인 길은 나이스 Open API(인증키 필요).
 - 텔레그램: 롱 폴링, 연결 코드를 보낸 계정 하나만.
+- 일정 등록(0.5.0, 사용자 요청): 자동 수집한 메시지·공문의 일정은 '후보'(`items.registered = 0`). 수신함에서 체크해야 달력·브리핑·검색·ics 에 들어감. 직접 붙여넣기·학사일정은 바로 등록, 항목에 일정을 직접 더하면 등록. 예전 DB 는 cool·edufine 을 후보로 바꿈.
+- 나이스: 응답에서 고른 학교(`SD_SCHUL_CODE`·`ATPT_OFCDC_SC_CODE`) 것만 남김 (인증키가 없거나 잘못되면 여러 학교 일정이 섞여 옴, 사용자 확인). 1000건 넘으면 다음 쪽도 받음.
+- AI 요약(0.5.0): 사용자 PC 는 Ryzen 7 8845HS·24GB (LM Studio 사용 중). OpenAI 호환 `/v1/models`·`/v1/chat/completions`, 프록시 거치지 않음, 지난 7일 cool·edufine 최대 60건·14000자, `<think>` 제거, 결과는 `meta.ai_weekly`. 브리핑을 열 때 오늘 만든 요약이 없으면 새로 만듦.
 - 화면: ① 활동 막대 ② 목록 패널 ③ 탭 ④ 작업 영역 ⑤ 하단 패널 ⑥ 상태 표시줄. 사용자가 🧩 화면 배치 → "배치 설명 복사"로 보내는 번호를 기준으로 고친다. 메뉴 '오늘' 은 '브리핑'(사용자 지정, 뷰 id 는 `today`).
 - 배포 형태: Python 으로 개발, 선생님에게는 Python 이 들어 있는 ZIP. `update-desk.bat` 은 이 저장소 Releases 를 먼저, 없으면 예전 저장소를 받는다.
 - 자동 업데이트(0.4.0, 사용자 요청): 켤 때 Releases 의 `latest.json`(워크플로가 ZIP 다음에 올림) 버전을 비교. 새 버전이면 PowerShell 업데이트 창을 띄우고 종료 코드 20 으로 끝냄 → 창이 python 종료를 기다려 `data`·`config.json` 빼고 덮어쓴 뒤 `start-desk.bat --no-update-check` 로 다시 켬. 윈도우용 ZIP(`python\python.exe` 있음)에서만, 인터넷이 안 되면 4초 뒤 그냥 켬.
@@ -64,3 +67,5 @@
 - 2026-10-27: 0.4.0 켤 때 자동 업데이트(`latest.json` 비교 → 업데이트 창 → 다시 켬), 쿨메신저·에듀파인 폴더 실시간 감시 — Claude Code
   - 확인 필요: 0.3.x 설치본은 `update-desk.bat` 을 한 번 눌러야 0.4.0 이 됨, 학교 PC 에서 PowerShell 실행 제한 여부
 - 2026-10-28: 0.4.1 쿨메신저 압축 쪽지(`{COMP}…`) 풀기, 예전에 풀리지 않고 들어간 쪽지는 지우고 다시 읽음 — Claude Code
+- 2026-10-28: 0.5.0 수신함 체크한 메시지만 일정 등록, 나이스는 고른 학교 학사일정만, 브리핑 지난 1주일 AI 요약(LM Studio 로컬) — Claude Code
+  - 확인 필요: 실제 LM Studio 모델의 한국어 요약 품질·속도, 나이스 인증키 넣은 뒤 실제 응답

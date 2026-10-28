@@ -59,6 +59,19 @@ function renderSettings(pane, tab) {
     const neisKey = el('input', { type: 'password', placeholder: s.neis_key_set ? '설정됨 (바꿀 때만 입력)' : 'open.neis.go.kr 에서 받은 인증키', autocomplete: 'off' });
     const token = el('input', { type: 'password', placeholder: s.telegram_token_set ? '설정됨 (바꿀 때만 입력)' : 'BotFather 가 준 토큰', autocomplete: 'off' });
     const diagBox = el('div');
+    const aiBox = el('div');
+    const aiCheck = guarded(async () => {
+        clear(aiBox, el('p.small.muted', '확인 중…'));
+        try {
+            const base = pane.querySelector('[data-key="ai_base"]').value;
+            const r = await api.post('/api/ai/check', { base });
+            clear(aiBox, el('p', { style: 'color: var(--ok); font-weight: 700' }, '✅ LM Studio 연결됨'),
+                el('p.small', `불러온 모델: ${r.models.join(', ')}`),
+                el('p.small.muted', '모델 이름 칸을 비워 두면 첫 모델을 씁니다.'));
+        } catch (e) {
+            clear(aiBox, el('p', { style: 'color: var(--danger)' }, e.message));
+        }
+    });
     const coolBox = el('div');
     const coolList = el('datalist#cool-names');
     const coolPathField = pathField('coolmessenger_path', '(선택) 쪽지 파일 직접 지정',
@@ -172,6 +185,17 @@ function renderSettings(pane, tab) {
             el('p.small', '달력 → 📥 학사일정 → 🏫 나이스 에서 학교를 골라 학사일정을 가져올 때 씁니다. 인증키는 교육정보 개방 포털(open.neis.go.kr)에 가입하면 무료로 받습니다.'),
             el('label.field', el('span', '나이스 인증키'), neisKey),
             s.neis_school && s.neis_school.name ? el('p.small', `고른 학교: ${s.neis_school.name}`) : null),
+        section('🤖 AI 요약 (이 PC 의 LM Studio)',
+            el('p.small', '브리핑에서 지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문을 AI 로 요약합니다. AI 는 이 PC 의 LM Studio 에서 돌기 때문에 쪽지·공문이 PC 밖으로 나가지 않습니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).'),
+            el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
+                el('li', 'LM Studio 에서 한국어가 되는 모델을 받아 불러옵니다 (예: Qwen3 8B, Gemma 3 12B, EXAONE 3.5 7.8B).'),
+                el('li', 'LM Studio 왼쪽 Developer(개발자) 화면에서 "Start Server" 를 켭니다.'),
+                el('li', '아래 🔌 연결 확인 → AI 요약 켜기 → 설정 저장.')),
+            checkField('ai_enabled', '브리핑에서 AI 요약 쓰기'),
+            textField('ai_base', 'LM Studio 서버 주소', '기본 http://127.0.0.1:1234/v1'),
+            textField('ai_model', '(선택) 모델 이름', '비워 두면 LM Studio 에 불러온 첫 모델'),
+            el('div.row', el('button.btn.small', { onclick: aiCheck }, '🔌 연결 확인')),
+            aiBox),
         section('⬆ 업데이트',
             checkField('auto_update', '켤 때 새 버전 확인',
                 '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
