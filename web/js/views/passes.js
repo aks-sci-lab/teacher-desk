@@ -161,14 +161,14 @@ export function openForm(init = {}) {
     if (p.kind === 'out' && !p.time_return) p.time_return = plusHour(p.time_out);
     const id = editing ? `pass-edit-${init.id}` : 'pass-new';
     openTab({
-        id, refresh: !editing, title: editing ? `✎ ${init.student_name}` : `🎫 새 ${KIND[p.kind]}증`,
+        id, refresh: !editing, title: editing ? `${init.student_name}` : `새 ${KIND[p.kind]}증`,
         render(pane, tab) {
             const preview = el('div.preview-box');
             const fit = fitPreview(preview);
             const redraw = () => {
                 clear(preview, slipNode({ ...p, serial: p.serial || '(저장하면 번호가 붙습니다)' }, null, null));
                 fit();
-                tab.setTitle(editing ? `✎ ${p.student_name}` : `🎫 새 ${KIND[p.kind]}증`);
+                tab.setTitle(editing ? `${p.student_name}` : `새 ${KIND[p.kind]}증`);
             };
             const set = (k, v) => { p[k] = v; redraw(); };
 
@@ -250,12 +250,12 @@ export function openForm(init = {}) {
                             el('label.check', el('input', { type: 'checkbox', checked: p.share_reason, onchange: e => set('share_reason', e.target.checked) }),
                                 '학생 공유 링크에 사유 포함', el('span.hint', '(기본: 빼기 — 링크가 다른 사람에게 전달될 수 있어서)'))),
                         el('div.row.pass-actions',
-                            el('button.btn.primary', { onclick: guarded(() => save(true)) }, editing ? '💾 저장하고 인쇄' : '🖨 발급하고 인쇄'),
+                            el('button.btn.primary', { onclick: guarded(() => save(true)) }, editing ? '저장하고 인쇄' : '발급하고 인쇄'),
                             el('button.btn', { onclick: guarded(() => save(false)) }, editing ? '저장' : '발급만'))),
                     el('div.pass-preview',
                         preview,
                         missing.length > 0 && el('p.hint.small', `${missing.join('·')} 칸이 비어 있어 빈칸으로 인쇄됩니다. `,
-                            el('a', { href: '#', onclick: e => { e.preventDefault(); showView('settings'); openSettings(); } }, '⚙ 설정에서 넣기')))));
+                            el('a', { href: '#', onclick: e => { e.preventDefault(); showView('settings'); openSettings(); } }, '설정에서 넣기')))));
             redraw();
         },
     });
@@ -264,7 +264,7 @@ export function openForm(init = {}) {
 // ---------------------------------------------------------------- 발급 기록 화면
 export function openPass(p, refresh = false) {
     openTab({
-        id: `pass-${p.id}`, refresh, title: `🎫 ${p.student_name} ${KIND[p.kind]}`,
+        id: `pass-${p.id}`, refresh, title: `${p.student_name} ${KIND[p.kind]}`,
         render(pane, tab) {
             const url = shareUrl(p);
             const qrBox = el('div.qr-box');
@@ -283,23 +283,23 @@ export function openPass(p, refresh = false) {
                 el('h1', `${KIND[p.kind]}증 · ${p.student_name}`),
                 el('p.sub', `발급 번호 ${p.serial} · ${dayLabel(p.date)} · `, el('b', statusText)),
                 el('div.row',
-                    el('button.btn.primary', { onclick: guarded(() => printPass(p, 2)) }, '🖨 인쇄 (2장)'),
+                    el('button.btn.primary', { onclick: guarded(() => printPass(p, 2)) }, '인쇄 (2장)'),
                     el('button.btn', { onclick: guarded(() => printPass(p, 1)) }, '1장만'),
-                    p.kind === 'out' && p.status === 'issued' && el('button.btn', { onclick: guarded(() => update({ status: 'returned' })) }, '✔ 복귀 확인'),
+                    p.kind === 'out' && p.status === 'issued' && el('button.btn', { onclick: guarded(() => update({ status: 'returned' })) }, '복귀 확인'),
                     p.status !== 'issued' && el('button.btn', { onclick: guarded(() => update({ status: 'issued' })) }, '↺ 발급 상태로'),
-                    el('button.btn', { onclick: () => { tab.close(); openForm({ ...p }); } }, '✎ 고치기'),
+                    el('button.btn', { onclick: () => { tab.close(); openForm({ ...p }); } }, '고치기'),
                     p.status === 'issued' && el('button.btn.danger', { onclick: guarded(async () => {
                         if (confirm('이 증의 발급을 취소할까요? (기록은 남습니다)')) await update({ status: 'cancelled' });
                     }) }, '발급 취소')),
-                el('h2', '📱 학생에게 공유'),
+                el('h2', '학생에게 공유'),
                 url ? el('div',
                     el('p.small.muted', 'QR 을 학생 폰으로 찍게 하거나 링크를 보내세요. 증 내용은 링크 안에만 있고 서버에 저장되지 않습니다.' +
                         (p.share_reason ? '' : ' (사유는 빠져 있습니다)')),
                     qrBox,
                     el('div.row', { style: 'margin-top: 8px' },
-                        el('button.btn', { onclick: guarded(async () => { await navigator.clipboard.writeText(url); toast('링크를 복사했습니다'); }) }, '🔗 링크 복사'),
-                        el('a.btn', { href: `/pass/#${url.split('#')[1]}`, target: '_blank', rel: 'noopener' }, '👀 학생 화면 미리보기')))
-                    : el('p.muted', '⚙ 설정에서 공유 페이지 주소를 입력하면 QR 이 만들어집니다.'),
+                        el('button.btn', { onclick: guarded(async () => { await navigator.clipboard.writeText(url); toast('링크를 복사했습니다'); }) }, '링크 복사'),
+                        el('a.btn', { href: `/pass/#${url.split('#')[1]}`, target: '_blank', rel: 'noopener' }, '학생 화면 미리보기')))
+                    : el('p.muted', '설정에서 공유 페이지 주소를 입력하면 QR 이 만들어집니다.'),
                 el('h2', '미리보기'),
                 previewBox);
             if (url) {
@@ -316,7 +316,7 @@ export function openPass(p, refresh = false) {
 // ---------------------------------------------------------------- 학생 명단
 export function openRoster() {
     openTab({
-        id: 'roster', title: '👥 학생 명단',
+        id: 'roster', title: '학생 명단',
         render(pane, tab) {
             let parsed = null;
             const area = el('textarea', { rows: 12, placeholder: '엑셀에서 번호·이름 두 칸을 복사해 붙여넣으세요\n예)\n1\t김가온\n2\t나하늘' });
@@ -333,7 +333,7 @@ export function openRoster() {
                         toast(`명단 ${parsed.length}명 저장`);
                         tab.rerender();
                         refreshSide();
-                    }) }, '💾 명단 저장')));
+                    }) }, '명단 저장')));
             });
             const s = store.settings;
             pane.append(

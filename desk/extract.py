@@ -34,7 +34,8 @@ P_KMD = re.compile(r"(?<!\d)(\d{1,2})\s*월\s*(\d{1,2})\s*일" + _DOW)
 P_DOT = re.compile(r"(?<![\d.])(\d{1,2})\s*\.\s*(\d{1,2})\s*\.?\s*\(\s*([월화수목금토일])\s*\)")
 # '3/4 분기', '1/2 이상' 같은 분수는 날짜가 아님
 P_SLASH = re.compile(r"(?<![\d/])(\d{1,2})\s*/\s*(\d{1,2})(?![\d/])(?!\s*(?:분기|배|등분|쪽|페이지|이상|이하|정도|가량|명))" + _DOW)
-P_REL_DAY = re.compile(r"(오늘|금일|내일|명일|모레)")
+# '오늘이 행복한 울산교육'·'내일을 여는 교육' 같은 표어의 오늘·내일은 날짜가 아님
+P_REL_DAY = re.compile(r"(오늘|금일|내일|명일|모레)(?![이을를의])")
 P_REL_WEEK = re.compile(r"(이번\s*주|금주|다음\s*주|차주|다다음\s*주)\s*([월화수목금토일])(?:요일)?")
 P_WEEKDAY = re.compile(r"(?<![가-힣])([월화수목금토일])요일")
 
@@ -189,21 +190,57 @@ def _lines(text):
 
 # '가. 교육부 교육과정운영지원과-5058(2026. 10. 23.)' 같은 관련 공문 줄: 날짜는 공문 날짜라 일정이 아님
 P_REF_BEFORE = re.compile(r"-\s*\d{2,7}\s*\(\s*$")
-P_REF_LINE = re.compile(r"^\s*(?:\d+\s*[.)]\s*)?(?:관련|참고)\s*[:：]?\s*$|^\s*[가-하]\s*[.)]\s*.*-\s*\d{2,7}\s*\(\s*20\d{2}")
+P_REF_LINE = re.compile(r"^\s*(?:\d+\s*[.)]\s*)?(?:관련|참고)\s*[:：]?\s*(?:$|.*-\s*\d{2,7}\s*\(\s*20\d{2})"
+                        r"|^\s*[가-하]\s*[.)]\s*.*-\s*\d{2,7}\s*\(\s*20\d{2}")
+
+
+# 공문 끝의 처리 기록 ('시행 중등교육과-21035 (2026. 10. 28.) 접수 …', '기안 2026. 10. 27.'): 신경 쓸 일정이 아님 (사용자 지정)
+P_ADMIN_LINE = re.compile(r"^\s*(?:시행|접수|기안|결재|생산|등록)(?:일자?)?\s*[:：]?\s*(?:\d|\(|[가-힣A-Za-z]+-\s*\d)")
+P_ADMIN_BEFORE = re.compile(r"(?:시행|접수|기안|결재|생산|등록)(?:일자?)?(?![가-힣])[^가-힣]{0,30}$")
+
+
+def is_admin_date(line, start):
+    """이 날짜가 시행·접수·기안 같은 문서 처리 날짜인지."""
+    return bool(P_ADMIN_LINE.match(line) or P_ADMIN_BEFORE.search(line, max(0, start - 40), start))
 
 
 def is_reference_line(line):
     return bool(P_REF_LINE.search(line))
 
 
+# '제출기한:'·'일시 :'·'신청 기간:' 처럼 짧은 이름표 + 날짜뿐인 줄
+P_LABEL = re.compile(r"^[가-힣 ]{0,8}(?:기한|마감일?|일시|기간|일자|날짜|시한|일정)\s*[:：]")
+P_LABEL_REST = re.compile(r"[\s\d().,:：~\-]|까지|요일|[월화수목금토일](?=\))|오전|오후|시|분|부터")
+
+
+def label_only(line, dates):
+    """이름표와 날짜만 있어 무엇의 일정인지 모르는 줄인지."""
+    body = event_text(line)
+    m = P_LABEL.match(body)
+    if not m:
+        return False
+    rest = line
+    for start, end, _, _ in reversed(dates):
+        rest = rest[:start] + rest[end:]
+    rest = event_text(rest)
+    rest = P_LABEL_REST.sub("", rest[P_LABEL.match(rest).end():] if P_LABEL.match(rest) else rest)
+    return len(rest) <= 2
+
+
 def extract_events(text, ref):
     """글에서 일정 목록을 뽑습니다."""
     events = []
     seen = set()
+    prev = ""
     for line in _lines(text):
         dates = find_dates(line, ref)
         if not dates:
+            prev = line
             continue
+        text_line = event_text(line)
+        if label_only(line, dates) and len(event_text(prev)) >= 4 and not find_dates(prev, ref):
+            text_line = f"{event_text(prev)} ({P_LABEL.match(event_text(line)).group(0).rstrip(':： ')})"
+        prev = line
         # 줄 전체에서 보는 단서는 한 번만 (날짜가 많은 긴 줄에서 날짜마다 줄 전체를 다시 훑지 않게)
         line_deadline = any(w in line for w in ("마감", "기한", "회신")) or (
             "까지" in line and any(w in line for w in ("제출", "신청", "등록", "보고")))
@@ -211,6 +248,8 @@ def extract_events(text, ref):
         for i, (start, end, d, end_d) in enumerate(dates):
             if P_REF_BEFORE.search(line, max(0, start - 40), start):
                 continue  # 문서번호(날짜): 관련 공문의 날짜 (바로 앞 몇 글자만 봄)
+            if is_admin_date(line, start):
+                continue  # 시행·접수 날짜
             nxt = dates[i + 1][0] if i + 1 < len(dates) else len(line)
             after = line[end:min(nxt, end + 25)]
             t = find_time(after)
@@ -228,7 +267,7 @@ def extract_events(text, ref):
                 "time": t,
                 "kind": kind,
                 "category": category,
-                "text": event_text(line)[:160],
+                "text": text_line[:160],
             })
     return events
 
@@ -250,7 +289,24 @@ def find_doc_numbers(text):
     return out
 
 
+P_SUBJECT = re.compile(r"^제\s*목\s*[:：]?\s*(.{2,})")
+
+
+def subject_line(text):
+    """공문의 '제목 [안내] …' 줄 (앞쪽 15줄 안), 없으면 None."""
+    for i, line in enumerate(_lines(text)):
+        if i >= 15:
+            break
+        m = P_SUBJECT.match(line)
+        if m:
+            return m.group(1).strip()[:120]
+    return None
+
+
 def make_title(text, fallback=""):
+    subject = subject_line(text)
+    if subject:
+        return subject[:80]
     for line in _lines(text):
         line = re.sub(r"^[\s\-=*#>■□●○◎▶▷※]+", "", line).strip()
         if len(line) >= 2:
@@ -280,6 +336,21 @@ def summarize(text, title=None, limit=4):
             scored.append((s, i, line[:140]))
     top = sorted(scored, key=lambda x: (-x[0], x[1]))[:limit]
     return [line for _, _, line in sorted(top, key=lambda x: x[1])]
+
+
+def event_context(text, iso, ref):
+    """일정 날짜가 나온 원문 줄과 그 앞뒤 줄 (일정 후보 자세히 보기)."""
+    lines = list(_lines(text))
+    for i, line in enumerate(lines):
+        if is_reference_line(line):
+            continue
+        for start, _, d, _ in find_dates(line, ref):
+            if d.isoformat() == iso and not P_REF_BEFORE.search(line, max(0, start - 40), start) \
+                    and not is_admin_date(line, start):
+                return {"index": i, "line": line,
+                        "before": lines[i - 1] if i > 0 else "",
+                        "after": lines[i + 1] if i + 1 < len(lines) else ""}
+    return None
 
 
 def item_category(text, events):

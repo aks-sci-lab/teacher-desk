@@ -1,6 +1,7 @@
 // 화면 틀: ① 활동 막대 ② 목록 패널 ③ 탭 ④ 작업 영역 ⑤ 하단 패널 ⑥ 상태 표시줄 + 🧩 화면 배치 모드
 import { api } from './api.js';
 import { el, clear, toast, guarded } from './ui.js';
+import { icon } from './icons.js';
 
 const $ = id => document.getElementById(id);
 const app = $('app');
@@ -14,11 +15,11 @@ export const emit = (name, detail) => bus.dispatchEvent(new CustomEvent(name, { 
 export const on = (name, fn) => bus.addEventListener(name, e => fn(e.detail));
 
 // ---------------------------------------------------------------- 활동 막대·목록 패널
-// view = { id, icon, label, bottom?, renderSide(body, actions), open?() }
+// view = { id, icon, label, bottom?, noSide?(목록 패널 없이 작업 영역만), renderSide(body, actions), open?() }
 export function registerView(view) {
     views.set(view.id, view);
     const btn = el('button.act', { title: view.label, dataset: { view: view.id }, onclick: () => showView(view.id, true) },
-        el('span.ico', view.icon), el('span.lbl', view.label), el('span.badge', { hidden: true }));
+        el('span.ico', icon(view.id) || view.icon), el('span.lbl', view.label), el('span.badge', { hidden: true }));
     $(view.bottom ? 'activity-bottom' : 'activity-top').append(btn);
     view.button = btn;
 }
@@ -42,19 +43,20 @@ export function showView(id, fromClick = false) {
     const view = views.get(id);
     if (!view) return;
     // 같은 버튼을 다시 누르면 목록 패널 접기/펴기 (VS Code 와 같은 동작)
-    if (fromClick && currentView === id && !isNarrow()) {
+    if (fromClick && currentView === id && !isNarrow() && !view.noSide) {
         app.classList.toggle('side-hidden');
         return;
     }
     app.classList.remove('side-hidden');
+    app.classList.toggle('no-side', !!view.noSide);   // 목록이 필요 없는 화면은 빈 목록 패널을 숨김
     currentView = id;
     for (const v of views.values()) v.button.classList.toggle('on', v.id === id);
     $('side-title').textContent = view.label;
     clear($('side-actions'));
     clear($('side-body'));
     view.renderSide($('side-body'), $('side-actions'));
-    if (view.open && (!isNarrow() || !fromClick)) view.open();
-    if (isNarrow()) app.classList.remove('show-main');
+    if (view.open && (!isNarrow() || !fromClick || view.noSide)) view.open();
+    if (isNarrow()) app.classList.toggle('show-main', !!view.noSide);
 }
 
 export function refreshSide() {
@@ -74,21 +76,25 @@ export function sideButton(label, title, onclick) {
 }
 
 // ---------------------------------------------------------------- 탭
+// 탭 이름 앞의 이모지는 떼고 글자만 (화면이 어수선하지 않게)
+const P_LEAD_ICON = /^(?:\p{Extended_Pictographic}|[＋✎⚙☑✔↺])\uFE0F?\s*/u;
+const plainTitle = t => String(t).replace(P_LEAD_ICON, '');
+
 // openTab({ id, title, render(pane, tab), wide? }) — 같은 id 가 열려 있으면 그 탭으로 이동
 export function openTab(spec) {
     let tab = tabs.get(spec.id);
     if (!tab) {
         const pane = el('div.pane', { role: 'tabpanel' });
         if (spec.wide) pane.classList.add('wide');
-        const label = el('span.t', spec.title);
-        const head = el('button.tab', { role: 'tab', title: spec.title, onclick: () => activate(spec.id) },
+        const label = el('span.t', plainTitle(spec.title));
+        const head = el('button.tab', { role: 'tab', title: plainTitle(spec.title), onclick: () => activate(spec.id) },
             label, el('span.x', { title: '닫기', onclick: e => { e.stopPropagation(); closeTab(spec.id); } }, '✕'));
         head.addEventListener('auxclick', e => { if (e.button === 1) closeTab(spec.id); });
         $('tab-list').append(head);
         $('editor').append(pane);
         tab = {
             id: spec.id, pane, head, spec,
-            setTitle(t) { label.textContent = t; head.title = t; },
+            setTitle(t) { label.textContent = plainTitle(t); head.title = plainTitle(t); },
             close: () => closeTab(spec.id),
             rerender: () => { clear(pane); tab.spec.render(pane, tab); },
         };
@@ -183,7 +189,8 @@ export function setStatus(id, text, title) {
 export const DEFAULT_LAYOUT = {
     sidePosition: 'left',
     sideWidth: 300,
-    bottomVisible: true,
+    bottomVisible: false,   // 기록은 상태 표시줄의 '기록' 을 누르면 보임 (0.5.13 부터 기본 숨김)
+    v: 2,
     bottomHeight: 150,
     fontScale: 1,
     compact: false,
@@ -276,7 +283,7 @@ export function toggleLayoutMode() {
         const seg = (key, options) => el('div.seg', options.map(([v, label]) =>
             el('button', { className: l[key] === v ? 'on' : '', onclick: () => { setLayout({ [key]: v }); render(); } }, label)));
         clear(panel,
-            el('h3', '🧩 화면 배치'),
+            el('h3', '화면 배치'),
             el('p.small.muted', '점선 영역의 번호(①~⑥)로 부르면 바꾸고 싶은 곳을 정확히 전달할 수 있습니다. 경계선을 끌어 크기를 조절하세요.'),
             el('div.field', el('span', '② 목록 패널 위치'), seg('sidePosition', [['left', '왼쪽'], ['right', '오른쪽']])),
             el('div.field', el('span', '⑤ 하단 패널(기록)'), seg('bottomVisible', [[true, '보이기'], [false, '숨기기']])),
@@ -293,7 +300,7 @@ export function toggleLayoutMode() {
                     } catch (e) {
                         prompt('아래 글을 복사하세요', text);
                     }
-                } }, '📋 배치 설명 복사'),
+                } }, '배치 설명 복사'),
                 el('button.btn', { onclick: () => { applyLayout(DEFAULT_LAYOUT); render(); } }, '처음대로'),
                 el('button.btn.primary', { onclick: toggleLayoutMode }, '완료')));
     };

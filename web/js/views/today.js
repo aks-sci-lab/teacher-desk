@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { el, clear, guarded, longDate, todayIso, eventLine, catBadge, srcBadge } from '../ui.js';
 import { registerView, openTab, findTab, on } from '../shell.js';
 import { store } from '../store.js';
+import { icon } from '../icons.js';
 import { openItem, openPaste, collectNow } from './inbox.js';
 import { openForm, openPass } from './passes.js';
 import { openCalendar } from './calendar.js';
@@ -14,9 +15,11 @@ function openEv(e) {
     else openCalendar();
 }
 
+// 카드: 건수가 0 이면 작게 (빈 카드가 자리를 많이 차지하지 않게)
 function card(title, count, body, opts = {}) {
-    return el('section.card', { className: `card${opts.alert ? ' alert' : ''}` },
-        el('h3', el('span', title), count != null && el('span.muted', `${count}건`)),
+    const cls = ['card', opts.alert && 'alert', count === 0 && 'empty-card', opts.cls].filter(Boolean).join(' ');
+    return el('section', { className: cls },
+        el('h3', el('span', title), count != null && el('span.count', count)),
         body);
 }
 
@@ -117,7 +120,7 @@ function aiText(text, ids = [], hiddenList = []) {
             } }, `더 보기 (${rows.length - first})`);
             const left = rows.filter(r => !hidden.has(rowKey(s, r))).length;
             return el('section', { className: `ai-sec ${s.cls}` },
-                el('h4', `${s.icon} ${s.title}`, el('span.muted', ` ${left}`)), list, more || null);
+                el('h4', s.title, el('span.count', left)), list, more || null);
         });
         clear(wrap,
             el('div.ai-sections', secs.filter(Boolean).length ? secs : el('p.muted.small', '모두 지웠습니다.')),
@@ -137,7 +140,7 @@ function appliedNote(res, updates) {
     const items = all.reduce((n, a) => n + a.items, 0);
     const added = all.reduce((n, a) => n + a.added, 0);
     if (!items) return '';
-    return el('p.small.muted', `🤖 요약에 맞춰 수신함 메시지 ${items}건의 분류를 정리하고 일정 후보 ${added}건을 더했습니다 (달력에 넣은 메시지는 그대로).`);
+    return el('p.small.muted', `요약에 맞춰 수신함 메시지 ${items}건의 분류를 정리하고 일정 후보 ${added}건을 더했습니다 (달력에 넣은 메시지는 그대로).`);
 }
 
 function aiCard() {
@@ -148,18 +151,18 @@ function aiCard() {
         clear(body,
             // 요약 뒤 새 자료 알림 (새 것만 요약하거나 전체 다시 요약)
             r.new_count && !r.running ? el('div.ai-new',
-                el('span', `🆕 요약 뒤 새 자료 ${r.new_count}건`),
-                el('button.btn.small.primary', { onclick: () => run('new') }, '🆕 새 것만 요약'),
-                el('button.btn.small', { onclick: () => run('full') }, '🤖 전체 다시 요약')) : '',
+                el('span', `요약 뒤 새 자료 ${r.new_count}건`),
+                el('button.btn.small.primary', { onclick: () => run('new') }, '새 것만 요약'),
+                el('button.btn.small', { onclick: () => run('full') }, '전체 다시 요약')) : '',
             // 덧붙인 '새로 들어온 것' (최근 것 먼저)
             updates.map(u => el('div.ai-update',
-                el('h4', `🆕 새로 들어온 것 · ${u.at.slice(11)} · ${u.used ?? u.count}건`),
+                el('h4', `새로 들어온 것 · ${u.at.slice(11)} · ${u.used ?? u.count}건`),
                 aiText(u.text, u.ids, r.hidden))),
             res && res.text ? aiText(res.text, res.ids, r.hidden) : el('p.muted.small', '아직 요약이 없습니다.'),
             res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
             appliedNote(res, updates),
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
-            el('div.row', el('button.btn.small', { onclick: () => run('full') }, '🤖 전체 다시 요약')));
+            el('div.row', el('button.btn.small', { onclick: () => run('full') }, '전체 다시 요약')));
     };
     // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
     let timer = null;
@@ -167,7 +170,7 @@ function aiCard() {
         const sec = Math.max(0, Math.round((Date.now() - new Date(st.started_at.replace(' ', 'T'))) / 1000));
         const what = st.kind === 'new' ? '새로 들어온 자료를' : '지난 1주일 자료를';
         clear(body,
-            el('p.small', `🤖 ${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
+            el('p.small', `${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
             el('p.small.muted', st.kind === 'new'
                 ? '새 자료만 읽으므로 보통 1분 안쪽입니다. 다른 화면을 써도 됩니다.'
                 : 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'));
@@ -188,7 +191,7 @@ function aiCard() {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
             body.closest('.brief')?.classList.add('no-ai');   // AI 를 안 쓰면 카드가 화면 폭을 다 씀
-            clear(body, el('p.small', '⚙ 설정 → 🤖 AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
+            clear(body, el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
             return;
         }
         if (st.running) return poll();
@@ -209,7 +212,17 @@ function aiCard() {
         }
     };
     setTimeout(() => run('auto').catch(e => show({}, e.message)), 0);  // 카드가 화면에 붙은 뒤 시작
-    return card('🤖 지난 1주일 요약 (쿨메신저·업무포털)', null, body);
+    return card('지난 1주일 요약', null, body, { cls: 'ai-card' });
+}
+
+// 비어 있는 카드는 한 줄로 모음 ('오늘 일정 없음 · 7일 안 마감 없음'), 내용 있는 카드만 칸을 차지
+function withEmptyStrip(cards) {
+    const empties = [...cards.querySelectorAll(':scope > .empty-card')];
+    if (!empties.length) return cards;
+    const strip = el('div.empty-strip', empties.map(c => el('span', el('b', c.querySelector('h3 > span').textContent), '없음')));
+    empties.forEach(c => c.remove());
+    cards.prepend(strip);
+    return cards;
 }
 
 function renderToday(pane) {
@@ -222,43 +235,42 @@ function renderToday(pane) {
         pane.append(
             el('h1', `${longDate(todayIso())}`),
             el('p.sub', `${store.settings.teacher_name ? store.settings.teacher_name + ' 선생님, ' : ''}오늘 할 일을 모았습니다.`),
-            el('div.row', { style: 'margin-bottom: 16px' },
-                el('button.btn', { onclick: openPaste }, '＋ 메시지 붙여넣기'),
-                el('button.btn', { onclick: () => openForm({ kind: 'early' }) }, '🎫 조퇴증'),
-                el('button.btn', { onclick: () => openForm({ kind: 'out' }) }, '🎫 외출증'),
-                el('button.btn', { onclick: collectNow }, '⟳ 지금 수집')),
+            el('div.row.brief-actions',
+                el('button.btn', { onclick: () => openForm({ kind: 'early' }) }, icon('passes'), '조퇴증'),
+                el('button.btn', { onclick: () => openForm({ kind: 'out' }) }, icon('passes'), '외출증'),
+                el('button.btn', { onclick: openPaste }, icon('plus'), '메시지 붙여넣기'),
+                el('button.btn', { onclick: collectNow }, icon('refresh'), '지금 수집')),
             // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
-            el('div.brief', aiCard(), el('div.cards',
-                s.overdue.length ? card('⚠ 지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
-                card('📌 오늘 일정', s.today.length, evList(s.today, '오늘 일정이 없습니다')),
-                card('⏰ 7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '다가오는 마감이 없습니다')),
-                card('🗓 7일 안 일정', s.week_events.length, evList(s.week_events, '다가오는 일정이 없습니다')),
-                card('🎫 오늘 조퇴·외출', s.passes.length, s.passes.length
+            el('div.brief', aiCard(), withEmptyStrip(el('div.cards',
+                s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
+                card('오늘 일정', s.today.length, evList(s.today, '없음')),
+                card('7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '없음')),
+                card('7일 안 일정', s.week_events.length, evList(s.week_events, '없음')),
+                card('오늘 조퇴·외출', s.passes.length, s.passes.length
                     ? el('ul.list', s.passes.map(p => el('li', { onclick: () => openPass(p) },
                         el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
                         el('span.meta', KIND[p.kind], p.time_out || '', p.time_return ? `~${p.time_return}` : '',
-                            p.kind === 'out' ? (p.status === 'returned' ? '✔ 복귀' : '복귀 전') : ''))))
-                    : el('p.muted.small', '없습니다')),
-                card('📥 새로 받은 자료', s.new_items.length, s.new_items.length
+                            p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
+                    : el('p.muted.small', '없음')),
+                card('새로 받은 자료', s.new_items.length, s.new_items.length
                     ? el('ul.list', s.new_items.map(it => el('li', { onclick: () => openItem(it.id) },
                         el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16)))))
-                    : el('p.muted.small', '새 자료가 없습니다')),
-                card('🔄 자동 수집', null, el('div.small',
-                    el('div', `수집 시각: ${(store.settings.collect_times || []).join(', ') || '없음'}`),
-                    el('div', `다음 수집: ${st?.next_collect || '-'}`),
-                    el('div', `마지막 수집: ${s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'}`),
-                    el('div', `쿨메신저: ${store.settings.coolmessenger_path || store.settings.coolmessenger_name || '미설정'}${store.settings.coolmessenger_folder ? ' (+ 받은 파일 폴더)' : ''}`),
-                    el('div', `에듀파인 폴더: ${store.settings.edufine_folder || '미설정'}`),
-                    el('div', `텔레그램: ${st?.telegram.linked ? '연결됨' : '연결 안 됨'}`))))));
+                    : el('p.muted.small', '없음')),
+                card('자동 수집', null, el('dl.kvs',
+                    el('dt', '마지막'), el('dd', s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'),
+                    el('dt', '다음'), el('dd', `${st?.next_collect || '-'} (${(store.settings.collect_times || []).join(' · ') || '예약 없음'})`),
+                    el('dt', '쿨메신저'), el('dd', store.settings.coolmessenger_path || store.settings.coolmessenger_name ? '연결' : '미설정'),
+                    el('dt', '에듀파인'), el('dd', store.settings.edufine_folder ? '폴더 지정됨' : '미설정'),
+                    el('dt', '텔레그램'), el('dd', st?.telegram.linked ? '연결됨' : '연결 안 됨')), { cls: 'status-card' })))));
     })();
 }
 
 export function openToday() {
-    openTab({ id: 'today', title: '📋 브리핑', wide: true, refresh: true, render: renderToday });
+    openTab({ id: 'today', title: '브리핑', wide: true, refresh: true, render: renderToday });
 }
 
 registerView({
-    id: 'today', icon: '📋', label: '브리핑',
+    id: 'today', icon: '📋', label: '브리핑', noSide: true,
     renderSide(body) {
         body.append(el('div.empty', '오른쪽에 오늘의 업무 브리핑이 있습니다.'),
             el('ul.list',

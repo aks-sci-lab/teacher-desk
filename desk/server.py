@@ -36,7 +36,7 @@ MAX_BODY = 20 * 1024 * 1024  # 학사일정 파일 올리기(base64) 때문에 �
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
        # 쿨메신저 사진·스티커가 인터넷 주소일 수 있어 http(s) 그림은 허용 (스크립트·연결은 이 PC 만)
-       "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+       "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
 class ApiError(Exception):
@@ -419,7 +419,57 @@ def get_item(app, q, body, item_id):
     # 인터넷 사진은 주소 그대로, 나머지(쪽지 안 그림·PC 파일)는 /images/n 으로 받게 (큰 그림을 목록에 싣지 않음)
     it["images"] = [{"n": n, "url": s if s.lower().startswith(("http://", "https://")) else None}
                     for n, s in enumerate(it.get("images") or [])]
+    # 일정 후보 자세히: 날짜가 나온 원문 줄과 앞뒤 줄
+    try:
+        ref = datetime.strptime(it["received_at"][:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        ref = date.today()
+    for e in it.get("events") or []:
+        e["context"] = extract.event_context(it.get("body") or "", e["date"], ref)
+    p = _item_file(app, it)
+    it["file"] = {"name": p.name, "ext": p.suffix.lower(), "pdf": p.suffix.lower() == ".pdf",
+                  "can_open": hasattr(os, "startfile")} if p else None
     return it
+
+
+def _item_file(app, it):
+    """항목의 원본 파일 (에듀파인·받은 파일 폴더 안에 아직 있는 문서만), 없으면 None."""
+    fp = it.get("file_path") or ""
+    if not fp or "#" in fp:
+        return None
+    roots = [app.config[k] for k in SOURCES.values() if app.config[k]]
+    try:
+        p = Path(fp).resolve()
+        allowed = [os.path.normcase(str(Path(r).resolve())).rstrip("\\/") + os.sep for r in roots]
+        name = os.path.normcase(str(p))
+        if p.is_file() and any(name.startswith(a) for a in allowed):
+            return p
+    except OSError:
+        pass
+    return None
+
+
+@api("GET", r"/api/items/(\d+)/file")
+def item_file(app, q, body, item_id):
+    """원본 PDF (원문 창에서 원래 양식 그대로 보기)."""
+    it = app.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
+    need(it, "없는 항목입니다", 404)
+    p = _item_file(app, it)
+    need(p and p.suffix.lower() == ".pdf", "원본 PDF 파일을 찾을 수 없습니다 (폴더에서 옮겼거나 지워짐)", 404)
+    need(p.stat().st_size <= 50 * 1024 * 1024, "파일이 너무 큽니다", 413)
+    return 200, p.read_bytes(), "application/pdf", {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+@api("POST", r"/api/items/(\d+)/open")
+def open_item_file(app, q, body, item_id):
+    """원본 파일을 이 PC 의 기본 프로그램(한글·PDF 보기)으로 엶 (윈도우)."""
+    it = app.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
+    need(it, "없는 항목입니다", 404)
+    p = _item_file(app, it)
+    need(p, "원본 파일을 찾을 수 없습니다 (폴더에서 옮겼거나 지워짐)", 404)
+    need(hasattr(os, "startfile"), "파일 열기는 윈도우에서만 됩니다")
+    os.startfile(str(p))  # noqa: S606 — 수집 폴더 안의 그 항목 파일만
+    return {"ok": True}
 
 
 def _image_roots(app):

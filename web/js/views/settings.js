@@ -26,7 +26,7 @@ function pathField(key, label, hint, purpose, placeholder = '') {
         } finally {
             browse.disabled = false;
         }
-    }) }, '📂 찾아보기');
+    }) }, '찾아보기');
     return el('div.field', el('span', label), el('div.row', input, browse), hint && el('span.hint', hint));
 }
 
@@ -65,7 +65,7 @@ function renderSettings(pane, tab) {
         try {
             const base = pane.querySelector('[data-key="ai_base"]').value;
             const r = await api.post('/api/ai/check', { base });
-            clear(aiBox, el('p', { style: 'color: var(--ok); font-weight: 700' }, '✅ LM Studio 연결됨'),
+            clear(aiBox, el('p', { style: 'color: var(--ok); font-weight: 700' }, 'LM Studio 연결됨'),
                 el('p.small', `불러온 모델: ${r.models.join(', ')}`),
                 el('p.small.muted', '모델 이름 칸을 비워 두면 첫 모델을 씁니다.'));
         } catch (e) {
@@ -104,7 +104,7 @@ function renderSettings(pane, tab) {
         clear(coolBox,
             el('p.small', `파일: ${r.path}`),
             d ? el('div',
-                el('p', { style: 'color: var(--ok); font-weight: 700' }, `✅ 연결됨 — 쪽지 ${d.rows.toLocaleString()}개`),
+                el('p', { style: 'color: var(--ok); font-weight: 700' }, `연결됨 — 쪽지 ${d.rows.toLocaleString()}개`),
                 el('p.small.muted', `읽는 곳: 표 ${d.table} · 내용 ${d.body}${d.title ? ' · 제목 ' + d.title : ''}${d.date ? ' · 날짜 ' + d.date : ' · 날짜 열 없음'}${d.sender ? ' · 보낸 사람 ' + d.sender : ''}`),
                 r.images && Object.keys(r.images.kinds).length
                     ? el('p.small.muted', `최근 쪽지의 사진: ${Object.entries(r.images.kinds).map(([k, n]) => `${k} ${n}장`).join(', ')}${r.images.hosts.length ? ' (' + r.images.hosts.join(', ') + ')' : ''}`)
@@ -114,7 +114,7 @@ function renderSettings(pane, tab) {
                 el('p.small.muted', '맞으면 아래 "설정 저장"을 누르세요. 처음 수집 때 최근 30일 쪽지를 가져옵니다.'))
               : el('p', { style: 'color: var(--danger)' }, '쪽지 표를 찾지 못했습니다. 아래 구조를 복사해 개발 담당에게 보내 주세요.'),
             el('details', el('summary.small', '파일 구조 (내용 없음)'),
-                el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r.tables, null, 2)); toast('구조를 복사했습니다'); }) }, '📋 복사'),
+                el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r.tables, null, 2)); toast('구조를 복사했습니다'); }) }, '복사'),
                 el('pre.text', JSON.stringify(r.tables, null, 2))));
     });
 
@@ -140,32 +140,32 @@ function renderSettings(pane, tab) {
         const r = await api.get(`/api/diagnose?source=${source}&folder=${encodeURIComponent(folder)}`);
         if (r.error) return clear(diagBox, el('p', { style: 'color: var(--danger)' }, r.error));
         clear(diagBox,
-            el('p', { style: 'font-weight: 700' }, `📁 ${r.folder}: 파일 ${r.total}개 (읽는 형식 ${r.supported}개)`),
-            r.cloud_only ? el('p', { style: 'color: var(--danger)' }, `☁ 그중 ${r.cloud_only}개는 ${r.cloud_hint}`) : el('p.small', { style: 'color: var(--ok)' }, '✅ 모든 파일이 이 PC 에 있습니다.'),
+            el('p', { style: 'font-weight: 700' }, `${r.folder}: 파일 ${r.total}개 (읽는 형식 ${r.supported}개)`),
+            r.cloud_only ? el('p', { style: 'color: var(--danger)' }, `그중 ${r.cloud_only}개는 ${r.cloud_hint}`) : el('p.small', { style: 'color: var(--ok)' }, '모든 파일이 이 PC 에 있습니다.'),
             !r.saved ? el('p.small', { style: 'color: var(--warn)' }, '아직 저장하지 않은 경로입니다. 아래 💾 설정 저장을 눌러야 이 폴더를 수집합니다.') : '',
             el('details', el('summary.small', '자세한 결과 (개발 담당용)'),
             el('p.small', '아래 결과에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 쿨메신저 전용 읽기 기능을 만들 때 이 결과를 Claude Code 에게 전달하세요.'),
-            el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 2)); toast('진단 결과를 복사했습니다'); }) }, '📋 결과 복사'),
+            el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 2)); toast('진단 결과를 복사했습니다'); }) }, '결과 복사'),
             el('pre.text', JSON.stringify(r, null, 2))));
     });
 
     pane.append(
         el('h1', '설정'),
         el('p.sub', `업무 데스크 ${st.version || ''} · 모든 자료는 이 PC 의 teacher-desk/data 폴더에만 저장됩니다.`),
-        section('🏫 학교·학급 (조퇴증·외출증에 인쇄)',
+        section('학교·학급 (조퇴증·외출증에 인쇄)',
             el('div.grid2',
                 textField('school_name', '학교 이름', null, { placeholder: '예: ○○고등학교' }),
                 textField('teacher_name', '담임 이름'),
                 textField('grade', '학년', null, { placeholder: '2' }),
                 textField('class_no', '반', null, { placeholder: '3' }))),
-        section('💬 쿨메신저 연동',
+        section('쿨메신저 연동',
             el('label.field', el('span', '쿨메신저 이름'), coolName, coolList,
                 el('span.hint', '쿨메신저는 쪽지를 C:\\Users\\(윈도우 사용자)\\AppData\\Local\\CoolMessenger\\Memo\\(이름).udb 에 저장합니다. 윈도우 사용자 폴더는 자동으로 찾습니다.')),
             coolPathField,
-            el('div.row', el('button.btn.small', { onclick: coolCheck }, '🔌 연결 확인')),
+            el('div.row', el('button.btn.small', { onclick: coolCheck }, '연결 확인')),
             coolBox),
-        section('🔄 자동 수집',
-            checkField('watch_enabled', '👁 실시간 감시 (권장)',
+        section('자동 수집',
+            checkField('watch_enabled', '실시간 감시 (권장)',
                 '쿨메신저 쪽지 파일과 아래 폴더가 바뀌면 바로 읽습니다. 몇 초마다 파일의 바뀐 시각·크기만 확인하므로 PC 에 부담이 거의 없습니다.'),
             pathField('edufine_folder', '에듀파인 공문 저장 폴더', '에듀파인에서 공문을 저장하는 폴더', 'edufine', '예: C:\\Users\\선생님\\Documents\\공문'),
             el('div.row', el('button.btn.small', { onclick: diagnose('edufine') }, '폴더 확인')),
@@ -176,7 +176,7 @@ function renderSettings(pane, tab) {
                 el('input', { type: 'text', value: (s.collect_times || []).join(', '), dataset: { key: 'collect_times' } }),
                 el('span.hint', '쉼표로 구분. 예: 09:00, 12:00, 15:00 — 업무 데스크가 켜져 있어야 합니다. 놓친 시각은 켜진 뒤 한 번 수집합니다.')),
             el('p.small.muted', `PDF 읽기: ${st.pdf_ready ? '준비됨' : '꺼짐 — 명령 프롬프트에서  pip install pypdf  실행 후 다시 시작'}`)),
-        section('📱 텔레그램',
+        section('텔레그램',
             el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
                 el('li', '텔레그램에서 @BotFather 를 찾아 /newbot 으로 봇을 만들고 토큰을 받습니다.'),
                 el('li', '아래에 토큰을 넣고 저장합니다.'),
@@ -188,14 +188,14 @@ function renderSettings(pane, tab) {
             el('label.field', el('span', '알림에 담을 내용'), detail,
                 el('span.hint', '학생 이름·조퇴 사유는 어느 경우에도 보내지 않습니다. 공문 내용이 텔레그램 서버를 거치는 것이 걱정되면 "개수만"을 고르세요.')),
             el('div.row',
-                tg.linked && el('button.btn.small', { onclick: tgAction('test') }, '🔔 시험 알림'),
+                tg.linked && el('button.btn.small', { onclick: tgAction('test') }, '시험 알림'),
                 tg.linked && el('button.btn.small.danger', { onclick: tgAction('unpair') }, '연결 끊기'),
                 !tg.linked && s.telegram_token_set && el('button.btn.small', { onclick: tgAction('renew') }, '코드 새로 만들기'))),
-        section('📅 나이스 학사일정',
+        section('나이스 학사일정',
             el('p.small', '달력 → 📥 학사일정 → 🏫 나이스 에서 학교를 골라 학사일정을 가져올 때 씁니다. 인증키는 교육정보 개방 포털(open.neis.go.kr)에 가입하면 무료로 받습니다.'),
             el('label.field', el('span', '나이스 인증키'), neisKey),
             s.neis_school && s.neis_school.name ? el('p.small', `고른 학교: ${s.neis_school.name}`) : null),
-        section('🤖 AI 요약 (이 PC 의 LM Studio)',
+        section('AI 요약 (이 PC 의 LM Studio)',
             el('p.small', '브리핑에서 지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문을 AI 로 요약합니다. AI 는 이 PC 의 LM Studio 에서 돌기 때문에 쪽지·공문이 PC 밖으로 나가지 않습니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).'),
             el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
                 el('li', 'LM Studio 에서 한국어가 되는 모델을 받아 불러옵니다 (예: Qwen3 8B, Gemma 3 12B, EXAONE 3.5 7.8B).'),
@@ -209,31 +209,31 @@ function renderSettings(pane, tab) {
                     [['normal', '보통 — 최대 14,000자 (더 꼼꼼, 4~5분)'], ['short', '짧게 — 최대 6,000자 (빠름, 2분 안팎)']]
                         .map(([v, l]) => el('option', { value: v, selected: (s.ai_input_size || 'normal') === v }, l))),
                 el('span.hint', '오래 걸리면 "짧게"를 고르세요. 짧게는 최근 자료부터 한 건에 400자씩 보냅니다.')),
-            el('div.row', el('button.btn.small', { onclick: aiCheck }, '🔌 연결 확인')),
+            el('div.row', el('button.btn.small', { onclick: aiCheck }, '연결 확인')),
             aiBox),
-        section('⬆ 업데이트',
+        section('업데이트',
             checkField('auto_update', '켤 때 새 버전 확인',
                 '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
             el('p.small.muted', `지금 버전: ${st.version || ''}`)),
-        section('🔗 학생 공유 페이지',
+        section('학생 공유 페이지',
             textField('pass_page_url', '공유 페이지 주소', '조퇴증·외출증 QR 이 가리키는 주소 (저장소의 pass/ 폴더가 배포된 곳)')),
-        section('🧩 화면 배치',
+        section('화면 배치',
             el('p.small', '목록 패널 위치·글자 크기·색상을 바꾸고, 바꾸고 싶은 곳을 번호로 Claude Code 에게 전달할 수 있습니다.'),
-            el('button.btn', { onclick: toggleLayoutMode }, '🧩 화면 배치 모드 열기')),
+            el('button.btn', { onclick: toggleLayoutMode }, '화면 배치 모드 열기')),
         el('div.row', { style: 'position: sticky; bottom: 0; background: var(--surface); padding: 10px 0' },
-            el('button.btn.primary', { onclick: save }, '💾 설정 저장')));
+            el('button.btn.primary', { onclick: save }, '설정 저장')));
 }
 
 export function openSettings() {
-    openTab({ id: 'settings', title: '⚙ 설정', render: renderSettings });
+    openTab({ id: 'settings', title: '설정', render: renderSettings });
 }
 
 registerView({
-    id: 'settings', icon: '⚙', label: '설정', bottom: true,
+    id: 'settings', icon: '⚙', label: '설정', bottom: true, noSide: true,
     renderSide(body) {
         body.append(el('ul.list',
-            el('li', { onclick: openSettings }, el('span.ttl', '⚙ 설정 열기')),
-            el('li', { onclick: toggleLayoutMode }, el('span.ttl', '🧩 화면 배치 모드'))));
+            el('li', { onclick: openSettings }, el('span.ttl', '설정 열기')),
+            el('li', { onclick: toggleLayoutMode }, el('span.ttl', '화면 배치 모드'))));
     },
     open: openSettings,
 });
