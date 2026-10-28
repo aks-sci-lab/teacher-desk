@@ -7,6 +7,7 @@ import { icon } from '../icons.js';
 import { openItem, openPaste, collectNow } from './inbox.js';
 import { openForm, openPass } from './passes.js';
 import { openCalendar } from './calendar.js';
+import { openTimetable } from './timetable.js';
 
 const KIND = { early: '조퇴', out: '외출' };
 
@@ -243,6 +244,10 @@ function renderToday(pane) {
             // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
             el('div.brief', aiCard(), withEmptyStrip(el('div.cards',
                 s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
+                s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
+                    ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },
+                        el('b', `${l.p}교시`), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'))))
+                    : el('p.muted.small', '없음')) : null,
                 card('오늘 일정', s.today.length, evList(s.today, '없음')),
                 card('7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '없음')),
                 card('7일 안 일정', s.week_events.length, evList(s.week_events, '없음')),

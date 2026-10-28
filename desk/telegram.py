@@ -26,6 +26,7 @@ HELP = (
     "마감 — 7일 안의 마감\n"
     "검색 낱말 — 메시지·공문 찾기 (그냥 낱말만 보내도 됨)\n"
     "원문 2 · 파일 2 — 브리핑·검색의 2번 자료 원문·원본 파일\n"
+    "내일 수업 · 금요일 시간표 — 내 수업 (시간표를 불러왔을 때)\n"
     "조퇴 7 [13:30] — 7번 조퇴증 발급 (사유는 단추로)\n"
     "외출 7 [13:30] [14:30] — 7번 외출증 발급\n"
     "새로고침 — 지금 바로 수집\n"
@@ -122,6 +123,13 @@ def chunks(text, size=TEXT_LIMIT):
     if cur.strip():
         out.append(cur)
     return out or [""]
+
+
+def lesson_line(lessons):
+    if not lessons:
+        return "📚 내 수업 없음"
+    return f"📚 내 수업 {len(lessons)}시간: " + " · ".join(
+        f"{l['p']}교시 {l['cls'] or l['subj']}" + ("(교체)" if l.get("moved") else "") for l in lessons)
 
 
 def fmt_event(e, today, detail):
@@ -310,6 +318,8 @@ class Bot:
     def run_arg(self, cid, cmd, args):
         if cmd == "search":
             return self.send_search(cid, " ".join(args))
+        if cmd == "lessons":
+            return self.reply(cid, self.lessons_text(" ".join(args)))
         if cmd in ("text", "file"):
             if not args or not args[0].isdigit():
                 return self.reply(cid, f"번호를 함께 보내세요. 예) {'원문' if cmd == 'text' else '파일'} 2")
@@ -318,6 +328,17 @@ class Bot:
                 return self.reply(cid, f"{args[0]}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
             return self.send_original(cid, item_id) if cmd == "text" else self.send_item_file(cid, item_id)
         return self.start_pass(cid, cmd, args)
+
+    def lessons_text(self, text, today=None):
+        today = today or date.today()
+        if queries.my_lessons(self.db, self.config, today) is None:
+            return "불러온 시간표가 없습니다. 업무 데스크 → 시간표에서 학교 시간표 엑셀을 불러오세요."
+        lines = []
+        for d in assist.lesson_days(text, today) or [today]:
+            ls = queries.my_lessons(self.db, self.config, d)
+            lines.append(f"📚 {fmt_day(d.isoformat(), today)} 내 수업 {len(ls)}시간")
+            lines += [f"  {l['p']}교시 {l['cls']} {l['subj']}" + (" (교체)" if l["moved"] else "") for l in ls] or ["  없음"]
+        return "\n".join(lines)
 
     # ---- 단추 ----
     def handle_button(self, cq):
@@ -531,6 +552,9 @@ class Bot:
             lines += [fmt_event(e, today, detail) for e in s["today"][:10]]
             lines.append(f"\n7일 안 마감 {len(s['week_deadlines'])}건")
             lines += [fmt_event(e, today, detail) for e in s["week_deadlines"][:5]]
+            lessons = queries.my_lessons(self.db, self.config, today)
+            if lessons is not None:
+                lines.insert(1, lesson_line(lessons))
             out = sum(1 for p in s["passes"] if p["kind"] == "out")
             early = sum(1 for p in s["passes"] if p["kind"] == "early")
             lines.append(f"\n🎫 오늘 조퇴 {early}명 · 외출 {out}명")

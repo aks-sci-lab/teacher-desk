@@ -76,6 +76,25 @@ P_TIMES = re.compile(r"(\d{1,2})\s*(?::|시)\s*(\d{2})?\s*분?")
 P_REF = re.compile(r"(?:(\d{1,3})\s*번?\s*(?:자료)?\s*(원문|파일)|(원문|파일)\s*(\d{1,3}))")
 
 
+P_LESSON = re.compile(r"수업|시간표")
+P_WEEKDAY = re.compile(r"([월화수목금])요일")
+
+
+def lesson_days(text, today):
+    """'내일 수업'·'금요일 시간표'·'다음 주 수업' → 날짜들 (주말은 뺌)."""
+    m = P_WEEKDAY.search(text)
+    if m:
+        target = "월화수목금".index(m.group(1))
+        mon = today - timedelta(days=today.weekday())
+        if re.search(r"다음\s*주|차주", text) or (target < today.weekday() and not re.search(r"이번\s*주|금주", text)):
+            mon += timedelta(days=7)
+        return [mon + timedelta(days=target)]
+    start, end = period(text, today)
+    if (end - start).days > 6:   # 기간을 말하지 않았으면 오늘
+        start = end = today
+    return [start + timedelta(days=i) for i in range((end - start).days + 1) if (start + timedelta(days=i)).weekday() < 5]
+
+
 def intent(text):
     """자연스러운 말 → (명령, 인자) 또는 None. 예) '7번 학생 조퇴 1시 30분' → ('early', ['7', '13:30'])."""
     m = P_PASS.search(text)
@@ -95,6 +114,8 @@ def intent(text):
         return ("text" if (m.group(2) or m.group(3)) == "원문" else "file"), [n]
     if re.search(r"브리핑|오늘\s*(할\s*일|업무|뭐)", text):
         return "brief", []
+    if P_LESSON.search(text) and len(text) <= 25 and not re.search(r"교체|바꾸|바꿀|변경", text):
+        return "lessons", [text]
     return None
 
 
@@ -121,12 +142,20 @@ def gather(db, question, today=None):
             ids += [r["id"] for r in db.query("SELECT id FROM items WHERE source IN ('cool', 'edufine') AND status != 'archived' "
                                                "ORDER BY received_at DESC LIMIT ?", (MAX_ITEMS,)) if r["id"] not in ids]
             ids = ids[:MAX_ITEMS]
+    lessons = {}
+    if re.search(r"수업|시간표|교시|빈\s*시간|공강", question):
+        for d in lesson_days(question, today) if (end - start).days <= 6 else [today + timedelta(days=i) for i in range(7)]:
+            ls = queries.my_lessons(db, None, d)
+            if ls is None:
+                break
+            if d.weekday() < 5:
+                lessons[d.isoformat()] = ls
     items = []
     for i in ids:
         it = db.one("SELECT id, source, title, body, received_at, category FROM items WHERE id = ?", (i,))
         if it:
             items.append(it)
-    return {"words": words, "items": items, "events": events[:20], "start": start, "end": end}
+    return {"words": words, "items": items, "events": events[:20], "start": start, "end": end, "lessons": lessons}
 
 
 def fmt_day(d):
@@ -152,6 +181,10 @@ def build_prompt(question, found, names, today):
         ev_lines.append(f"- {when} {'마감' if e['kind'] == 'deadline' else '일정'} · {(e['item_title'] or e['text'])[:60]}{src}")
     materials = (f"달력 일정 ({fmt_day(found['start'])}~{fmt_day(found['end'])}):\n" + ("\n".join(ev_lines) or "- 없음")
                  + "\n\n자료:\n" + ("\n\n".join(parts) or "(맞는 자료 없음)"))
+    if found.get("lessons"):
+        materials = "내 수업 (시간표):\n" + "\n".join(
+            f"- {fmt_day(d)} " + (", ".join(f"{l['p']}교시 {l['cls']} {l['subj']}" for l in ls) or "수업 없음")
+            for d, ls in found["lessons"].items()) + "\n\n" + materials
     prompt = QA_RULES.format(today=f"{today.isoformat()} ({'월화수목금토일'[today.weekday()]})", question=question,
                              materials=materials)
     return ai.mask_names(prompt, names), len(parts)

@@ -5,11 +5,12 @@ import { loadState, loadStudents } from './store.js';
 import { initPasses } from './views/passes.js';
 import { initInbox, collectNow } from './views/inbox.js';
 import { initCalendar } from './views/calendar.js';
+import { initTimetable } from './views/timetable.js';
 import './views/today.js';
 import './views/search.js';
 import { openSettings } from './views/settings.js';
 
-orderViews(['today', 'inbox', 'calendar', 'passes', 'search', 'settings']);
+orderViews(['today', 'inbox', 'calendar', 'timetable', 'passes', 'search', 'settings']);
 
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
@@ -55,7 +56,7 @@ guarded(async () => {
     if (saved.v !== 2) applyLayout({ ...saved, bottomVisible: false, v: 2 });
     else applyLayout(saved, false);
     lastRunId = s.last_run ? s.last_run.id : 0;
-    await Promise.all([loadStudents(), initPasses(), initInbox(), initCalendar()]);
+    await Promise.all([loadStudents(), initPasses(), initInbox(), initCalendar(), initTimetable()]);
     showView('today');
     if (!s.settings.school_name && !s.settings.edufine_folder && !s.settings.coolmessenger_name && !s.settings.coolmessenger_path) {
         toast('처음 오셨네요. ⚙ 설정에서 학교·학급과 수집 폴더를 입력하세요.', 'info', 8000);

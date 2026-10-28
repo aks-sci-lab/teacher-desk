@@ -43,6 +43,32 @@ def today_summary(db, today=None):
             "passes": passes, "new_items": new_items, "last_run": last_run}
 
 
+def school_day_events(db, start, end):
+    """학사일정(및 '학사' 분류) 일정 글을 날짜별로 {'YYYY-MM-DD': [글...]} — 시간표 교체에서 막을 날을 찾는 데 씀."""
+    rows = db.query("SELECT e.date, COALESCE(e.end_date, e.date) AS end_date, e.text FROM events e "
+                    "LEFT JOIN items i ON i.id = e.item_id "
+                    "WHERE (i.source = 'school' OR e.category = '학사') AND e.date <= ? AND COALESCE(e.end_date, e.date) >= ?",
+                    (end.isoformat(), start.isoformat()))
+    out = {}
+    for r in rows:
+        d = max(date.fromisoformat(r["date"]), start)
+        last = min(date.fromisoformat(r["end_date"]), end)
+        while d <= last:
+            out.setdefault(d.isoformat(), []).append(r["text"] or "")
+            d += timedelta(days=1)
+    return out
+
+
+def my_lessons(db, config, day):
+    """내 시간표에서 그날 수업 (불러온 시간표가 없거나 내 이름을 모르면 None)."""
+    from . import timetable
+    tt = db.get_meta("timetable")
+    me = db.get_meta("timetable_me")
+    if not tt or me is None or me >= len(tt["teachers"]):
+        return None
+    return timetable.lessons_on(tt, me, day, db.get_meta("timetable_swaps") or [])
+
+
 def issue_pass(db, f):
     """조퇴증·외출증 발급 기록 (화면·텔레그램 공용). f 는 검사한 칸들. 발급 번호는 날짜-순번."""
     f = dict(f)
