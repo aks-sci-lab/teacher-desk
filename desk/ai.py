@@ -8,6 +8,7 @@
 
 import json
 import re
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,6 +19,9 @@ DAYS = 7
 MAX_ITEMS = 60
 PER_ITEM_CHARS = 700      # 한 건에서 보내는 글자 수 (앞부분)
 TOTAL_CHARS = 14000       # 한 번에 보내는 글자 수 (작은 모델의 기억 길이에 맞춤)
+# 설정의 '보내는 양': 짧게 하면 LM Studio 가 읽는 시간이 크게 줄어듦 (8845HS 내장 그래픽 12B 모델 약 70토큰/초)
+SIZES = {"normal": (700, 14000), "short": (400, 6000)}
+TIMEOUT = 900             # LM Studio 답을 기다리는 최대 시간 (15분)
 SOURCE_NAMES = {"cool": "쿨메신저", "edufine": "업무포털"}
 
 SYSTEM = (
@@ -100,14 +104,15 @@ def week_items(db, today=None, days=DAYS):
         "ORDER BY received_at DESC LIMIT ?", (since, MAX_ITEMS))
 
 
-def build_prompt(items, student_names=()):
+def build_prompt(items, student_names=(), size="normal"):
     """자료 목록 → (보낼 글, 실제로 넣은 개수)."""
+    per_item, limit = SIZES.get(size, SIZES["normal"])
     parts, used, total = [], 0, 0
     for n, it in enumerate(items, 1):
-        body = re.sub(r"\s+", " ", it["body"]).strip()[:PER_ITEM_CHARS]
+        body = re.sub(r"\s+", " ", it["body"]).strip()[:per_item]
         part = (f"[{n}] {SOURCE_NAMES.get(it['source'], it['source'])} · {it['received_at'][:16]} · "
                 f"{it['title']}\n{body}\n")
-        if total + len(part) > TOTAL_CHARS and parts:
+        if total + len(part) > limit and parts:
             break
         parts.append(part)
         total += len(part)
@@ -115,7 +120,7 @@ def build_prompt(items, student_names=()):
     return mask_names(INSTRUCTION + "\n".join(parts), student_names), used
 
 
-def weekly_summary(db, config, today=None, timeout=300):
+def weekly_summary(db, config, today=None, timeout=TIMEOUT):
     """지난 1주일 요약을 만들어 저장하고 돌려줌 {at, text, count, used, model, days}."""
     base = config["ai_base"]
     check_local(base)
@@ -129,20 +134,74 @@ def weekly_summary(db, config, today=None, timeout=300):
     model = config["ai_model"] or (models(base) or [None])[0]
     if not model:
         raise AIError("LM Studio 에 불러온 모델이 없습니다. LM Studio 에서 모델을 하나 불러오세요.")
-    prompt, used = build_prompt(items, [s["name"] for s in db.students()])
-    res = _call(base, "/chat/completions", {
+    prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"])
+    if "qwen" in model.lower():
+        prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
+    payload = {
         "model": model,
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        "temperature": 0.2, "max_tokens": 1500, "stream": False,
-    }, timeout=timeout)
+        "temperature": 0.2, "max_tokens": 2500, "stream": False,
+    }
     try:
-        text = res["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
+        # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)
+        res = _call(base, "/chat/completions", {**payload, "chat_template_kwargs": {"enable_thinking": False}},
+                    timeout=timeout)
+    except AIError as e:
+        if not str(e).startswith("LM Studio 오류 (400"):
+            raise
+        res = _call(base, "/chat/completions", payload, timeout=timeout)  # 그 칸을 받지 않는 LM Studio
+    try:
+        msg = res["choices"][0]["message"]
+        text = msg.get("content") or ""
+        finish = res["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, TypeError, AttributeError):
         raise AIError("LM Studio 의 답에 요약이 없습니다")
     # 생각 과정(<think>…</think>)을 내보내는 모델은 그 부분을 뺌
-    text = re.sub(r"(?is)<think>.*?</think>", "", text or "").strip()
+    text = re.sub(r"(?is)<think>.*?(</think>|$)", "", text).strip()
+    if not text:
+        raise AIError("AI 가 생각만 하다가 요약을 쓰지 못했습니다" + (" (답 길이 한도)" if finish == "length" else "")
+                      + ". LM Studio 모델 설정에서 Reasoning Budget 을 줄이거나 끄세요.")
     result.update(text=text, used=used, model=model,
                   ids=[it["id"] for it in items[:used]])
     db.set_meta("ai_weekly", result)
     db.log(f"AI 요약: 지난 {DAYS}일 자료 {used}건 ({model})")
     return result
+
+
+class Job:
+    """요약은 몇 분 걸리므로 뒤에서 만들고, 화면은 몇 초마다 상태만 물어봄."""
+
+    def __init__(self, db, config):
+        self.db, self.config = db, config
+        self.lock = threading.Lock()
+        self.thread = None
+        self.started_at = None
+        self.error = None
+
+    @property
+    def running(self):
+        return bool(self.thread and self.thread.is_alive())
+
+    def start(self):
+        with self.lock:
+            if self.running:
+                return False
+            self.error = None
+            self.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.thread = threading.Thread(target=self._run, name="ai-summary", daemon=True)
+            self.thread.start()
+            return True
+
+    def _run(self):
+        try:
+            weekly_summary(self.db, self.config)
+        except AIError as e:
+            self.error = str(e)
+        except Exception as e:  # 뒤에서 도는 일이 조용히 죽지 않게
+            self.error = f"요약 중 오류: {type(e).__name__}"
+            self.db.log(f"AI 요약 오류: {type(e).__name__}: {e}", "error")
+
+    def state(self):
+        return {"enabled": bool(self.config["ai_enabled"]), "running": self.running,
+                "started_at": self.started_at if self.running else None, "error": self.error,
+                "result": self.db.get_meta("ai_weekly"), "timeout": TIMEOUT}

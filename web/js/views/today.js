@@ -45,24 +45,43 @@ function aiCard() {
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
             el('div.row', el('button.btn.small', { onclick: () => run(true) }, '🤖 다시 요약')));
     };
+    // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
+    let timer = null;
+    const waiting = st => {
+        const sec = Math.max(0, Math.round((Date.now() - new Date(st.started_at.replace(' ', 'T'))) / 1000));
+        clear(body,
+            el('p.small', `🤖 지난 1주일 자료를 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
+            el('p.small.muted', 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'));
+    };
+    const poll = async () => {
+        clearTimeout(timer);
+        if (!body.isConnected) return;   // 브리핑을 닫았거나 새로 그림
+        const st = await api.get('/api/ai/weekly');
+        if (st.running) {
+            waiting(st);
+            timer = setTimeout(() => poll().catch(() => {}), 5000);
+        } else {
+            show(st, st.error);
+        }
+    };
     const run = async force => {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
             clear(body, el('p.small', '⚙ 설정 → 🤖 AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
             return;
         }
-        if (st.running || (!force && st.result && st.result.at && st.result.at.slice(0, 10) === todayIso())) {
-            show(st, st.running ? '요약하는 중입니다…' : null);
+        if (!st.running && !force && st.result && st.result.at && st.result.at.slice(0, 10) === todayIso()) {
+            show(st, st.error);
             return;
         }
-        clear(body, el('p.muted.small', '🤖 지난 1주일 자료를 요약하는 중… (모델에 따라 1~3분)'));
         try {
-            show(await api.post('/api/ai/weekly'));
+            if (!st.running) await api.post('/api/ai/weekly');
+            await poll();
         } catch (e) {
             show(st, e.message);
         }
     };
-    run(false);
+    setTimeout(() => run(false).catch(e => show({}, e.message)), 0);  // 카드가 화면에 붙은 뒤 시작
     return card('🤖 지난 1주일 요약 (쿨메신저·업무포털)', null, body);
 }
 

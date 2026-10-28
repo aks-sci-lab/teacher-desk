@@ -53,7 +53,7 @@
 - 텔레그램: 롱 폴링, 연결 코드를 보낸 계정 하나만.
 - 일정 등록(0.5.0, 사용자 요청): 자동 수집한 메시지·공문의 일정은 '후보'(`items.registered = 0`). 수신함에서 체크해야 달력·브리핑·검색·ics 에 들어감. 직접 붙여넣기·학사일정은 바로 등록, 항목에 일정을 직접 더하면 등록. 예전 DB 는 cool·edufine 을 후보로 바꿈.
 - 나이스: 응답에서 고른 학교(`SD_SCHUL_CODE`·`ATPT_OFCDC_SC_CODE`) 것만 남김 (인증키가 없거나 잘못되면 여러 학교 일정이 섞여 옴, 사용자 확인). 1000건 넘으면 다음 쪽도 받음.
-- AI 요약(0.5.0): 사용자 PC 는 Ryzen 7 8845HS·24GB (LM Studio 사용 중). OpenAI 호환 `/v1/models`·`/v1/chat/completions`, 프록시 거치지 않음, 지난 7일 cool·edufine 최대 60건·14000자, `<think>` 제거, 결과는 `meta.ai_weekly`. 브리핑을 열 때 오늘 만든 요약이 없으면 새로 만듦.
+- AI 요약(0.5.0): 사용자 PC 는 Ryzen 7 8845HS·24GB (LM Studio 사용 중). OpenAI 호환 `/v1/models`·`/v1/chat/completions`, 프록시 거치지 않음, 지난 7일 cool·edufine 최대 60건·14000자(설정 '짧게' 6000자), `<think>` 제거, 결과는 `meta.ai_weekly`. 브리핑을 열 때 오늘 만든 요약이 없으면 새로 만듦. 0.5.3: 사용자 PC 실측 프롬프트 처리 약 70토큰/초(780M GPU 97%) → 한 번 4~5분이라 `ai.Job` 으로 뒤에서 만들고 화면은 5초마다 확인, 최대 15분 기다림, `chat_template_kwargs.enable_thinking=false`(400 이면 빼고 다시)·Qwen 은 `/no_think`, 생각만 하고 답이 비면 Reasoning Budget 안내.
 - 화면: ① 활동 막대 ② 목록 패널 ③ 탭 ④ 작업 영역 ⑤ 하단 패널 ⑥ 상태 표시줄. 사용자가 🧩 화면 배치 → "배치 설명 복사"로 보내는 번호를 기준으로 고친다. 메뉴 '오늘' 은 '브리핑'(사용자 지정, 뷰 id 는 `today`).
 - 배포 형태: Python 으로 개발, 선생님에게는 Python 이 들어 있는 ZIP. `update-desk.bat` 은 이 저장소 Releases 를 먼저, 없으면 예전 저장소를 받는다.
 - 자동 업데이트(0.4.0, 사용자 요청): 켤 때 Releases 의 `latest.json`(워크플로가 ZIP 다음에 올림) 버전을 비교. 새 버전이면 PowerShell 업데이트 창을 띄우고 종료 코드 20 으로 끝냄 → 창이 python 종료를 기다려 `data`·`config.json` 빼고 덮어쓴 뒤 `start-desk.bat --no-update-check` 로 다시 켬. 윈도우용 ZIP(`python\python.exe` 있음)에서만, 인터넷이 안 되면 4초 뒤 그냥 켬.
@@ -72,3 +72,4 @@
 - 2026-10-28: 0.5.1 이모지가 든 쪽지에서 실시간 감시가 'surrogates not allowed' 로 멈추던 문제 (RTF \uN·한글 문서는 16비트씩 읽어 이모지가 반쪽 둘로 나뉨 → `docs.fix_surrogates` 로 합침) — Claude Code
 - 2026-10-28: 0.5.2 쿨메신저 쪽지 사진 표시 (인터넷 주소·PC 파일·쪽지 안 그림, 예전 쪽지도 채움), 연결 확인에 사진 종류 — Claude Code
   - 확인 필요: 실제 쿨메신저 사진 저장 형식 (연결 확인의 '최근 쪽지의 사진' 결과)
+- 2026-10-28: 0.5.3 AI 요약을 뒤에서 만들기(화면은 진행 시간 표시), 기다리는 시간 15분, 보내는 양(보통/짧게), 생각 단계 끄기 — Claude Code

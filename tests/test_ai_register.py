@@ -21,6 +21,7 @@ class FakeLMStudio:
         self.requests = []
         self.models = list(models)
         self.reply = "<think>생각</think>## 꼭 할 일 (마감 순)\n- 11월 3일 · 협의록 제출 [1]"
+        self.reject_extra = False   # True: 모르는 칸(chat_template_kwargs)이 있으면 400 (깐깐한 LM Studio 흉내)
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -41,7 +42,10 @@ class FakeLMStudio:
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append(body)
-                self._send({"choices": [{"message": {"role": "assistant", "content": fake.reply}}]})
+                if fake.reject_extra and "chat_template_kwargs" in body:
+                    return self._send({"error": {"message": "Unrecognized key"}}, 400)
+                self._send({"choices": [{"message": {"role": "assistant", "content": fake.reply},
+                                         "finish_reason": "length" if not fake.reply else "stop"}]})
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.base = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
@@ -83,6 +87,9 @@ class AITests(unittest.TestCase):
         add_text_item(db, "paste", "직접 붙여넣은 글", received_at=recent())                       # 출처가 달라 뺌
         r = ai.weekly_summary(db, self.env.config)
         self.assertEqual((r["count"], r["used"], r["model"]), (2, 2, "qwen3-8b"))   # 임베딩 모델은 고르지 않음
+        req = self.fake.requests[-1]
+        self.assertEqual(req["chat_template_kwargs"], {"enable_thinking": False})   # 생각 단계 끄기
+        self.assertTrue(req["messages"][1]["content"].endswith("/no_think"))       # Qwen 은 글로도
         self.assertEqual(r["text"], "## 꼭 할 일 (마감 순)\n- 11월 3일 · 협의록 제출 [1]")  # 생각 과정 뺌
         prompt = self.fake.requests[-1]["messages"][1]["content"]
         self.assertIn("[1] 쿨메신저", prompt)
@@ -102,12 +109,38 @@ class AITests(unittest.TestCase):
             ai.weekly_summary(self.env.db, self.env.config)
         self.assertIn("Start Server", str(cm.exception))
 
+    def test_thinking_only_and_strict_server(self):
+        add_text_item(self.env.db, "cool", "회의 11월 5일", received_at=recent())
+        self.fake.reject_extra = True                                              # 모르는 칸 → 400 → 빼고 다시
+        self.assertIn("협의록", ai.weekly_summary(self.env.db, self.env.config)["text"])
+        self.assertNotIn("chat_template_kwargs", self.fake.requests[-1])
+        self.fake.reply = "<think>생각만 길게"                                       # 생각만 하다 끝남
+        with self.assertRaises(ai.AIError) as cm:
+            ai.weekly_summary(self.env.db, self.env.config)
+        self.assertIn("Reasoning Budget", str(cm.exception))
+
+    def test_job_runs_in_background(self):
+        add_text_item(self.env.db, "cool", "회의 11월 5일", received_at=recent())
+        job = ai.Job(self.env.db, self.env.config)
+        self.assertTrue(job.start())
+        job.thread.join(10)
+        st = job.state()
+        self.assertEqual((st["running"], st["error"], st["timeout"]), (False, None, 900))
+        self.assertIn("협의록", st["result"]["text"])
+        self.env.config.values["ai_base"] = "http://127.0.0.1:1/v1"                # 꺼져 있으면 오류만 남김
+        job.start()
+        job.thread.join(10)
+        self.assertIn("Start Server", job.state()["error"])
+
     def test_prompt_budget(self):
         items = [{"source": "cool", "received_at": "2026-10-27 09:00", "title": f"쪽지{i}", "body": "가" * 5000}
                  for i in range(40)]
         prompt, used = ai.build_prompt(items)
         self.assertLess(len(prompt), ai.TOTAL_CHARS + 1000)
         self.assertLess(used, 40)
+        short, used_short = ai.build_prompt(items, size="short")
+        self.assertLess(len(short), 6000 + 1000)
+        self.assertLess(used_short, used)
         self.assertEqual(ai.mask_names("김가온과 김가", ["김가", "김가온"]), "○○○과 ○○")
 
 
@@ -176,11 +209,13 @@ class RegisterApiTests(unittest.TestCase):
             st, r = self.req("POST", "/api/ai/check", {"base": fake.base})
             self.assertEqual((st, r["models"]), (200, ["qwen3-8b"]))
             self.assertEqual(self.req("POST", "/api/ai/check", {"base": "https://api.openai.com/v1"})[0], 400)
-            st, r = self.req("POST", "/api/ai/weekly", {})
+            st, r = self.req("POST", "/api/ai/weekly", {})                 # 시작만 하고 바로 돌아옴
             self.assertEqual(st, 200)
-            self.assertIn("협의록", r["result"]["text"])
+            self.app.ai_job.thread.join(10)
             st, r = self.req("GET", "/api/ai/weekly")
-            self.assertEqual((r["enabled"], r["running"], r["result"]["model"]), (True, False, "qwen3-8b"))
+            self.assertEqual((r["enabled"], r["running"], r["error"], r["result"]["model"]), (True, False, None, "qwen3-8b"))
+            self.assertIn("협의록", r["result"]["text"])
+            self.assertEqual(self.req("PUT", "/api/settings", {"ai_input_size": "huge"})[0], 400)
         finally:
             self.env.config.values.update(ai_enabled=False)
             fake.close()
