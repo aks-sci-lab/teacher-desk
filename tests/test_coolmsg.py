@@ -1,13 +1,15 @@
+import base64
 import os
 import sqlite3
 import tempfile
 import unittest
+import zlib
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from desk import coolmsg
-from desk.collect import Collector
+from desk.collect import Collector, add_text_item
 from tests.test_collect import Env
 
 
@@ -31,6 +33,11 @@ def make_udb(path, schema="a", rows=()):
     conn.close()
 
 
+def comp(html):
+    """쿨메신저가 내용을 압축해 저장하는 모양: '{COMP}' + base64(zlib(UTF-16 HTML))."""
+    return "{COMP}" + base64.b64encode(zlib.compress(html.encode("utf-16-le"))).decode()
+
+
 class ParseTests(unittest.TestCase):
     def test_parse_when(self):
         self.assertEqual(coolmsg.parse_when("2026-10-27 09:12:33"), datetime(2026, 10, 27, 9, 12, 33))
@@ -48,6 +55,11 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(coolmsg.clean_body(r"{\rtf1 \u54617?\u44368? ok}"), "학교 ok")
         self.assertEqual(coolmsg.clean_body("<p>첫 줄</p><br>둘째"), "첫 줄\n\n둘째")
         self.assertEqual(coolmsg.clean_body("회의".encode("cp949")), "회의")
+        html = '<div style="line-height: 1.35;"><font face="굴림" size="2">협의록을 11월 3일까지<br>제출해 주세요</font></div>'
+        self.assertEqual(coolmsg.clean_body(comp(html)), "협의록을 11월 3일까지\n제출해 주세요")
+        self.assertEqual(coolmsg.clean_body(comp('<img src="https://sticker.coolmessenger.com/a.png">')), "")  # 스티커만
+        self.assertEqual(coolmsg.clean_body("{COMP}eJzdkL1OAkEU깨짐"), "")                                  # 풀 수 없으면 비움
+        self.assertEqual(coolmsg.clean_body(html.encode("utf-16-le")), "협의록을 11월 3일까지\n제출해 주세요")
 
     def test_name_validation(self):
         with patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Users\kim\AppData\Local"}):
@@ -162,6 +174,36 @@ class CollectorCoolTests(unittest.TestCase):
                 env.config.values["coolmessenger_name"] = "없는사람"
                 s = Collector(env.db, env.config).run("manual")
                 self.assertTrue(any("파일이 없습니다" in e for e in s["errors"]))
+        finally:
+            env.close()
+
+    def test_repairs_items_saved_before_comp_support(self):
+        env = Env()
+        local = Path(env.tmp.name) / "local"
+        memo = local / "CoolMessenger" / "Memo"
+        memo.mkdir(parents=True)
+        recent = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        body = comp("<div>협의록을 11월 3일(화)까지 제출해 주세요</div>")
+        make_udb(memo / "홍길동.udb", "a", [("교무부", "성적관리위원회", body, recent),
+                                           ("교무부", "연수 안내", "신청은 11월 2일까지", recent)])
+        env.config.values.update(coolmessenger_name="홍길동", coolmessenger_folder="", edufine_folder="")
+        try:
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+                path = coolmsg.resolve("홍길동")
+                # 0.4.0 까지: 압축된 내용이 그대로 들어가 있음
+                sender = "\n\n(보낸 사람: 교무부)"
+                add_text_item(env.db, "cool", body + sender, title="성적관리위원회", received_at=recent, file_path=f"{path}#1")
+                add_text_item(env.db, "cool", "신청은 11월 2일까지" + sender, title="연수 안내", received_at=recent,
+                              file_path=f"{path}#2")
+                env.db.set_meta(f"cool_last_rowid:{path}", 2)
+                s = Collector(env.db, env.config).run("manual")
+                self.assertEqual((s["items"], s["errors"]), (1, []))
+                rows = env.db.query("SELECT title, body FROM items ORDER BY id")
+                self.assertEqual([r["title"] for r in rows], ["연수 안내", "성적관리위원회"])
+                self.assertNotIn("{COMP}", rows[1]["body"])
+                self.assertIn("11월 3일(화)까지", rows[1]["body"])
+                self.assertEqual(env.db.one("SELECT COUNT(*) AS n FROM events WHERE kind = 'deadline'")["n"], 2)
+                self.assertEqual(Collector(env.db, env.config).run("manual")["items"], 0)  # 한 번만
         finally:
             env.close()
 

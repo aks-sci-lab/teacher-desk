@@ -10,12 +10,14 @@
 쿨메신저가 켜져 있으면 파일이 잠겨 있을 수 있어 임시 폴더에 복사한 뒤 읽기 전용으로 엽니다.
 """
 
+import base64
 import os
 import re
 import shutil
 import sqlite3
 import tempfile
 import time
+import zlib
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -119,23 +121,48 @@ def _local_offset():
     return timedelta(seconds=-time.timezone if time.localtime().tm_isdst == 0 else -time.altzone)
 
 
+def _decode(b):
+    """바이트를 글자로: 글자 사이에 0 바이트가 많으면 UTF-16(윈도우 유니코드), 아니면 UTF-8·CP949."""
+    if b[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return b.decode("utf-16", "replace")
+    if len(b) >= 4 and b[1::2].count(0) * 3 > len(b) // 2:
+        return b.decode("utf-16-le", "replace")
+    for enc in ("utf-8", "cp949", "utf-16-le"):
+        try:
+            return b.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+COMP_PREFIX = "{COMP}"
+
+
+def unpack_comp(s):
+    """쿨메신저가 압축해 저장한 내용: '{COMP}' + base64(zlib(UTF-16 HTML)). 풀지 못하면 None."""
+    try:
+        raw = base64.b64decode(s.strip()[len(COMP_PREFIX):].strip() + "==", validate=False)
+        return _decode(zlib.decompress(raw))
+    except (ValueError, zlib.error):
+        return None
+
+
 def clean_body(v):
-    """쪽지 내용 정리: 바이트·RTF·HTML 도 글자로."""
+    """쪽지 내용 정리: 바이트·압축({COMP})·RTF·HTML 도 글자로."""
     if v is None:
         return ""
     if isinstance(v, bytes):
-        for enc in ("utf-8", "cp949", "utf-16-le"):
-            try:
-                v = v.decode(enc)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
+        v = _decode(v)
+        if v is None:
             return ""
     s = str(v)
+    if s.lstrip().startswith(COMP_PREFIX):
+        s = unpack_comp(s)
+        if s is None:
+            return ""  # 깨진 압축: 알 수 없는 글자를 수신함에 넣지 않음
     if s.lstrip().startswith("{\\rtf"):
         s = rtf_text(s)
-    elif re.search(r"<(html|body|p|div|br|span|font)\b", s, re.I):
+    elif re.search(r"<(html|body|p|div|br|span|font|img|table)\b", s, re.I):
         s = html_text(s)
     return tidy(s)
 
