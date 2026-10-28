@@ -155,13 +155,18 @@ def normalize_times(value):
     """'9:00, 12:00' 또는 ['9:00'] → ['09:00', '12:00'] (정렬·중복 제거)."""
     if isinstance(value, str):
         value = [p for p in value.replace("，", ",").split(",")]
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("수집 시각 형식이 잘못되었습니다 (예: 09:00, 12:00)")
     out = set()
     for t in value:
         t = str(t).strip()
         if not t:
             continue
         h, _, m = t.partition(":")
-        h, m = int(h), int(m or 0)
+        try:
+            h, m = int(h), int(m or 0)
+        except ValueError:
+            raise ValueError(f"시각이 잘못되었습니다: {t}")
         if not (0 <= h < 24 and 0 <= m < 60):
             raise ValueError(f"시각이 잘못되었습니다: {t}")
         out.add(f"{h:02d}:{m:02d}")

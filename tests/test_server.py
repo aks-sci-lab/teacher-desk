@@ -131,6 +131,22 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(r["settings"]["collect_times"], ["09:00", "12:00", "15:00"])
         self.assertEqual(r["settings"]["port"], self.port)  # 포트는 화면에서 못 바꿈
 
+    def test_settings_bad_times(self):
+        for v in ("아홉시", 9, {"a": 1}):
+            st, r = self.req("PUT", "/api/settings", {"collect_times": v})
+            self.assertEqual(st, 400, (v, r))
+
+    def test_bad_content_length(self):
+        for length in ("-1", "abc"):
+            c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+            c.putrequest("POST", "/api/items", skip_host=True)
+            c.putheader("Host", f"127.0.0.1:{self.port}")
+            c.putheader("X-Desk-Token", self.app.token)
+            c.putheader("Content-Length", length)
+            c.endheaders()
+            self.assertEqual(c.getresponse().status, 400, length)  # 기다리지 않고 바로 거절
+            c.close()
+
     def test_bad_json(self):
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         c.request("POST", "/api/items", body=b"{not json", headers={

@@ -72,6 +72,19 @@ class AnalyzeTests(unittest.TestCase):
         self.assertIn(("2026-10-30", None, "deadline", "제출·마감"), evs)
         self.assertTrue(any("장소" in s for s in a["summary"]))
 
+    def test_doc_numbers(self):
+        f = extract.find_doc_numbers
+        self.assertEqual(f("관련: 교육과정과-1234, 교무부 -56호"), ["교육과정과-1234", "교무부-56"])
+        self.assertEqual(f("2026교무과-123"), ["교무과-123"])  # 앞의 숫자는 빼고
+        self.assertEqual(f("교무과-12345678"), [])           # 8자리는 문서번호가 아님
+
+    def test_doc_numbers_fast_on_long_runs(self):
+        # 띄어쓰기 없는 긴 글에서 예전에는 수십 초 걸렸음
+        import time
+        start = time.monotonic()
+        extract.analyze("11월" * 30000 + " 교무과-12", REF)
+        self.assertLess(time.monotonic() - start, 3)
+
     def test_no_dates(self):
         a = extract.analyze("교직원 여러분 수고 많으셨습니다.", REF)
         self.assertEqual(a["events"], [])
