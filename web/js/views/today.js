@@ -129,23 +129,38 @@ function aiText(text, ids = [], hiddenList = []) {
 }
 
 // 🤖 지난 1주일 AI 요약 (LM Studio): 저장된 요약을 보여 주고, 오늘 만든 것이 없으면 새로 만듦
+const AUTO_GAP_MS = 10 * 60 * 1000;
+
 function aiCard() {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
     const show = (r, note) => {
         const res = r.result;
+        const updates = (res && res.updates) || [];
         clear(body,
+            // 요약 뒤 새 자료 알림 (새 것만 요약하거나 전체 다시 요약)
+            r.new_count && !r.running ? el('div.ai-new',
+                el('span', `🆕 요약 뒤 새 자료 ${r.new_count}건`),
+                el('button.btn.small.primary', { onclick: () => run('new') }, '🆕 새 것만 요약'),
+                el('button.btn.small', { onclick: () => run('full') }, '🤖 전체 다시 요약')) : '',
+            // 덧붙인 '새로 들어온 것' (최근 것 먼저)
+            updates.map(u => el('div.ai-update',
+                el('h4', `🆕 새로 들어온 것 · ${u.at.slice(11)} · ${u.used ?? u.count}건`),
+                aiText(u.text, u.ids, r.hidden))),
             res && res.text ? aiText(res.text, res.ids, r.hidden) : el('p.muted.small', '아직 요약이 없습니다.'),
-            res && res.at ? el('p.small.muted', `${res.at} · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
+            res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
-            el('div.row', el('button.btn.small', { onclick: () => run(true) }, '🤖 다시 요약')));
+            el('div.row', el('button.btn.small', { onclick: () => run('full') }, '🤖 전체 다시 요약')));
     };
     // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
     let timer = null;
     const waiting = st => {
         const sec = Math.max(0, Math.round((Date.now() - new Date(st.started_at.replace(' ', 'T'))) / 1000));
+        const what = st.kind === 'new' ? '새로 들어온 자료를' : '지난 1주일 자료를';
         clear(body,
-            el('p.small', `🤖 지난 1주일 자료를 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
-            el('p.small.muted', 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'));
+            el('p.small', `🤖 ${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
+            el('p.small.muted', st.kind === 'new'
+                ? '새 자료만 읽으므로 보통 1분 안쪽입니다. 다른 화면을 써도 됩니다.'
+                : 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'));
     };
     const poll = async () => {
         clearTimeout(timer);
@@ -158,25 +173,32 @@ function aiCard() {
             show(st, st.error);
         }
     };
-    const run = async force => {
+    // kind: 'auto' (브리핑을 열 때) · 'new' (새 것만) · 'full' (전체 다시)
+    const run = async kind => {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
             body.closest('.brief')?.classList.add('no-ai');   // AI 를 안 쓰면 카드가 화면 폭을 다 씀
             clear(body, el('p.small', '⚙ 설정 → 🤖 AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
             return;
         }
-        if (!st.running && !force && st.result && st.result.at && st.result.at.slice(0, 10) === todayIso()) {
-            show(st, st.error);
-            return;
+        if (st.running) return poll();
+        if (kind === 'auto') {
+            const fresh = st.result && st.result.at && st.result.at.slice(0, 10) === todayIso();
+            // 하루 처음엔 전체, 그 뒤엔 새 자료가 있을 때만 새 것만.
+            // 쪽지가 잇달아 오면 LM Studio 가 쉬지 못하므로, 자동으로는 마지막 요약 10분 뒤부터
+            const last = (st.result?.updates?.[0]?.at || st.result?.at || '').replace(' ', 'T');
+            const recent = last && Date.now() - new Date(last) < AUTO_GAP_MS;
+            if (fresh && (!st.new_count || recent)) return show(st, st.error);
+            kind = fresh ? 'new' : 'full';
         }
         try {
-            if (!st.running) await api.post('/api/ai/weekly');
+            await api.post('/api/ai/weekly', { kind });
             await poll();
         } catch (e) {
             show(st, e.message);
         }
     };
-    setTimeout(() => run(false).catch(e => show({}, e.message)), 0);  // 카드가 화면에 붙은 뒤 시작
+    setTimeout(() => run('auto').catch(e => show({}, e.message)), 0);  // 카드가 화면에 붙은 뒤 시작
     return card('🤖 지난 1주일 요약 (쿨메신저·업무포털)', null, body);
 }
 
