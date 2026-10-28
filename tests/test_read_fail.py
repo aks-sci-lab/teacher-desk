@@ -2,10 +2,13 @@ import errno
 import os
 import unittest
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 
 from desk import collect
 from desk.collect import Collector
+from tests import test_server  # ServerTests 를 이름으로 가져오면 그 시험이 여기서 또 돔
 from tests.test_collect import Env
 
 
@@ -52,8 +55,49 @@ class ReadFailTests(unittest.TestCase):
             self.assertIn("클라우드", collect.read_problem(p, OSError(errno.EINVAL, "Invalid argument")))
         self.assertIn("문서보안", collect.read_problem(p, OSError(errno.EACCES, "Permission denied")))
         self.assertIn("읽기 실패", collect.read_problem(p, OSError(errno.EIO, "I/O error")))
+        # 윈도우가 주는 진짜 오류 번호 (파이썬은 'Invalid argument' 로만 보여 줌)
+        e = OSError(errno.EINVAL, "Invalid argument")
+        e.winerror = 362
+        self.assertIn("지워져서", collect.read_problem(p, e))
+        e.winerror = 375                                                  # 동기화 중인 클라우드 파일
+        msg = collect.read_problem(p, e)
+        self.assertIn("동기화 중", msg)
+        self.assertIn("껍데기", msg)
+        self.assertIn("[윈도우 오류 375]", msg)
+        e.winerror = 87
+        self.assertIn("[윈도우 오류 87]", collect.read_problem(p, e))
         if os.name != "nt":                                             # 긴 경로 처리는 윈도우에서만
             self.assertEqual(collect.long_path(p), p)
+
+    def test_folder_check_counts_cloud_only(self):
+        real_stat = Path.stat
+
+        def fake_stat(self, *a, **k):
+            st = real_stat(self, *a, **k)
+            attrs = 0x400000 if self.name.startswith("공문") else 0   # 공문*.hwp 는 클라우드에만
+            return SimpleNamespace(st_size=st.st_size, st_mtime=st.st_mtime, st_mode=st.st_mode, st_file_attributes=attrs)
+        with patch.object(Path, "stat", fake_stat):
+            r = collect.diagnose(self.env.edu)
+        self.assertEqual((r["total"], r["supported"], r["cloud_only"]), (6, 6, 5))
+        self.assertIn("Synology Drive", r["cloud_hint"])
+        self.assertEqual(sum(f["kind"] == "클라우드에만 있음" for f in r["recent_files"]), 5)
+
+
+class FolderCheckApiTests(unittest.TestCase):
+    setUpClass = classmethod(test_server.ServerTests.setUpClass.__func__)
+    tearDownClass = classmethod(test_server.ServerTests.tearDownClass.__func__)
+    req = test_server.ServerTests.req
+
+    def test_checks_typed_path_before_saving(self):
+        other = Path(self.env.tmp.name) / "새 폴더"
+        other.mkdir()
+        (other / "안내.hwp").write_bytes(b"x")
+        st, r = self.req("GET", f"/api/diagnose?source=edufine&folder={quote(str(other))}")
+        self.assertEqual((st, r["total"], r["saved"]), (200, 1, False))      # 아직 저장 안 한 경로
+        st, r = self.req("GET", "/api/diagnose?source=edufine")
+        self.assertEqual((st, r["saved"]), (200, True))                     # 저장된 설정
+        self.env.config.values["coolmessenger_folder"] = ""
+        self.assertEqual(self.req("GET", "/api/diagnose?source=cool")[0], 400)
 
 
 if __name__ == "__main__":

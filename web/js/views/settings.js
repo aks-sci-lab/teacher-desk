@@ -135,11 +135,18 @@ function renderSettings(pane, tab) {
         tab.rerender();
     });
     const diagnose = source => guarded(async () => {
-        const r = await api.get(`/api/diagnose?source=${source}`);
+        const key = source === 'edufine' ? 'edufine_folder' : 'coolmessenger_folder';
+        const folder = pane.querySelector(`[data-key="${key}"]`)?.value || '';
+        const r = await api.get(`/api/diagnose?source=${source}&folder=${encodeURIComponent(folder)}`);
+        if (r.error) return clear(diagBox, el('p', { style: 'color: var(--danger)' }, r.error));
         clear(diagBox,
+            el('p', { style: 'font-weight: 700' }, `📁 ${r.folder}: 파일 ${r.total}개 (읽는 형식 ${r.supported}개)`),
+            r.cloud_only ? el('p', { style: 'color: var(--danger)' }, `☁ 그중 ${r.cloud_only}개는 ${r.cloud_hint}`) : el('p.small', { style: 'color: var(--ok)' }, '✅ 모든 파일이 이 PC 에 있습니다.'),
+            !r.saved ? el('p.small', { style: 'color: var(--warn)' }, '아직 저장하지 않은 경로입니다. 아래 💾 설정 저장을 눌러야 이 폴더를 수집합니다.') : '',
+            el('details', el('summary.small', '자세한 결과 (개발 담당용)'),
             el('p.small', '아래 결과에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 쿨메신저 전용 읽기 기능을 만들 때 이 결과를 Claude Code 에게 전달하세요.'),
             el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 2)); toast('진단 결과를 복사했습니다'); }) }, '📋 결과 복사'),
-            el('pre.text', JSON.stringify(r, null, 2)));
+            el('pre.text', JSON.stringify(r, null, 2))));
     });
 
     pane.append(

@@ -658,6 +658,13 @@ def ai_weekly_run(app, q, body):
     return app.ai_job.state()
 
 
+@api("POST", "/api/ai/hidden")
+def ai_hidden(app, q, body):
+    """요약 줄 지우기·되돌리기."""
+    key = text_field(body.get("key"), "지울 줄", 400, True)
+    return {"hidden": ai.set_hidden(app.db, key, body.get("hide", True) is not False)}
+
+
 @api("POST", "/api/ai/check")
 def ai_check(app, q, body):
     base = text_field(body.get("base"), "AI 주소", 200) or app.config["ai_base"]
@@ -683,9 +690,14 @@ def post_collect(app, q, body):
 def get_diagnose(app, q, body):
     source = q.get("source")
     need(source in SOURCES, "진단할 폴더를 고르세요")
-    folder = app.config[SOURCES[source]]
-    need(folder, "폴더가 설정되지 않았습니다")
-    return diagnose(folder)
+    # 화면 칸에 적은 경로를 바로 확인 (저장하기 전에도), 없으면 저장된 설정
+    folder = (q.get("folder") or "").strip().strip('"') or app.config[SOURCES[source]]
+    need(folder, "폴더 경로를 먼저 입력하세요")
+    saved = app.config[SOURCES[source]]
+    res = diagnose(folder)
+    same = lambda a, b: os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))  # noqa: E731
+    res["saved"] = bool(saved) and same(folder, saved)
+    return res
 
 
 @api("GET", "/api/cool")

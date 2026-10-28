@@ -219,6 +219,12 @@ class RegisterApiTests(unittest.TestCase):
             self.assertEqual((r["enabled"], r["running"], r["error"], r["result"]["model"]), (True, False, None, "qwen3-8b"))
             self.assertIn("협의록", r["result"]["text"])
             self.assertEqual(self.req("PUT", "/api/settings", {"ai_input_size": "huge"})[0], 400)
+            # 요약 줄 지우기 → 상태에 남고, 되돌리면 빠짐
+            key = "todo|10/30(금)|가족수당서류제출"
+            self.assertEqual(self.req("POST", "/api/ai/hidden", {"key": key})[1]["hidden"], [key])
+            self.assertEqual(self.req("GET", "/api/ai/weekly")[1]["hidden"], [key])
+            self.assertEqual(self.req("POST", "/api/ai/hidden", {"key": key, "hide": False})[1]["hidden"], [])
+            self.assertEqual(self.req("POST", "/api/ai/hidden", {"key": ""})[0], 400)
         finally:
             self.env.config.values.update(ai_enabled=False)
             fake.close()
