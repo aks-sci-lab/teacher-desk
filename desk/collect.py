@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import coolmsg, extract
 from .db import now_str
-from .docs import SUPPORTED, DocError, read_document
+from .docs import SUPPORTED, DocError, fix_surrogates, read_document
 
 SOURCES = {"edufine": "edufine_folder", "cool": "coolmessenger_folder"}
 SOURCE_NAMES = {"edufine": "에듀파인", "cool": "쿨메신저", "paste": "직접 입력", "school": "학사일정"}
@@ -26,9 +26,10 @@ def content_hash(text):
     return hashlib.sha256(" ".join(text.split()).encode("utf-8")).hexdigest()
 
 
-def add_text_item(db, source, text, title=None, received_at=None, file_path=None, ref=None):
+def add_text_item(db, source, text, title=None, received_at=None, file_path=None, ref=None, images=None):
     """글 하나를 분석해 수신함에 저장. 같은 내용이 이미 있으면 None."""
-    text = text.strip()
+    text = fix_surrogates(text).strip()
+    title = fix_surrogates(title) if title else title
     if not text:
         return None
     h = content_hash(text)
@@ -38,7 +39,7 @@ def add_text_item(db, source, text, title=None, received_at=None, file_path=None
     ref = ref or datetime.strptime(received_at[:10], "%Y-%m-%d").date()
     analysis = extract.analyze(text, ref=ref, title=title)
     item_id = db.add_item(source, analysis["title"], text, received_at, analysis,
-                          content_hash=h, file_path=file_path)
+                          content_hash=h, file_path=file_path, images=images)
     return {"id": item_id, "events": len(analysis["events"]),
             "deadlines": sum(1 for e in analysis["events"] if e["kind"] == "deadline")}
 
@@ -104,12 +105,30 @@ def repair_comp_items(db, path, last):
     return last
 
 
+def fill_missing_images(db, path):
+    """0.5.2 전에 받은 쿨메신저 쪽지에도 사진 목록을 채움 (한 번, 사진 칸이 비어 있는 것만)."""
+    rows = db.query("SELECT id, file_path FROM items WHERE source = 'cool' AND images IS NULL AND file_path LIKE ?",
+                    (f"{path}#%",))
+    ids = {}
+    for r in rows:
+        tail = r["file_path"].rsplit("#", 1)[1]
+        if tail.isdigit():
+            ids[int(tail)] = r["id"]
+    if not ids:
+        return
+    found = coolmsg.images_for_rowids(path, ids)
+    for rowid, item_id in ids.items():
+        db.execute("UPDATE items SET images = ? WHERE id = ?",
+                   (json.dumps(found.get(rowid, []), ensure_ascii=False), item_id))
+
+
 def scan_cool_memo(db, name, stats, path=""):
     """쿨메신저 쪽지 기록에서 지난번 이후 새 쪽지만 가져옴 (경로를 직접 지정했으면 그 파일)."""
     try:
         path = coolmsg.resolve(name, path)
         key = f"cool_last_rowid:{path}"
         last = repair_comp_items(db, path, db.get_meta(key))
+        fill_missing_images(db, path)
         _, memos, top = coolmsg.read_new(path, last)
     except coolmsg.CoolError as e:
         stats["errors"].append(f"쿨메신저: {e}")
@@ -120,7 +139,7 @@ def scan_cool_memo(db, name, stats, path=""):
             text += f"\n\n(보낸 사람: {m['sender']})"
         received = (m["when"] or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
         res = add_text_item(db, "cool", text, title=m["title"] or None, received_at=received,
-                            file_path=f"{path}#{m['rowid']}")
+                            file_path=f"{path}#{m['rowid']}", images=m.get("images") or [])
         if res:
             stats["items"] += 1
             stats["events"] += res["events"]

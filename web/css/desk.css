@@ -584,3 +584,9 @@ body.layout-edit [data-region]::after {
 .ai-text h4 { margin: 10px 0 2px; font-size: 1em; }
 .ai-text div { min-height: 0.4em; }
 section.card + .cards, .cards { margin-top: 12px; }
+
+/* 쿨메신저 사진 */
+.img-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.img-grid img { max-width: 220px; max-height: 220px; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; object-fit: contain; background: var(--surface-2); }
+.img-grid img.big { max-width: 100%; max-height: none; cursor: zoom-out; }
+.img-missing { padding: 12px; border: 1px dashed var(--line); border-radius: 6px; font-size: 0.85em; color: var(--muted); }

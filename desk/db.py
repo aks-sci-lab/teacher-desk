@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS items (
     status TEXT DEFAULT 'new',       -- new / read / done / archived
     doc_numbers TEXT,                -- JSON 배열
     file_path TEXT,
-    registered INTEGER DEFAULT 0     -- 1: 수신함에서 체크함 → 이 항목의 일정이 달력·브리핑에 들어감
+    registered INTEGER DEFAULT 0,    -- 1: 수신함에서 체크함 → 이 항목의 일정이 달력·브리핑에 들어감
+    images TEXT                      -- 쿨메신저 쪽지의 사진 주소 JSON 배열 (NULL: 아직 확인 안 함)
 );
 CREATE INDEX IF NOT EXISTS items_hash ON items(content_hash);
 
@@ -110,6 +111,8 @@ class DB:
             # 0.4.2: 수신함에서 체크한 메시지만 일정 등록 (사용자 요청). 직접 입력·학사일정은 등록된 것으로
             self.conn.execute("ALTER TABLE items ADD COLUMN registered INTEGER DEFAULT 0")
             self.conn.execute("UPDATE items SET registered = 1 WHERE source IN ('paste', 'school')")
+        if "images" not in cols:
+            self.conn.execute("ALTER TABLE items ADD COLUMN images TEXT")  # 0.5.2: 쿨메신저 사진
 
     def close(self):
         with self.lock:
@@ -157,7 +160,7 @@ class DB:
 
     # ---- 수신 항목 ----
     def add_item(self, source, title, body, received_at, analysis, content_hash=None, file_path=None,
-                 registered=None):
+                 registered=None, images=None):
         """분석 결과(extract.analyze)와 함께 항목과 일정을 한 번에 저장.
 
         자동 수집한 메시지·공문의 일정은 '후보'로만 저장 (수신함에서 체크해야 달력에 들어감).
@@ -167,10 +170,11 @@ class DB:
         with self.lock:
             cur = self.conn.execute(
                 "INSERT INTO items(source, title, body, received_at, created_at, content_hash, summary, "
-                "category, doc_numbers, file_path, registered) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "category, doc_numbers, file_path, registered, images) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (source, title, body, received_at, now_str(), content_hash,
                  json.dumps(analysis["summary"], ensure_ascii=False), analysis["category"],
-                 json.dumps(analysis["doc_numbers"], ensure_ascii=False), file_path, int(bool(registered))))
+                 json.dumps(analysis["doc_numbers"], ensure_ascii=False), file_path, int(bool(registered)),
+                 json.dumps(images, ensure_ascii=False) if images is not None else None))
             item_id = cur.lastrowid
             self.conn.executemany(
                 "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",
@@ -200,6 +204,8 @@ class DB:
 
 
 def decode_item(it):
+    if "images" in it:
+        it["images"] = json.loads(it.get("images") or "[]")
     it["summary"] = json.loads(it.get("summary") or "[]")
     it["doc_numbers"] = json.loads(it.get("doc_numbers") or "[]")
     return it

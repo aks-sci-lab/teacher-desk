@@ -60,6 +60,10 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(coolmsg.clean_body(comp('<img src="https://sticker.coolmessenger.com/a.png">')), "")  # 스티커만
         self.assertEqual(coolmsg.clean_body("{COMP}eJzdkL1OAkEU깨짐"), "")                                  # 풀 수 없으면 비움
         self.assertEqual(coolmsg.clean_body(html.encode("utf-16-le")), "협의록을 11월 3일까지\n제출해 주세요")
+        # 이모지 😀 (U+1F600) 는 RTF 에 반쪽 둘(\u-10179 \u-8704)로 적힘 → 하나로, 짝 없는 반쪽은 �
+        self.assertEqual(coolmsg.clean_body(r"{\rtf1 확인 \u-10179?\u-8704? 감사}"), "확인 😀 감사")
+        self.assertEqual(coolmsg.clean_body(r"{\rtf1 깨짐\u-10179?}"), "깨짐\ufffd")
+        coolmsg.clean_body(r"{\rtf1 \u-10179?}").encode("utf-8")   # 저장할 때 오류가 나지 않음
 
     def test_name_validation(self):
         with patch.dict(os.environ, {"LOCALAPPDATA": r"C:\Users\kim\AppData\Local"}):
@@ -174,6 +178,25 @@ class CollectorCoolTests(unittest.TestCase):
                 env.config.values["coolmessenger_name"] = "없는사람"
                 s = Collector(env.db, env.config).run("manual")
                 self.assertTrue(any("파일이 없습니다" in e for e in s["errors"]))
+        finally:
+            env.close()
+
+    def test_emoji_memo_does_not_stop_collecting(self):
+        env = Env()
+        local = Path(env.tmp.name) / "local"
+        memo = local / "CoolMessenger" / "Memo"
+        memo.mkdir(parents=True)
+        recent = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        make_udb(memo / "홍길동.udb", "a", [
+            ("교무부", "감사합니다", r"{\rtf1 수고하셨습니다 \u-10179?\u-8704?}", recent),
+            ("교무부", "반쪽", r"{\rtf1 회의 11월 5일 \u-10179?}", recent),
+            ("교무부", "성적관리위원회", "협의록을 11월 3일까지 제출", recent)])
+        env.config.values.update(coolmessenger_name="홍길동", coolmessenger_folder="", edufine_folder="")
+        try:
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+                s = Collector(env.db, env.config).run("watch")
+                self.assertEqual((s["items"], s["errors"]), (3, []))
+                self.assertIn("😀", env.db.one("SELECT body FROM items WHERE title = '감사합니다'")["body"])
         finally:
             env.close()
 

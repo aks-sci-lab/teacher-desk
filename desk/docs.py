@@ -44,7 +44,19 @@ def read_document(path):
     return tidy(text)
 
 
+def fix_surrogates(text):
+    """이모지처럼 두 칸(서로게이트 짝)으로 적힌 글자를 하나로 합치고, 짝 없는 반쪽은 '�' 로.
+
+    RTF 의 \\uN·한글 문서의 글자는 16비트씩 읽으므로 이모지가 반쪽 둘로 나뉨.
+    반쪽이 남아 있으면 저장(UTF-8)할 때 'surrogates not allowed' 오류로 수집이 멈춤.
+    """
+    if not any("\ud800" <= c <= "\udfff" for c in text):
+        return text
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
+
+
 def tidy(text):
+    text = fix_surrogates(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace(" ", " ")
     text = re.sub(r"[ \t　]+", " ", text)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)

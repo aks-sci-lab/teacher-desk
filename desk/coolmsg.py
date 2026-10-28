@@ -11,6 +11,7 @@
 """
 
 import base64
+import html
 import os
 import re
 import shutil
@@ -147,24 +148,77 @@ def unpack_comp(s):
         return None
 
 
-def clean_body(v):
-    """쪽지 내용 정리: 바이트·압축({COMP})·RTF·HTML 도 글자로."""
+def raw_body(v):
+    """바이트·압축({COMP})을 풀어 원래 모양(RTF·HTML·글자)으로. 읽을 수 없으면 None."""
     if v is None:
-        return ""
+        return None
     if isinstance(v, bytes):
         v = _decode(v)
         if v is None:
-            return ""
+            return None
     s = str(v)
     if s.lstrip().startswith(COMP_PREFIX):
-        s = unpack_comp(s)
-        if s is None:
-            return ""  # 깨진 압축: 알 수 없는 글자를 수신함에 넣지 않음
+        s = unpack_comp(s)  # 깨진 압축이면 None: 알 수 없는 글자를 수신함에 넣지 않음
+    return s
+
+
+def clean_body(v):
+    """쪽지 내용 정리: 바이트·압축({COMP})·RTF·HTML 도 글자로."""
+    s = raw_body(v)
+    if s is None:
+        return ""
     if s.lstrip().startswith("{\\rtf"):
         s = rtf_text(s)
     elif re.search(r"<(html|body|p|div|br|span|font|img|table)\b", s, re.I):
         s = html_text(s)
     return tidy(s)
+
+
+# ---------------------------------------------------------------- 사진
+IMG_RE = re.compile(r"""<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+RTF_PICT_RE = re.compile(r"\\(pngblip|jpegblip)(?:\\[a-z]+-?\d* ?)*\s*([0-9a-fA-F\s]{40,}?)\s*\}")
+MAX_IMAGES = 10
+MAX_INLINE_BYTES = 3_000_000   # 쪽지 안에 들어 있는 그림 하나의 최대 크기
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+
+
+def body_images(v):
+    """쪽지에 들어 있는 사진 목록: 인터넷 주소, PC 의 파일 경로, 쪽지 안에 든 그림(data:)."""
+    s = raw_body(v)
+    if not s:
+        return []
+    out = []
+    if s.lstrip().startswith("{\\rtf"):
+        for m in RTF_PICT_RE.finditer(s):
+            data = re.sub(r"\s+", "", m.group(2))
+            if len(data) % 2 or len(data) // 2 > MAX_INLINE_BYTES:
+                continue
+            kind = "png" if m.group(1) == "pngblip" else "jpeg"
+            out.append(f"data:image/{kind};base64," + base64.b64encode(bytes.fromhex(data)).decode())
+    for m in IMG_RE.finditer(s):
+        src = html.unescape(next(g for g in m.groups() if g is not None)).strip()
+        if src and not (src.startswith("data:") and len(src) > MAX_INLINE_BYTES * 4 // 3 + 100):
+            out.append(src)
+    seen, uniq = set(), []
+    for src in out:
+        if src not in seen:
+            seen.add(src)
+            uniq.append(src)
+    return uniq[:MAX_IMAGES]
+
+
+def image_kind(src):
+    """사진 주소의 종류 (연결 확인 화면에 내용 없이 보여 주기 위해)."""
+    low = src.lower()
+    if low.startswith(("http://", "https://")):
+        return "인터넷"
+    if low.startswith("data:"):
+        return "쪽지 안"
+    if low.startswith("cid:"):
+        return "첨부(cid)"
+    if low.startswith("file:") or re.match(r"^[a-z]:[\\/]", low) or low.startswith("\\\\"):
+        return "PC 파일"
+    return "이름만"
 
 
 def rtf_text(s):
@@ -311,6 +365,7 @@ def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN):
         out.append({
             "rowid": rec["rowid"],
             "body": clean_body(rec[info["body"]]),
+            "images": body_images(rec[info["body"]]),
             "title": clean_body(rec[info["title"]]) if info["title"] else "",
             "sender": clean_body(rec[info["sender"]]) if info["sender"] else "",
             "when": parse_when(rec[info["date"]]) if info["date"] else None,
@@ -351,6 +406,21 @@ def read_new(path, last_rowid=None, now=None):
         return info, [m for m in memos if m["body"]], top
 
 
+def images_for_rowids(path, rowids):
+    """이미 수신함에 들어간 쪽지들의 사진 목록 {rowid: [src, ...]} (0.5.2 이전에 받은 쪽지용)."""
+    out = {}
+    with Snapshot(path) as conn:
+        info = _detect_or_fail(conn)
+        ids = list(rowids)
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            q = (f"SELECT rowid, {_q(info['body'])} FROM {_q(info['table'])} "
+                 f"WHERE rowid IN ({','.join('?' * len(part))})")
+            for rowid, v in conn.execute(q, part):
+                out[rowid] = body_images(v)
+    return out
+
+
 def check(path):
     """설정 화면의 '연결 확인': 찾은 표·열과 최근 쪽지 제목 3개 (이 PC 화면에만 표시)."""
     with Snapshot(path) as conn:
@@ -363,6 +433,16 @@ def check(path):
         out = {"path": str(path), "tables": tables, "detected": None, "recent": []}
         if info:
             out["detected"] = {k: info[k] for k in ("table", "body", "title", "date", "sender", "rows")}
+            # 최근 쪽지 200개의 사진이 어떤 모양으로 들어 있는지 (개수만, 내용·주소 없음)
+            kinds, hosts = {}, set()
+            q = f"SELECT {_q(info['body'])} FROM {_q(info['table'])} ORDER BY rowid DESC LIMIT 200"
+            for (v,) in conn.execute(q):
+                for src in body_images(v):
+                    k = image_kind(src)
+                    kinds[k] = kinds.get(k, 0) + 1
+                    if k == "인터넷":
+                        hosts.add(src.split("/")[2][:60])
+            out["images"] = {"kinds": kinds, "hosts": sorted(hosts)[:10]}
             for m in _rows(conn, info, order="DESC", limit=3):
                 first = m["title"] or m["body"].split("\n", 1)[0]
                 out["recent"].append({"title": first[:60], "sender": m["sender"][:20],

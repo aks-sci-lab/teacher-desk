@@ -7,12 +7,15 @@
 
 import json
 import mimetypes
+import os
 import re
 import secrets
 import threading
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import url2pathname
 
 import base64
 import binascii
@@ -33,7 +36,8 @@ CATEGORIES = set(extract.CATEGORIES)
 MAX_BODY = 20 * 1024 * 1024  # 학사일정 파일 올리기(base64) 때문에 넉넉히
 
 CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
-       "img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+       # 쿨메신저 사진·스티커가 인터넷 주소일 수 있어 http(s) 그림은 허용 (스크립트·연결은 이 PC 만)
+       "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
 
 class ApiError(Exception):
@@ -409,7 +413,69 @@ def get_item(app, q, body, item_id):
     if it["status"] == "new":
         app.db.execute("UPDATE items SET status = 'read' WHERE id = ?", (it["id"],))
         it["status"] = "read"
+    # 인터넷 사진은 주소 그대로, 나머지(쪽지 안 그림·PC 파일)는 /images/n 으로 받게 (큰 그림을 목록에 싣지 않음)
+    it["images"] = [{"n": n, "url": s if s.lower().startswith(("http://", "https://")) else None}
+                    for n, s in enumerate(it.get("images") or [])]
     return it
+
+
+def _image_roots(app):
+    """PC 파일 사진을 읽어도 되는 폴더: 쿨메신저 폴더, 쪽지 파일(.udb)이 있는 폴더, 받은 파일 폴더."""
+    roots = [coolmsg.memo_dir().parent]
+    try:
+        udb = coolmsg.resolve(app.config["coolmessenger_name"], app.config["coolmessenger_path"])
+        roots += [udb.parent, udb.parent.parent]
+    except coolmsg.CoolError:
+        udb = None
+    if app.config["coolmessenger_folder"]:
+        roots.append(Path(app.config["coolmessenger_folder"]))
+    return udb, roots
+
+
+def _local_image(app, src):
+    """사진 주소 → 읽어도 되는 PC 파일 (허용한 폴더 안의 그림 파일만), 없으면 None."""
+    udb, roots = _image_roots(app)
+    if src.lower().startswith("file:"):
+        cands = [Path(url2pathname(urlparse(src).path))]
+    elif os.path.isabs(src) or re.match(r"^[A-Za-z]:[\\/]", src):
+        cands = [Path(src)]
+    else:  # 이름만 있으면 쪽지 파일 옆에서 찾음
+        rel = src.replace("\\", "/").lstrip("/")
+        cands = [r / rel for r in roots] + ([udb.with_suffix("") / rel] if udb else [])
+    allowed = [os.path.normcase(str(r.resolve())) for r in roots if str(r)]
+    for c in cands:
+        try:
+            p = c.resolve()
+        except OSError:
+            continue
+        name = os.path.normcase(str(p))
+        if (p.suffix.lower() in coolmsg.IMAGE_EXTS and p.is_file()
+                and any(name.startswith(a.rstrip("\\/") + os.sep) for a in allowed)):
+            return p
+    return None
+
+
+@api("GET", r"/api/items/(\d+)/images/(\d+)")
+def item_image(app, q, body, item_id, n):
+    """쿨메신저 사진 하나 (쪽지 안에 든 그림, PC 파일). 인터넷 주소 사진은 화면이 직접 불러옴."""
+    it = app.db.one("SELECT images FROM items WHERE id = ?", (item_id,))
+    need(it, "없는 항목입니다", 404)
+    srcs = json.loads(it["images"] or "[]")
+    n = int(n)
+    need(0 <= n < len(srcs), "없는 사진입니다", 404)
+    src = srcs[n]
+    head = {"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"}
+    m = re.match(r"^data:(image/(?:png|jpeg|gif|bmp|webp));base64,(.+)$", src, re.S)
+    if m:
+        try:
+            return 200, base64.b64decode(m.group(2)), m.group(1), head
+        except (binascii.Error, ValueError):
+            raise ApiError(404, "사진을 읽을 수 없습니다")
+    p = _local_image(app, src)
+    need(p, "사진 파일을 찾을 수 없습니다 (쿨메신저 폴더 밖이거나 지워짐)", 404)
+    need(p.stat().st_size <= 30 * 1024 * 1024, "사진이 너무 큽니다", 413)
+    ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+    return 200, p.read_bytes(), ctype, head
 
 
 @api("PATCH", r"/api/items/(\d+)")
