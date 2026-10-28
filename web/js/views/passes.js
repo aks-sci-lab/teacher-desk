@@ -361,3 +361,6 @@ export async function initPasses() {
     await loadDay();
 }
 
+// 텔레그램으로 발급하면 목록을 새로 고침
+on('passes-changed', guarded(async () => { await loadDay(); refreshSide(); }));
+

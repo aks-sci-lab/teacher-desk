@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from .db import decode_item
+from .db import decode_item, now_str
 
 EVENT_COLS = ("e.id, e.item_id, e.date, e.end_date, e.time, e.kind, e.category, e.text, e.done, "
               # 학사일정은 묶음 제목 대신 행사 이름(e.text)이 보이게
@@ -41,6 +41,18 @@ def today_summary(db, today=None):
     return {"date": today.isoformat(), "overdue": overdue, "today": todays, "week_deadlines": week,
             "week_events": week_events,
             "passes": passes, "new_items": new_items, "last_run": last_run}
+
+
+def issue_pass(db, f):
+    """조퇴증·외출증 발급 기록 (화면·텔레그램 공용). f 는 검사한 칸들. 발급 번호는 날짜-순번."""
+    f = dict(f)
+    with db.lock:
+        n = db.one("SELECT COUNT(*) AS n FROM passes WHERE date = ?", (f["date"],))["n"] + 1
+        f["serial"] = f["date"].replace("-", "") + f"-{n:02d}"
+        f["created_at"] = now_str()
+        pid = db.execute(f"INSERT INTO passes({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
+    db.log(f"{'조퇴증' if f['kind'] == 'early' else '외출증'} 발급 {f['serial']}")
+    return db.one("SELECT * FROM passes WHERE id = ?", (pid,))
 
 
 def _terms_where(fields, terms):

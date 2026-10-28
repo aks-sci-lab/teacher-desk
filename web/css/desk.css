@@ -769,3 +769,6 @@ iframe.pdf { display: block; width: 100%; height: calc(100vh - 140px); border: 0
     .evc-edit { grid-template-columns: 1fr 1fr; }
     .item-actions .btn.danger { margin-left: 0; }
 }
+.tg-help { margin: 4px 0 12px; padding: 10px 14px; border-radius: 8px; background: var(--surface-2); }
+.tg-help ul { margin: 6px 0 0; padding-left: 1.2em; }
+.tg-help li { margin: 3px 0; }

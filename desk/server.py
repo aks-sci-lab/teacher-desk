@@ -20,7 +20,7 @@ import base64
 import binascii
 
 from . import VERSION, ai, coolmsg, extract, neis, picker, queries, schoolcal
-from .collect import SOURCES, add_text_item, diagnose
+from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
 from .ics import to_ics
@@ -255,6 +255,8 @@ def get_state(app, q, body):
         "counts": {
             "new_items": db.one("SELECT COUNT(*) AS n FROM items WHERE status = 'new'")["n"],
             "students": db.one("SELECT COUNT(*) AS n FROM students")["n"],
+            # 텔레그램으로 발급하면 화면이 알아채고 목록을 새로 고침
+            "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
         },
         "telegram": {
             "status": app.bot.status if app.bot else "꺼짐",
@@ -341,15 +343,7 @@ def list_passes(app, q, body):
 
 @api("POST", "/api/passes")
 def create_pass(app, q, body):
-    f = pass_fields(body)
-    with app.db.lock:
-        n = app.db.one("SELECT COUNT(*) AS n FROM passes WHERE date = ?", (f["date"],))["n"] + 1
-        f["serial"] = f["date"].replace("-", "") + f"-{n:02d}"
-        f["created_at"] = now_str()
-        cols = ", ".join(f)
-        pid = app.db.execute(f"INSERT INTO passes({cols}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
-    app.db.log(f"{'조퇴증' if f['kind'] == 'early' else '외출증'} 발급 {f['serial']}")
-    return app.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
+    return queries.issue_pass(app.db, pass_fields(body))
 
 
 @api("PATCH", r"/api/passes/(\d+)")
@@ -433,24 +427,11 @@ def get_item(app, q, body, item_id):
 
 
 def _item_file(app, it):
-    """항목의 원본 파일 (에듀파인·받은 파일 폴더 안에 아직 있는 문서만), 없으면 None."""
-    fp = it.get("file_path") or ""
-    if not fp or "#" in fp:
-        return None
-    roots = [app.config[k] for k in SOURCES.values() if app.config[k]]
-    try:
-        p = Path(fp).resolve()
-        allowed = [os.path.normcase(str(Path(r).resolve())).rstrip("\\/") + os.sep for r in roots]
-        name = os.path.normcase(str(p))
-        if p.is_file() and any(name.startswith(a) for a in allowed):
-            return p
-    except OSError:
-        pass
-    return None
+    return item_file(app.config, it.get("file_path"))
 
 
 @api("GET", r"/api/items/(\d+)/file")
-def item_file(app, q, body, item_id):
+def item_original_pdf(app, q, body, item_id):
     """원본 PDF (원문 창에서 원래 양식 그대로 보기)."""
     it = app.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
     need(it, "없는 항목입니다", 404)

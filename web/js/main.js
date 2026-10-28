@@ -32,12 +32,16 @@ function updateStatus(s) {
 on('state', updateStatus);
 
 let lastRunId = null;
+let lastPass = null;
 const tick = async () => {
     try {
         const s = await loadState();
-        // 예약 수집·텔레그램 수집이 끝났으면 목록을 새로 고침
-        if (s.last_run && lastRunId !== null && s.last_run.id !== lastRunId) emit('data-changed');
+        // 예약 수집·텔레그램 수집이 끝났거나 텔레그램으로 증을 발급했으면 목록을 새로 고침
+        const passChanged = lastPass !== null && s.counts.passes !== lastPass;
+        if ((s.last_run && lastRunId !== null && s.last_run.id !== lastRunId) || passChanged) emit('data-changed');
+        if (passChanged) emit('passes-changed');
         lastRunId = s.last_run ? s.last_run.id : 0;
+        lastPass = s.counts.passes;
     } catch (e) {
         setStatus('conn', '○ 연결 끊김 — start-desk.bat 실행');
     }

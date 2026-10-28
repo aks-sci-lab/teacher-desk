@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class FakeTelegram:
     def __init__(self, port=0):
-        self.updates, self.sent, self.calls = [], [], []
+        self.updates, self.sent, self.calls, self.docs, self.edited = [], [], [], [], []
         self.next_id = 1
         self.cond = threading.Condition()
         fake = self
@@ -17,8 +17,13 @@ class FakeTelegram:
                 pass
 
             def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 method = self.path.rsplit("/", 1)[-1]
+                if (self.headers.get("Content-Type") or "").startswith("multipart/form-data"):
+                    fake.calls.append(method)
+                    fake.docs.append(raw)   # 보낸 파일 (sendDocument)
+                    return self.reply({"message_id": 0})
+                body = json.loads(raw or b"{}")
                 if self.path == "/_push":
                     fake.push(body["text"], body.get("chat_id", 111))
                     return self.reply(True)
@@ -33,6 +38,8 @@ class FakeTelegram:
                 if method == "sendMessage":
                     fake.sent.append(body)
                     return self.reply({"message_id": len(fake.sent)})
+                if method == "editMessageText":
+                    fake.edited.append(body)
                 return self.reply(True)
 
             def do_GET(self):

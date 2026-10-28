@@ -308,14 +308,14 @@ def apply_summary(db, text, ids, today=None):
     return {"added": added, "changed": changed, "items": len(touched)}
 
 
-def ask(base, model, prompt, timeout=TIMEOUT):
-    """LM Studio 에 요약을 부탁하고 글만 돌려줌."""
+def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500):
+    """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌."""
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
     payload = {
         "model": model,
-        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        "temperature": 0.2, "max_tokens": 2500, "stream": False,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "temperature": 0.2, "max_tokens": max_tokens, "stream": False,
     }
     try:
         # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)

@@ -89,6 +89,23 @@ def long_path(path):
     return Path(path)
 
 
+def item_file(config, file_path):
+    """항목의 원본 파일 (에듀파인·받은 파일 폴더 안에 아직 있는 문서만), 없으면 None. 화면·텔레그램 공용."""
+    fp = file_path or ""
+    if not fp or "#" in fp:
+        return None
+    roots = [config[k] for k in SOURCES.values() if config[k]]
+    try:
+        p = Path(fp).resolve()
+        allowed = [os.path.normcase(str(Path(r).resolve())).rstrip("\\/") + os.sep for r in roots]
+        name = os.path.normcase(str(p))
+        if p.is_file() and any(name.startswith(a) for a in allowed):
+            return p
+    except OSError:
+        pass
+    return None
+
+
 # 에듀파인에서 내려받은 파일 이름 앞의 '(천상고등학교-13551 (본문) 울산광역시교육청 중등교육과) '
 P_EDU_PREFIX = re.compile(r"^\([^()]*\((?:본문|붙임\d*)\)[^)]*\)\s*")
 
