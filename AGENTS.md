@@ -18,7 +18,7 @@
 |---|---|
 | `desk.py`, `desk/` | 로컬 서버(Python 표준 라이브러리). `server.py` API, `extract.py` 날짜·마감, `docs.py`·`cfb.py` hwp/hwpx/pdf, `collect.py` 수집, `coolmsg.py` 쿨메신저 .udb, `schoolcal.py`·`xlsx.py`·`neis.py` 학사일정, `scheduler.py` 9·12·15시, `watcher.py` 실시간 감시, `ai.py` LM Studio 1주일 요약, `updater.py` 켤 때 업데이트, `telegram.py`, `picker.py` 찾아보기 창 |
 | `web/` | 화면 (순수 HTML/CSS/JS ES 모듈, VS Code 형태) |
-| `pass/` | 학생 폰용 조퇴증·외출증 페이지 (공개, 내용은 주소 `#` 뒤에만) |
+| `pass/` | 학생 폰용 조퇴증·외출증 페이지 (공개, 내용은 주소 `#` 뒤에만). `pass/timetable/` 은 시간표 교체 도우미 (사용자가 준 파일 그대로, 브라우저 안에서만) |
 | `tests/` | Python 시험(`python -m unittest discover -s tests -t .`), `pass-codec.test.cjs`(`node --test`) |
 | `tools/build_portable.py` | 윈도우용 ZIP (embeddable Python 3.12 + pypdf) |
 | `tools/make_bats.py` | `make-desktop-shortcut.bat`·`update-desk.bat` 생성 (직접 고치지 말 것) |
@@ -93,3 +93,4 @@
 - 2026-10-28: 0.5.15 텔레그램 비서 (사용자 요청: 조퇴증 발급·브리핑·자료 검색, 단순 봇이 아니라 내용을 판단해서 답하기) — 묻는 말에 맞는 자료·기간 일정을 찾아 이 PC 의 AI 가 읽고 답함(근거 자료 번호·원문/파일 단추), '조퇴 7 13:30'·'7번 조퇴 1시 반' → 사유 단추 → 발급(이름 가림), 브리핑(오늘 + AI 요약, 지운 줄 뺌), 검색, 원문·파일은 달라고 할 때만, 텔레그램으로 발급하면 화면 목록 새로 고침 — Claude Code
 - 2026-10-28: 0.5.16 내 시간표·수업 교체 (사용자 요청: 시간표 교체 도우미 검토 후 유용한 기능) — 시간표 엑셀 불러오기, 주간 내 시간표(교체 반영·학사일정 표시), 바꿀 수업 → 초록 칸 후보(맞교환·2단계·연속 수업·학사일정), 전·후 미리보기, 교체 부탁 글 복사, 교체 확정(달력), 브리핑 '오늘 내 수업', 텔레그램 '내일 수업'·질문에 내 수업 — Claude Code
 - 2026-10-28: 0.5.17 시간표 '나' 바꾸기 (사용자 지적: 사용자를 바꾸는 기능이 없음) — 다른 선생님 시간표를 볼 때 [이 선생님을 '나'로], 아래 '나' 바꾸기 고르기 — Claude Code
+- 2026-10-28: 시간표 교체 도우미를 웹으로 (사용자 요청: 웹으로도 배포 — 질문에 고르지 않아 추천안대로): 사용자가 준 `timetable-swap.html` 을 `pass/timetable/index.html` 로 (doctype·charset·viewport 만 더함), GitHub Pages https://aks-sci-lab.github.io/teacher-desk/timetable/ , 업무 데스크 시간표 화면에서 링크 — Claude Code

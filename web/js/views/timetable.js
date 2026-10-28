@@ -4,6 +4,8 @@ import { icon } from '../icons.js';
 import { el, clear, toast, guarded, todayIso, addDays, parseIso, modal } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, emit, on } from '../shell.js';
 
+// 시간표 담당용 전체 교체 도구 (사용자가 준 파일, GitHub Pages)
+const WEB_TOOL = 'https://aks-sci-lab.github.io/teacher-desk/timetable/';
 let info = null;          // GET /api/timetable
 let week = todayIso();    // 보고 있는 주 (그 주의 아무 날)
 let viewTid = null;       // 보고 있는 선생님 (기본: 나)
@@ -203,6 +205,9 @@ function renderWeek(pane, tab) {
                         el('span.muted.small', `선생님 ${c.teachers}명`)),
                     el('div.mv', c.moves.slice(1).map(m => el('div', `${m.name} · ${m.cls} ${m.subj} ${m.from_label} → ${m.to_label}`))))))),
             el('p.small.muted.tt-foot', `${info.file} · ${info.sheet} · 선생님 ${info.teachers.length}명 · 수업 ${info.lessons}개 (잠금 ${info.locked}개) · ${info.at} 불러옴`),
+            el('p.small.tt-web', '학교 전체 시간표 교체·바뀐 엑셀 저장·교체 안내문 인쇄는 ',
+                el('a', { href: WEB_TOOL, target: '_blank', rel: 'noopener' }, '시간표 교체 도우미 (웹) ↗'),
+                ' — 엑셀은 그 브라우저 안에서만 읽고 어디에도 올리지 않습니다.'),
             el('details.tt-more', el('summary', "'나' 바꾸기 · 시간표 파일 바꾸기·지우기"),
                 info.me != null && el('label.field.tt-me-field', el('span', "나 (오늘 내 수업·텔레그램·교체 후보 기준)"), meSel),
                 importBox(() => tab.rerender()),
