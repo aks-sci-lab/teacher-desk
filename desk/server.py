@@ -10,7 +10,6 @@ import mimetypes
 import os
 import re
 import secrets
-import threading
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -103,7 +102,7 @@ class App:
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
         self.watcher = None
-        self.ai_lock = threading.Lock()   # AI 요약은 한 번에 하나만
+        self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
 
 
 def make_handler(app):
@@ -644,20 +643,19 @@ def get_today(app, q, body):
 
 @api("GET", "/api/ai/weekly")
 def ai_weekly_get(app, q, body):
-    return {"enabled": bool(app.config["ai_enabled"]), "running": app.ai_lock.locked(),
-            "result": app.db.get_meta("ai_weekly")}
+    return app.ai_job.state()
 
 
 @api("POST", "/api/ai/weekly")
 def ai_weekly_run(app, q, body):
+    """요약 시작 (이미 하는 중이면 그대로). 결과는 GET 으로 확인."""
     need(app.config["ai_enabled"], "⚙ 설정에서 AI 요약을 먼저 켜세요")
-    need(app.ai_lock.acquire(blocking=False), "이미 요약하는 중입니다", 409)
     try:
-        return {"result": ai.weekly_summary(app.db, app.config)}
+        ai.check_local(app.config["ai_base"])
     except ai.AIError as e:
         raise ApiError(400, str(e))
-    finally:
-        app.ai_lock.release()
+    app.ai_job.start()
+    return app.ai_job.state()
 
 
 @api("POST", "/api/ai/check")

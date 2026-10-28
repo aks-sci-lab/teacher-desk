@@ -40,6 +40,7 @@ DEFAULTS = {
     "ai_enabled": False,
     "ai_base": "http://127.0.0.1:1234/v1",
     "ai_model": "",
+    "ai_input_size": "normal",     # normal: 14000자 / short: 6000자 (짧으면 빠름)
     # 텔레그램
     "telegram_token": "",
     "telegram_detail": "titles",  # counts: 개수만 / titles: 제목까지 / summary: 요약까지
@@ -55,7 +56,7 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
-    "watch_enabled", "auto_update", "ai_enabled", "ai_base", "ai_model",
+    "watch_enabled", "auto_update", "ai_enabled", "ai_base", "ai_model", "ai_input_size",
 }
 BOOL_KEYS = {"watch_enabled", "auto_update", "ai_enabled"}
 
@@ -120,6 +121,10 @@ class Config:
                 if not (isinstance(v, dict) and all(isinstance(v.get(x, ""), str) for x in ("name", "atpt", "code"))):
                     raise ValueError("학교 정보가 잘못되었습니다")
                 clean[k] = {x: v.get(x, "")[:80] for x in ("name", "atpt", "code", "office")}
+            elif k == "ai_input_size":
+                if v not in ("normal", "short"):
+                    raise ValueError("보내는 양 값이 잘못되었습니다")
+                clean[k] = v
             elif k == "ai_base":
                 if not isinstance(v, str):
                     raise ValueError("AI 주소는 글자여야 합니다")

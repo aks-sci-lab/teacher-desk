@@ -197,6 +197,11 @@ function renderSettings(pane, tab) {
             checkField('ai_enabled', '브리핑에서 AI 요약 쓰기'),
             textField('ai_base', 'LM Studio 서버 주소', '기본 http://127.0.0.1:1234/v1'),
             textField('ai_model', '(선택) 모델 이름', '비워 두면 LM Studio 에 불러온 첫 모델'),
+            el('label.field', el('span', '보내는 양'),
+                el('select', { dataset: { key: 'ai_input_size' } },
+                    [['normal', '보통 — 최대 14,000자 (더 꼼꼼, 4~5분)'], ['short', '짧게 — 최대 6,000자 (빠름, 2분 안팎)']]
+                        .map(([v, l]) => el('option', { value: v, selected: (s.ai_input_size || 'normal') === v }, l))),
+                el('span.hint', '오래 걸리면 "짧게"를 고르세요. 짧게는 최근 자료부터 한 건에 400자씩 보냅니다.')),
             el('div.row', el('button.btn.small', { onclick: aiCheck }, '🔌 연결 확인')),
             aiBox),
         section('⬆ 업데이트',
