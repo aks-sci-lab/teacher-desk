@@ -70,31 +70,62 @@ function dday(when) {
     return { label: `D-${n}`, cls: n <= 3 ? 'soon' : '' };
 }
 
-function aiText(text, ids = []) {
+// 줄 하나의 이름표 (지운 줄 기억용): 칸·날짜·내용, 띄어쓰기는 무시
+const rowKey = (s, r) => `${s.cls}|${r.when}|${r.text}`.replace(/\s+/g, '');
+
+function aiText(text, ids = [], hiddenList = []) {
     const sections = parseAi(text);
     if (!sections.length) return el('div.ai-text', text);   // 형식이 다르면 글 그대로
+    const hidden = new Set(hiddenList);
+    let showHidden = false;
+    const wrap = el('div');
+    const setHidden = guarded(async (key, hide) => {
+        await api.post('/api/ai/hidden', { key, hide });
+        if (hide) hidden.add(key); else hidden.delete(key);
+        draw();
+    });
     const refChip = n => {
         const id = ids[n - 1];
         return id ? el('a.ai-ref', { href: '#', title: '이 자료 열기', onclick: e => { e.preventDefault(); openItem(id); } }, n)
                   : el('span.ai-ref', n);
     };
-    const row = r => {
+    const row = (s, r) => {
         const dd = r.when && dday(r.when);
-        return el('li.ai-row',
+        const key = rowKey(s, r);
+        const gone = hidden.has(key);
+        return el('li.ai-row', { className: gone ? 'ai-row gone' : 'ai-row' },
             r.when ? el('span.ai-when', r.when, dd && el('span.ai-dday', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
             el('span.ai-txt', r.text),
-            r.refs.length ? el('span.ai-refs', r.refs.map(refChip)) : null);
+            r.refs.length ? el('span.ai-refs', r.refs.map(refChip)) : null,
+            gone ? el('button.ai-x', { title: '되돌리기', onclick: () => setHidden(key, false) }, '↺')
+                 : el('button.ai-x', { title: '이 줄 지우기 (끝났거나 필요 없음)', onclick: () => setHidden(key, true) }, '✕'));
     };
-    return el('div.ai-sections', sections.map(s => {
-        const first = SHOW_FIRST[s.cls] ?? 6;
-        const list = el('ul.ai-list', s.rows.slice(0, first).map(row));
-        const more = s.rows.length > first && el('button.btn.small.ai-more', { onclick: () => {
-            list.append(...s.rows.slice(first).map(row));
-            more.remove();
-        } }, `더 보기 (${s.rows.length - first})`);
-        return el('section', { className: `ai-sec ${s.cls}` },
-            el('h4', `${s.icon} ${s.title}`, el('span.muted', ` ${s.rows.length}`)), list, more || null);
-    }));
+    const draw = () => {
+        let hiddenHere = 0;
+        const secs = sections.map(s => {
+            const rows = s.rows.filter(r => {
+                const gone = hidden.has(rowKey(s, r));
+                hiddenHere += gone;
+                return showHidden || !gone;
+            });
+            if (!rows.length) return null;
+            const first = showHidden ? rows.length : (SHOW_FIRST[s.cls] ?? 6);
+            const list = el('ul.ai-list', rows.slice(0, first).map(r => row(s, r)));
+            const more = rows.length > first && el('button.btn.small.ai-more', { onclick: () => {
+                list.append(...rows.slice(first).map(r => row(s, r)));
+                more.remove();
+            } }, `더 보기 (${rows.length - first})`);
+            const left = rows.filter(r => !hidden.has(rowKey(s, r))).length;
+            return el('section', { className: `ai-sec ${s.cls}` },
+                el('h4', `${s.icon} ${s.title}`, el('span.muted', ` ${left}`)), list, more || null);
+        });
+        clear(wrap,
+            el('div.ai-sections', secs.filter(Boolean).length ? secs : el('p.muted.small', '모두 지웠습니다.')),
+            hiddenHere ? el('button.btn.small.ai-hidden-toggle', { onclick: () => { showHidden = !showHidden; draw(); } },
+                showHidden ? '지운 줄 감추기' : `지운 줄 ${hiddenHere}개 보기`) : '');
+    };
+    draw();
+    return wrap;
 }
 
 // 🤖 지난 1주일 AI 요약 (LM Studio): 저장된 요약을 보여 주고, 오늘 만든 것이 없으면 새로 만듦
@@ -103,7 +134,7 @@ function aiCard() {
     const show = (r, note) => {
         const res = r.result;
         clear(body,
-            res && res.text ? aiText(res.text, res.ids) : el('p.muted.small', '아직 요약이 없습니다.'),
+            res && res.text ? aiText(res.text, res.ids, r.hidden) : el('p.muted.small', '아직 요약이 없습니다.'),
             res && res.at ? el('p.small.muted', `${res.at} · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
             el('div.row', el('button.btn.small', { onclick: () => run(true) }, '🤖 다시 요약')));

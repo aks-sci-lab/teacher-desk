@@ -58,10 +58,11 @@ class ReadFailTests(unittest.TestCase):
         # 윈도우가 주는 진짜 오류 번호 (파이썬은 'Invalid argument' 로만 보여 줌)
         e = OSError(errno.EINVAL, "Invalid argument")
         e.winerror = 362
-        self.assertIn("꺼져 있어", collect.read_problem(p, e))
+        self.assertIn("지워져서", collect.read_problem(p, e))
         e.winerror = 375                                                  # 동기화 중인 클라우드 파일
         msg = collect.read_problem(p, e)
         self.assertIn("동기화 중", msg)
+        self.assertIn("껍데기", msg)
         self.assertIn("[윈도우 오류 375]", msg)
         e.winerror = 87
         self.assertIn("[윈도우 오류 87]", collect.read_problem(p, e))

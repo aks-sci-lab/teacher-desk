@@ -658,6 +658,13 @@ def ai_weekly_run(app, q, body):
     return app.ai_job.state()
 
 
+@api("POST", "/api/ai/hidden")
+def ai_hidden(app, q, body):
+    """요약 줄 지우기·되돌리기."""
+    key = text_field(body.get("key"), "지울 줄", 400, True)
+    return {"hidden": ai.set_hidden(app.db, key, body.get("hide", True) is not False)}
+
+
 @api("POST", "/api/ai/check")
 def ai_check(app, q, body):
     base = text_field(body.get("base"), "AI 주소", 200) or app.config["ai_base"]

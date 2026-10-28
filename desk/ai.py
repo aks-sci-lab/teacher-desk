@@ -214,4 +214,17 @@ class Job:
     def state(self):
         return {"enabled": bool(self.config["ai_enabled"]), "running": self.running,
                 "started_at": self.started_at if self.running else None, "error": self.error,
-                "result": self.db.get_meta("ai_weekly"), "timeout": TIMEOUT}
+                "result": self.db.get_meta("ai_weekly"), "timeout": TIMEOUT,
+                "hidden": self.db.get_meta("ai_hidden", [])}
+
+
+MAX_HIDDEN = 300
+
+
+def set_hidden(db, key, hide=True):
+    """요약에서 지운 줄 (다시 요약해도 같은 줄은 숨김). key 는 화면이 만든 '칸|날짜|내용'."""
+    keys = [k for k in db.get_meta("ai_hidden", []) if k != key]
+    if hide:
+        keys.append(key)
+    db.set_meta("ai_hidden", keys[-MAX_HIDDEN:])
+    return keys[-MAX_HIDDEN:]

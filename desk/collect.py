@@ -52,10 +52,12 @@ CLOUD_REASON = ("클라우드(Synology Drive·OneDrive 등)에만 있고 이 PC 
 BLOCKED_REASON = "윈도우가 파일 열기를 막았습니다. 문서보안(DRM)·백신 프로그램이 막았거나, 클라우드에만 있는 파일일 수 있습니다"
 # 윈도우 클라우드 파일 오류 번호 (파이썬은 모르는 번호를 모두 'Invalid argument' 로 보여 줌)
 CLOUD_PROVIDER_OFF = 362          # ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING
-SYNC_REASON = ("동기화 프로그램(Synology Drive·OneDrive 등)이 이 파일을 아직 동기화 중이거나 멈춰 있어 열 수 없습니다. "
-               "동기화 프로그램 창에서 상태(일시 중지·오류·로그인)를 확인하고, 파일 옆 🔄 표시가 ✅ 로 바뀐 뒤 '지금 수집'을 누르세요")
-PROVIDER_OFF_REASON = ("동기화 프로그램(Synology Drive·OneDrive 등)이 꺼져 있어 파일을 열 수 없습니다. "
-                       "동기화 프로그램을 켜고 로그인한 뒤 '지금 수집'을 누르세요")
+SYNC_REASON = ("동기화 프로그램(Synology Drive·OneDrive 등)의 파일인데 동기화 중이거나 멈춰 있어 열 수 없습니다. "
+               "동기화 프로그램 상태를 확인하세요. 그 프로그램을 지웠다면 이름만 남은 껍데기일 수 있어, "
+               "NAS·클라우드에서 파일을 다시 받아 다른 폴더에 두는 것이 확실합니다")
+PROVIDER_OFF_REASON = ("동기화 프로그램(Synology Drive·OneDrive 등)이 꺼져 있거나 지워져서 파일을 열 수 없습니다. "
+                       "동기화 프로그램을 지웠다면 이 파일들은 이름만 남은 껍데기일 수 있습니다 (내용은 NAS·클라우드에 있음). "
+                       "동기화 프로그램을 다시 설치해 내려받거나, NAS 에서 파일을 다시 받아 다른 폴더에 두세요")
 
 
 def read_problem(path, err):
