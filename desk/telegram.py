@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import ai, assist, printing, queries
+from . import absence, ai, assist, printing, queries
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -30,6 +30,8 @@ HELP = (
     "조퇴 7 [13:30] — 7번 조퇴증 발급 (사유는 단추로)\n"
     "외출 7 [13:30] [14:30] — 7번 외출증 발급\n"
     "발급 뒤 기본 프린터로 바로 출력할 수 있습니다.\n"
+    "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
+    "종류: 병결·인정결·기타결·미인정결. 주말·학사일정 공휴일·휴업일 제외, 앱에 저장만 합니다.\n"
     "새로고침 — 지금 바로 수집\n"
     "요약 — 최근 받은 공문·메시지\n"
     "도움말 — 이 안내"
@@ -49,6 +51,7 @@ ARG_COMMANDS = {
     "파일": "file", "/file": "file",
     "조퇴": "early", "/early": "early", "조퇴증": "early",
     "외출": "out", "/out": "out", "외출증": "out",
+    "결석계": "absence", "결석": "absence", "/absence": "absence",
 }
 BOT_MENU = [
     {"command": "brief", "description": "브리핑 (오늘 + 1주일 요약)"},
@@ -57,6 +60,7 @@ BOT_MENU = [
     {"command": "search", "description": "자료 검색: /search 낱말"},
     {"command": "early", "description": "조퇴증: /early 번호 [시각]"},
     {"command": "out", "description": "외출증: /out 번호 [나감] [복귀]"},
+    {"command": "absence", "description": "결석계: /absence 이름 번호 병결 10/29~11/3"},
     {"command": "refresh", "description": "지금 수집"},
     {"command": "summary", "description": "최근 받은 자료"},
     {"command": "help", "description": "도움말"},
@@ -317,6 +321,8 @@ class Bot:
         return rows or None
 
     def run_arg(self, cid, cmd, args):
+        if cmd == "absence":
+            return self.create_absence(cid, " ".join(args))
         if cmd == "search":
             return self.send_search(cid, " ".join(args))
         if cmd == "lessons":
@@ -329,6 +335,25 @@ class Bot:
                 return self.reply(cid, f"{args[0]}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
             return self.send_original(cid, item_id) if cmd == "text" else self.send_item_file(cid, item_id)
         return self.start_pass(cid, cmd, args)
+
+    def create_absence(self, cid, text):
+        try:
+            fields = absence.parse_command(text)
+            students = [s for s in self.db.students() if s["number"] == fields["student_number"]]
+            if len(students) != 1 or students[0]["name"] != fields["student_name"]:
+                raise absence.AbsenceError("입력한 번호·이름이 학생 명단과 일치하지 않습니다. 앱의 명단을 확인하세요.")
+            dates = absence.school_dates(
+                self.db, date.fromisoformat(fields["start_date"]), date.fromisoformat(fields["end_date"]),
+                self.config["grade"], require_calendar=True)
+            if not dates:
+                raise absence.AbsenceError("해당 기간에는 결석 처리할 수업일이 없습니다. 주말·공휴일·휴업일을 제외했습니다.")
+        except absence.AbsenceError as e:
+            return self.reply(cid, str(e))
+        saved = absence.save(self.db, fields)
+        return self.reply(cid, (
+            f"✅ {fields['student_number']}번 결석계를 앱에 저장했습니다.\n"
+            f"{fields['start_date']}~{fields['end_date']} · {len(dates)}일 (주말·공휴일·휴업일 제외)\n"
+            f"작성 번호 {saved['serial']}\n상세 내용과 인쇄는 앱의 출결 → 결석계에서 확인하세요."))
 
     def lessons_text(self, text, today=None):
         today = today or date.today()

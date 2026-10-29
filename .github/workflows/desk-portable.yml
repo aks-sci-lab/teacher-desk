@@ -84,6 +84,13 @@ jobs:
           if (-not $ok) { throw '업무 데스크 화면이 열리지 않았습니다' }
           Write-Host '화면 열림 확인'
 
+      - name: 백그라운드 실행·중복 실행 방지·종료 확인
+        working-directory: check/TeacherDesk/teacher-desk
+        shell: pwsh
+        run: |
+          & python\python.exe -m unittest tests.test_background -v
+          if ($LASTEXITCODE -ne 0) { throw '백그라운드 실행 검사 실패' }
+
       - name: 바탕화면 바로 가기 만들기 확인
         working-directory: check/TeacherDesk/teacher-desk
         shell: pwsh

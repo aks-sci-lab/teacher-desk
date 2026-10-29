@@ -150,12 +150,48 @@ class ServerTests(unittest.TestCase):
             (month_start + timedelta(days=offset)).weekday() < 5
             for offset in range(2))
         self.assertEqual(student["absence_forms"], 2)
-        self.assertEqual(student["absence_days"], {"질병": expected_disease_days, "출석인정": 0, "기타": 0})
+        self.assertEqual(student["absence_days"], {"질병": expected_disease_days, "출석인정": 0, "기타": 0, "미인정": 0})
         self.assertEqual(student["total_absence_days"], expected_disease_days)
         self.assertEqual((student["early_count"], student["out_count"]), (0, 1))
         self.assertEqual(report["totals"]["out_count"], 1)
+        self.assertEqual(len(student["details"]["absence_days"]), expected_disease_days)
+        self.assertEqual(student["details"]["absence_days"][0]["reason"], "시험 자료")
+        self.assertEqual(student["details"]["out_count"][0]["date"], "2099-02-04")
+        self.assertEqual(student["details"]["early_count"], [])
+        self.assertEqual(self.req("GET", "/api/attendance/month?month=2099-02", token=False)[0], 401)
         self.assertEqual(self.req("GET", "/api/attendance/month?month=2026-1")[0], 400)
         self.assertEqual(self.req("GET", "/api/attendance/month?month=0000-01")[0], 400)
+
+    def test_shutdown_requires_authentication_and_stops_server_callback(self):
+        from threading import Event
+        stopped = Event()
+        with patch.object(self.app, "shutdown", stopped.set):
+            self.assertEqual(self.req("POST", "/api/shutdown", {}, token=False)[0], 401)
+            self.assertFalse(stopped.is_set())
+            self.assertEqual(self.req("POST", "/api/shutdown", {})[0], 200)
+            self.assertTrue(stopped.wait(1))
+
+    def test_absence_days_and_month_details_use_same_school_calendar(self):
+        from desk import schoolcal
+        schoolcal.save(self.env.db, 2026, [
+            {"date": "2026-05-05", "end_date": None, "text": "어린이날", "kind": "event", "category": "학사"},
+        ], "나이스")
+        status, saved = self.req("POST", "/api/absences", {
+            "student_name": "통계확인", "student_number": 88,
+            "start_date": "2026-05-04", "end_date": "2026-05-06",
+            "absence_type": "미인정", "reason": "시험 사유",
+        })
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(saved["dates"], ["2026-05-04", "2026-05-06"])
+        status, preview = self.req("POST", "/api/absences/preview", {
+            "start_date": "2026-05-04", "end_date": "2026-05-06",
+        })
+        self.assertEqual((status, preview["dates"]), (200, saved["dates"]))
+        status, report = self.req("GET", "/api/attendance/month?month=2026-05")
+        student = next(row for row in report["rows"] if row["student_number"] == 88)
+        self.assertEqual(student["absence_days"]["미인정"], 2)
+        self.assertEqual([entry["date"] for entry in student["details"]["absence_days"]], saved["dates"])
+        self.assertEqual({entry["reason"] for entry in student["details"]["absence_days"]}, {"시험 사유"})
 
     def test_telegram_print_queue_is_local_and_acknowledged(self):
         today = date.today().isoformat()

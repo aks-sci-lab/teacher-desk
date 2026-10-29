@@ -252,6 +252,13 @@ function renderSettings(pane, tab) {
             checkField('auto_update', '켤 때 새 버전 확인',
                 '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
             el('p.small.muted', `지금 버전: ${st.version || ''}`)),
+        section('프로그램 실행',
+            el('p.small.muted', '브라우저를 닫아도 수집·텔레그램은 백그라운드에서 계속 동작합니다. 완전히 끄려면 아래 단추를 누르세요.'),
+            el('button.btn', { onclick: guarded(async () => {
+                if (!window.confirm('업무 데스크를 종료할까요? 자동 수집·텔레그램·수업 알림도 멈춥니다.')) return;
+                await api.post('/api/shutdown', {});
+                toast('업무 데스크를 종료했습니다. 다시 쓰려면 start-desk.bat을 실행하세요.');
+            }) }, '프로그램 종료')),
         section('학생 공유 페이지',
             textField('pass_page_url', '공유 페이지 주소', '조퇴증·외출증 QR 이 가리키는 주소 (저장소의 pass/ 폴더가 배포된 곳)')),
         section('화면 배치',

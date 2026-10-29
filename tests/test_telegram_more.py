@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime
 from unittest.mock import patch
 
-from desk import assist
+from desk import assist, schoolcal
 from desk.collect import add_text_item
 from desk.telegram import Bot, masked
 from tests.fake_telegram import FakeTelegram
@@ -87,6 +87,30 @@ class TelegramMoreTests(unittest.TestCase):
         result = self.bot.handle_update(press(choice))
         self.assertIn("인쇄하지 않음", result)
         self.assertEqual(self.env.db.get_meta("telegram_print_queue", []), [])
+
+    def test_absence_from_telegram_is_saved_without_printing_or_echoing_personal_details(self):
+        command = "결석계 김민준 7 미인정결 2026-10-01~2026-10-09"
+        result = self.bot.handle_update(msg(command))
+        self.assertIn("학사일정", result)
+        self.assertIsNone(self.env.db.one("SELECT * FROM absences"))
+        schoolcal.save(self.env.db, 2026, [
+            {"date": "2026-10-05", "end_date": None, "text": "대체공휴일", "kind": "event", "category": "학사"},
+            {"date": "2026-10-09", "end_date": None, "text": "한글날", "kind": "event", "category": "학사"},
+        ], "나이스")
+        self.assertIsNone(self.bot.handle_update(msg(command, chat=6)))
+        with patch("desk.telegram.printing.start_silent_pass") as print_pass:
+            result = self.bot.handle_update(msg(command))
+            print_pass.assert_not_called()
+        self.assertIn("5일", result)
+        saved = self.env.db.one("SELECT * FROM absences")
+        self.assertEqual((saved["student_name"], saved["student_number"], saved["absence_type"]),
+                         ("김민준", 7, "미인정"))
+        self.assertNotIn("김민준", self.sent_text())
+        self.assertNotIn("미인정결", result)
+        self.assertEqual(self.env.db.get_meta("telegram_print_queue", []), [])
+        self.assertIn("명단", self.bot.handle_update(msg("결석계 다른이름 7 병결 2026-10-01")))
+        self.assertIn("수업일이 없습니다", self.bot.handle_update(msg("결석계 김민준 7 병결 2026-10-03~2026-10-04")))
+        self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM absences")["n"], 1)
 
     def test_brief_search_and_originals(self):
         db = self.env.db

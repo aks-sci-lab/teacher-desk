@@ -1,4 +1,4 @@
-"""PowerShell 을 쓰는 .bat 파일 만들기: make-desktop-shortcut.bat, update-desk.bat
+"""실행·바로 가기·업데이트 .bat 파일 만들기.
 
 한글(바로 가기 이름 등)이 윈도우 언어와 상관없이 깨지지 않도록 PowerShell 명령을 UTF-16 base64
 (-EncodedCommand)로 넣고, 화면 안내 문구는 한국어 윈도우용 CP949 로 저장합니다.
@@ -25,6 +25,7 @@ SHORTCUT_PS = (
     "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($tmp); "
     "$s.TargetPath = (Join-Path $dir 'start-desk.bat'); "
     "$s.WorkingDirectory = $dir; "
+    "$s.WindowStyle = 7; "
     "$s.IconLocation = (Join-Path $env:SystemRoot 'System32\\imageres.dll') + ',109'; "
     "$s.Save(); "
     "Move-Item -LiteralPath $tmp -Destination (Join-Path $d '업무 데스크.lnk') -Force"
@@ -79,6 +80,30 @@ echo  바탕화면에 "업무 데스크" 바로 가기를 만들었습니다.
 pause
 '''
 
+START_BAT = HEADER + r'''title 교사 업무 데스크
+cd /d "%~dp0"
+set "PY="
+if exist "%~dp0python\python.exe" set "PY=%~dp0python\python.exe"
+if not defined PY (
+    python --version > nul 2> nul && set "PY=python"
+)
+if not defined PY (
+    py -3 --version > nul 2> nul && set "PY=py"
+)
+if not defined PY (
+    echo  [오류] Python 을 찾지 못했습니다. Python 이 포함된 윈도우용 ZIP 을 다시 받아 주세요.
+    pause
+    exit /b 1
+)
+"%PY%" desk.py --background %*
+if errorlevel 1 (
+    echo  [오류] 업무 데스크가 켜지지 않았습니다. 위 안내를 확인하세요.
+    pause
+    exit /b 1
+)
+exit /b 0
+'''
+
 UPDATE_BAT = HEADER + r'''rem  update-desk.bat /y  : 묻지 않고 바로 업데이트 (자동 시험용)
 title 업무 데스크 업데이트
 cd /d "%~dp0"
@@ -88,7 +113,7 @@ if /i not "%~1"=="/y" (
     echo.
     echo  업무 데스크를 최신 버전으로 바꿉니다.
     echo  - 학생 명단·발급 기록·수신함 자료와 설정은 그대로 남습니다.
-    echo  - 먼저 업무 데스크 검은 창을 닫아 주세요.
+    echo  - 먼저 업무 데스크 설정에서 프로그램 종료를 눌러 주세요.
     echo.
     pause
 )
@@ -96,7 +121,7 @@ if /i not "%~1"=="/y" (
 powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}
 if errorlevel 1 (
     echo.
-    echo  [오류] 업데이트하지 못했습니다. 인터넷 연결과 업무 데스크 창이 닫혔는지 확인하세요.
+    echo  [오류] 업데이트하지 못했습니다. 인터넷 연결과 업무 데스크 프로그램 종료 여부를 확인하세요.
     echo  그래도 안 되면 이 창을 사진으로 찍어 보내 주세요.
     if /i not "%~1"=="/y" pause
     exit /b 1
@@ -115,6 +140,7 @@ def write_bat(name, template, ps):
 
 
 def main():
+    write_bat("start-desk.bat", START_BAT, "")
     write_bat("make-desktop-shortcut.bat", SHORTCUT_BAT, SHORTCUT_PS)
     write_bat("update-desk.bat", UPDATE_BAT, UPDATE_PS)
 

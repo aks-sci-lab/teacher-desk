@@ -37,9 +37,10 @@ START_HERE = """교사 업무 데스크 (설치 없이 쓰는 윈도우용)
 2. teacher-desk 폴더의 start-desk.bat 을 두 번 누르면 업무 데스크가 켜집니다.
    - Python 을 따로 설치하지 않아도 됩니다 (teacher-desk\\python 에 들어 있음).
    - 윈도우가 "PC 보호" 경고를 띄우면 [추가 정보] → [실행] 을 누르세요.
-   - 검은 창을 닫으면 업무 데스크가 꺼집니다.
+   - 명령 창 없이 백그라운드에서 실행됩니다. 브라우저를 닫아도 수집·텔레그램은 계속 동작합니다.
+   - 완전히 끄려면 업무 데스크 설정에서 [프로그램 종료]를 누르세요.
 3. 바탕화면에 바로 가기를 만들려면 teacher-desk 폴더의 make-desktop-shortcut.bat 을 두 번 누르세요.
-4. 새 버전으로 바꾸려면 업무 데스크 창을 닫고 teacher-desk 폴더의 update-desk.bat 을 두 번 누르세요.
+4. 새 버전으로 바꾸려면 설정의 [프로그램 종료]를 누른 뒤 teacher-desk 폴더의 update-desk.bat 을 두 번 누르세요.
    (학생 명단·기록·설정은 그대로 남습니다)
 
 자세한 사용법: teacher-desk\\README.md

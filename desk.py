@@ -12,8 +12,9 @@ import importlib.util
 import json
 import os
 import sys
+from contextlib import nullcontext
 
-from desk import VERSION, updater
+from desk import VERSION, background, updater
 from desk.collect import SOURCES, Collector, diagnose
 from desk.config import APP_DIR, Config
 from desk.db import DB
@@ -35,6 +36,7 @@ def main(argv=None):
     p.add_argument("--diagnose", choices=sorted(SOURCES), help="폴더 구조 진단")
     p.add_argument("--check", action="store_true", help="실행 환경 확인만 하고 끝내기")
     p.add_argument("--no-update-check", action="store_true", help="켤 때 새 버전 확인하지 않기")
+    p.add_argument("--background", action="store_true", help="명령 창 없이 백그라운드에서 켜기 (Windows)")
     args = p.parse_args(argv)
 
     if args.check:
@@ -44,9 +46,23 @@ def main(argv=None):
         return 0
 
     config = Config(args.config)
+    if args.background and not (args.collect or args.diagnose):
+        try:
+            return background.launch(config, list(argv if argv is not None else sys.argv[1:]))
+        except background.BackgroundError as e:
+            print(f"[오류] {e}")
+            return 1
     db = DB(config.data_dir / "desk.db")
     try:
-        return run(args, config, db)
+        lock = nullcontext(True) if args.collect or args.diagnose else background.single_instance(config["port"])
+        with lock as first:
+            if not first:
+                if not args.no_browser:
+                    import webbrowser
+                    webbrowser.open(f"http://127.0.0.1:{config['port']}/")
+                print("업무 데스크가 이미 실행 중입니다.")
+                return 0
+            return run(args, config, db)
     finally:
         db.close()  # 업데이트 창이 프로그램 파일을 바꾸기 전에 자료 파일을 닫아 둠
 
@@ -92,6 +108,7 @@ def run(args, config, db):
     except OSError:
         print(f"{config['port']}번 포트를 쓸 수 없습니다. 업무 데스크가 이미 켜져 있는지 확인하세요.")
         return 1
+    app.shutdown = httpd.shutdown
     scheduler = Scheduler(db, config, collector)
     scheduler.start()
     watcher = Watcher(db, config, collector)

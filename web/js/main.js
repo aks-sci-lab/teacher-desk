@@ -37,6 +37,7 @@ on('state', updateStatus);
 
 let lastRunId = null;
 let lastPass = null;
+let lastAbsence = null;
 const seenPrintRequests = new Set();
 const silentPrintId = new URLSearchParams(location.search).get('silent-print');
 function showPrintRequests(s) {
@@ -54,8 +55,10 @@ const tick = async () => {
         const passChanged = lastPass !== null && s.counts.passes !== lastPass;
         if ((s.last_run && lastRunId !== null && s.last_run.id !== lastRunId) || passChanged) emit('data-changed');
         if (passChanged) emit('passes-changed');
+        if (lastAbsence !== null && s.counts.absences !== lastAbsence) emit('absences-changed');
         lastRunId = s.last_run ? s.last_run.id : 0;
         lastPass = s.counts.passes;
+        lastAbsence = s.counts.absences;
     } catch (e) {
         setStatus('conn', '○ 연결 끊김 — start-desk.bat 실행');
     }
@@ -69,6 +72,7 @@ guarded(async () => {
     if (saved.v !== 2) applyLayout({ ...saved, bottomVisible: false, v: 2 });
     else applyLayout(saved, false);
     lastRunId = s.last_run ? s.last_run.id : 0;
+    lastAbsence = s.counts.absences;
     await Promise.all([loadStudents(), initPasses(), initAbsences(), initInbox(), initCalendar(), initTimetable()]);
     if (!silentPrintId) showPrintRequests(s);
     showView('today');

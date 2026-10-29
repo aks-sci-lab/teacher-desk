@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, ai, bell, coolmsg, extract, neis, picker, printing, queries, schoolcal, timetable
+from . import VERSION, absence, ai, bell, coolmsg, extract, neis, picker, printing, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -102,6 +102,7 @@ class App:
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
         self.watcher = None
+        self.shutdown = None
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
 
 
@@ -257,6 +258,7 @@ def get_state(app, q, body):
             "students": db.one("SELECT COUNT(*) AS n FROM students")["n"],
             # 텔레그램으로 발급하면 화면이 알아채고 목록을 새로 고침
             "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
+            "absences": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM absences")["last"],
         },
         "print_requests": [db.one("SELECT * FROM passes WHERE id = ?", (pid,))
                            for pid in db.get_meta("telegram_print_queue", [])],
@@ -399,7 +401,7 @@ def absence_fields(body, partial=False):
             elif key in ("start_date", "end_date"):
                 out[key] = check_date(body.get(key), "결석 날짜")
             elif key == "absence_type":
-                need(body.get(key) in ("질병", "출석인정", "기타"), "결석 종류를 고르세요")
+                need(body.get(key) in absence.TYPES, "결석 종류를 고르세요")
                 out[key] = body[key]
             else:
                 out[key] = text_field(body.get(key), "결석 사유", 500, True)
@@ -414,6 +416,8 @@ def absence_fields(body, partial=False):
             out[key] = text_field(body.get(key), name, limit)
     if "start_date" in out and "end_date" in out:
         need(out["end_date"] >= out["start_date"], "끝 날짜가 시작 날짜보다 빠릅니다")
+        need((date.fromisoformat(out["end_date"]) - date.fromisoformat(out["start_date"])).days <= 366,
+             "결석 기간은 1년 이내로 입력하세요")
     return out
 
 
@@ -421,19 +425,11 @@ def absence_fields(body, partial=False):
 def list_absences(app, q, body):
     if q.get("date"):
         day = check_date(q["date"], "결석 날짜")
-        return app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? ORDER BY id DESC",
+        rows = app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? ORDER BY id DESC",
                             (day, day))
-    return app.db.query("SELECT * FROM absences ORDER BY start_date DESC, id DESC LIMIT 200")
-
-
-def weekdays_in_month(start, end, month_start, month_end):
-    first = max(date.fromisoformat(start), month_start)
-    last = min(date.fromisoformat(end), month_end)
-    count = 0
-    while first <= last:
-        count += first.weekday() < 5
-        first += timedelta(days=1)
-    return count
+    else:
+        rows = app.db.query("SELECT * FROM absences ORDER BY start_date DESC, id DESC LIMIT 200")
+    return [absence.record(app.db, row, app.config["grade"]) for row in rows]
 
 
 @api("GET", "/api/attendance/month")
@@ -449,54 +445,63 @@ def attendance_month(app, q, body):
         raise ApiError(400, "월 형식이 잘못되었습니다 (예: 2026-10)")
     month_end = next_month - timedelta(days=1)
 
+    def new_student(number, name):
+        return {
+            "student_number": number, "student_name": name,
+            "absence_forms": 0, "absence_days": dict.fromkeys(absence.TYPES, 0),
+            "early_count": 0, "out_count": 0,
+            "details": {key: [] for key in ("absence_forms", "absence_days", "early_count", "out_count")},
+        }
+
     rows = {}
     for student in app.db.students():
         key = ("number", student["number"])
-        rows[key] = {
-            "student_number": student["number"], "student_name": student["name"],
-            "absence_forms": 0, "absence_days": {"질병": 0, "출석인정": 0, "기타": 0},
-            "early_count": 0, "out_count": 0,
-        }
+        rows[key] = new_student(student["number"], student["name"])
 
     def row_for(number, name):
         if number is not None:
             key = ("number", number)
             if key not in rows:
-                rows[key] = {
-                    "student_number": number, "student_name": name,
-                    "absence_forms": 0, "absence_days": {"질병": 0, "출석인정": 0, "기타": 0},
-                    "early_count": 0, "out_count": 0,
-                }
+                rows[key] = new_student(number, name)
             return rows[key]
         named = [row for row in rows.values() if row["student_name"] == name]
         if len(named) == 1:
             return named[0]
         key = ("name", name)
         if key not in rows:
-            rows[key] = {
-                "student_number": None, "student_name": name,
-                "absence_forms": 0, "absence_days": {"질병": 0, "출석인정": 0, "기타": 0},
-                "early_count": 0, "out_count": 0,
-            }
+            rows[key] = new_student(None, name)
         return rows[key]
 
     absences = app.db.query(
-        "SELECT student_number, student_name, start_date, end_date, absence_type FROM absences "
+        "SELECT student_number, student_name, start_date, end_date, absence_type, reason FROM absences "
         "WHERE start_date <= ? AND end_date >= ?",
         (month_end.isoformat(), month_start.isoformat()))
-    for absence in absences:
-        student = row_for(absence["student_number"], absence["student_name"])
+    for entry in absences:
+        student = row_for(entry["student_number"], entry["student_name"])
         student["absence_forms"] += 1
-        student["absence_days"][absence["absence_type"]] += weekdays_in_month(
-            absence["start_date"], absence["end_date"], month_start, month_end)
+        dates = absence.school_dates(
+            app.db, max(date.fromisoformat(entry["start_date"]), month_start),
+            min(date.fromisoformat(entry["end_date"]), month_end), app.config["grade"])
+        student["absence_days"][entry["absence_type"]] += len(dates)
+        student["details"]["absence_forms"].append({
+            "date": f"{entry['start_date']}~{entry['end_date']}",
+            "kind": entry["absence_type"], "reason": entry["reason"],
+        })
+        student["details"]["absence_days"].extend(
+            {"date": day, "kind": entry["absence_type"], "reason": entry["reason"]} for day in dates)
 
     passes = app.db.query(
-        "SELECT student_number, student_name, kind FROM passes "
+        "SELECT student_number, student_name, kind, date, time_out, reason FROM passes "
         "WHERE date >= ? AND date <= ? AND status != 'cancelled'",
         (month_start.isoformat(), month_end.isoformat()))
     for issued in passes:
         student = row_for(issued["student_number"], issued["student_name"])
-        student["early_count" if issued["kind"] == "early" else "out_count"] += 1
+        metric = "early_count" if issued["kind"] == "early" else "out_count"
+        student[metric] += 1
+        student["details"][metric].append({
+            "date": issued["date"], "time": issued["time_out"],
+            "kind": "조퇴" if issued["kind"] == "early" else "외출", "reason": issued["reason"] or "",
+        })
 
     result_rows = sorted(rows.values(), key=lambda row: (
         row["student_number"] is None,
@@ -507,7 +512,7 @@ def attendance_month(app, q, body):
         "absence_forms": sum(row["absence_forms"] for row in result_rows),
         "absence_days": {
             kind: sum(row["absence_days"][kind] for row in result_rows)
-            for kind in ("질병", "출석인정", "기타")
+            for kind in absence.TYPES
         },
         "early_count": sum(row["early_count"] for row in result_rows),
         "out_count": sum(row["out_count"] for row in result_rows),
@@ -521,15 +526,18 @@ def attendance_month(app, q, body):
 @api("POST", "/api/absences")
 def create_absence(app, q, body):
     fields = absence_fields(body)
-    with app.db.lock:
-        n = app.db.one("SELECT COUNT(*) AS n FROM absences WHERE start_date = ?", (fields["start_date"],))["n"] + 1
-        fields["serial"] = fields["start_date"].replace("-", "") + f"-{n:02d}"
-        fields["created_at"] = now_str()
-        absence_id = app.db.execute(
-            f"INSERT INTO absences({', '.join(fields)}) VALUES({', '.join('?' * len(fields))})",
-            tuple(fields.values()))
-    app.db.log(f"결석계 작성 {fields['serial']}")
-    return app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,))
+    return absence.record(app.db, absence.save(app.db, fields), app.config["grade"])
+
+@api("POST", "/api/absences/preview")
+def preview_absence(app, q, body):
+    start = check_date(body.get("start_date"), "결석 시작일")
+    end = check_date(body.get("end_date"), "결석 종료일")
+    need((date.fromisoformat(end) - date.fromisoformat(start)).days <= 366, "결석 기간은 1년 이내로 입력하세요")
+    try:
+        return {"dates": absence.school_dates(app.db, date.fromisoformat(start), date.fromisoformat(end),
+                                               app.config["grade"])}
+    except absence.AbsenceError as e:
+        raise ApiError(400, str(e)) from e
 
 
 @api("PATCH", r"/api/absences/(\d+)")
@@ -541,9 +549,11 @@ def update_absence(app, q, body, absence_id):
         start = fields.get("start_date", row["start_date"])
         end = fields.get("end_date", row["end_date"])
         need(end >= start, "끝 날짜가 시작 날짜보다 빠릅니다")
+        need((date.fromisoformat(end) - date.fromisoformat(start)).days <= 366, "결석 기간은 1년 이내로 입력하세요")
         app.db.execute(f"UPDATE absences SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
                        (*fields.values(), absence_id))
-    return app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,))
+    return absence.record(app.db, app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,)),
+                          app.config["grade"])
 
 
 # ---- 수신함 ----
@@ -1259,12 +1269,20 @@ def post_telegram(app, q, body):
     return {"ok": True, "pair_code": app.bot.pair_code(), "linked": bool(app.bot.chat_id)}
 
 
+@api("POST", "/api/shutdown")
+def shutdown_app(app, q, body):
+    need(app.shutdown is not None, "프로그램 종료 기능을 사용할 수 없습니다", 503)
+    import threading
+    threading.Thread(target=app.shutdown, daemon=True).start()
+    return {"ok": True}
+
+
 def serve(app, open_browser=True):
     port = app.config["port"]
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
     url = f"http://127.0.0.1:{port}/"
     print(f"업무 데스크가 켜졌습니다: {url}")
-    print("이 창을 닫으면 업무 데스크(예약 수집·텔레그램 포함)가 꺼집니다.")
+    print("브라우저를 닫아도 계속 실행됩니다. 완전히 끄려면 설정의 '프로그램 종료'를 누르세요.")
     if open_browser:
         import webbrowser
         webbrowser.open(url)

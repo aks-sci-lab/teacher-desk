@@ -106,6 +106,18 @@ function downloadCsv(report) {
 
 function renderReportRows(report) {
     const types = Object.keys(report.totals.absence_days);
+    const numberCell = (tag, count, students, metric, label, type = null) =>
+        el(tag, count ? el('button.btn.small', {
+            title: `${label} 날짜·사유 보기`,
+            onclick: () => openDetails(report.month, students, metric, label, type),
+        }, count) : '0');
+    const cells = (tag, row, students) => [
+        ...types.map(type => numberCell(tag, row.absence_days[type], students, 'absence_days', `${type} 결석`, type)),
+        numberCell(tag, row.total_absence_days, students, 'absence_days', '결석 합계'),
+        numberCell(tag, row.absence_forms, students, 'absence_forms', '결석계'),
+        numberCell(tag, row.early_count, students, 'early_count', '조퇴'),
+        numberCell(tag, row.out_count, students, 'out_count', '외출'),
+    ];
     const table = el('table.tbl',
         el('thead', el('tr',
             el('th', '번호'), el('th', '이름'),
@@ -114,15 +126,33 @@ function renderReportRows(report) {
         el('tbody',
             report.rows.map(row => el('tr',
                 el('td', row.student_number ?? '—'), el('td', row.student_name),
-                types.map(type => el('td', row.absence_days[type])),
-                el('td', row.total_absence_days), el('td', row.absence_forms),
-                el('td', row.early_count), el('td', row.out_count))),
+                cells('td', row, [row]))),
             el('tr',
                 el('th', '합계'), el('th', ''),
-                types.map(type => el('th', report.totals.absence_days[type])),
-                el('th', report.totals.total_absence_days), el('th', report.totals.absence_forms),
-                el('th', report.totals.early_count), el('th', report.totals.out_count))));
+                cells('th', report.totals, report.rows))));
     return table;
+}
+
+function openDetails(month, students, metric, label, type) {
+    const details = students.flatMap(student => student.details[metric]
+        .filter(detail => !type || detail.kind === type)
+        .map(detail => ({ ...detail, number: student.student_number, name: student.student_name })))
+        .sort((a, b) => a.date.localeCompare(b.date) || (a.number ?? 1000) - (b.number ?? 1000));
+    const who = students.length === 1 ? students[0].student_name : '전체';
+    openTab({
+        id: 'attendance-details', title: `${who} ${label}`, refresh: true,
+        render(pane) {
+            pane.append(
+                el('h1', `${who} · ${label}`),
+                el('p.sub', `${month} · ${details.length}건`),
+                el('table.tbl',
+                    el('thead', el('tr', ['날짜', '번호', '이름', '종류', '사유'].map(text => el('th', text)))),
+                    el('tbody', details.map(detail => el('tr',
+                        el('td', `${detail.date}${detail.time ? ' ' + detail.time : ''}`),
+                        el('td', detail.number ?? '—'), el('td', detail.name),
+                        el('td', detail.kind), el('td', detail.reason || '기록 없음'))))));
+        },
+    });
 }
 
 function renderMonthlyReport(pane) {
@@ -142,7 +172,7 @@ function renderMonthlyReport(pane) {
         latestReport = report;
         exportButton.disabled = false;
         clear(reportBox,
-            el('p.sub', `${selectedMonth} · 결석은 평일만 계산하며, 취소된 조퇴·외출증은 제외합니다.`),
+            el('p.sub', `${selectedMonth} · 결석은 주말·학사일정 공휴일·휴업일을 제외합니다. 취소된 증은 집계하지 않습니다. 숫자를 누르면 날짜·사유가 나옵니다.`),
             latestReport.rows.length ? renderReportRows(latestReport) : el('p.empty', '집계할 출결 기록이 없습니다.'));
     });
     pane.append(

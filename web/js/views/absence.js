@@ -4,6 +4,7 @@ import { el, clear, toast, guarded, todayIso, dayLabel, longDate } from '../ui.j
 import { openTab, refreshSide, findTab, on, emit } from '../shell.js';
 import { store } from '../store.js';
 
+const TYPE_LABELS = { '질병': '병결', '출석인정': '인정결', '기타': '기타결', '미인정': '미인정결' };
 let absences = [];
 let selectedDate = todayIso();
 
@@ -26,7 +27,9 @@ function absenceNode(a) {
                 el('tr', el('th', '학 반'), el('td', `${cls || '　학년　반'}  ${a.student_number != null ? a.student_number + '번' : ''}`)),
                 el('tr', el('th', '성 명'), el('td', a.student_name)),
                 el('tr', el('th', '결석 기간'), el('td', range)),
-                el('tr', el('th', '결석 종류'), el('td', a.absence_type)),
+                el('tr', el('th', '결석 종류'), el('td', TYPE_LABELS[a.absence_type] || a.absence_type)),
+                a.dates && el('tr', el('th', '실제 결석일'), el('td',
+                    `${a.dates.join(', ') || '해당 없음'} (총 ${a.dates.length}일, 주말·학사일정 공휴일·휴업일 제외)`)),
                 el('tr', el('th', '결석 사유'), el('td.absence-reason', a.reason)),
                 a.note && el('tr', el('th', '비 고'), el('td', a.note)))),
         el('p.absence-confirm', '위와 같이 결석하였음을 알려 드립니다.'),
@@ -91,6 +94,18 @@ export function openAbsenceForm(initial = {}) {
         render(pane, tab) {
             const preview = el('div.preview-box');
             const redraw = () => clear(preview, absenceNode(a));
+            let dateRequest = 0;
+            const updateDates = guarded(async () => {
+                const request = ++dateRequest;
+                a.dates = null;
+                redraw();
+                const result = await api.post('/api/absences/preview', {
+                    start_date: a.start_date, end_date: a.end_date,
+                });
+                if (request !== dateRequest) return;
+                a.dates = result.dates;
+                redraw();
+            });
             const student = store.students.length
                 ? el('select', { value: a.student_number == null ? '' : String(a.student_number), onchange: e => {
                     const selected = e.target.value === 'manual'
@@ -130,7 +145,11 @@ export function openAbsenceForm(initial = {}) {
             });
             const field = (label, key, type = 'text') => el('label.field', el('span', label),
                 el('input', {
-                    type, value: a[key], onchange: e => { a[key] = e.target.value; redraw(); },
+                    type, value: a[key], onchange: e => {
+                        a[key] = e.target.value;
+                        if (type === 'date') updateDates();
+                        else redraw();
+                    },
                 }));
             const save = async printAfter => {
                 if (!a.student_name.trim()) return toast('학생을 고르거나 이름을 입력하세요', 'error');
@@ -154,10 +173,10 @@ export function openAbsenceForm(initial = {}) {
             };
             const manual = el('div.student-row', number, name);
             const studentField = student ? el('div.student-row', student, manual) : manual;
-            const type = el('div.seg', ['질병', '출석인정', '기타'].map(value => el('button', {
+            const type = el('div.seg', Object.keys(TYPE_LABELS).map(value => el('button', {
                 type: 'button', className: a.absence_type === value ? 'on' : '',
                 onclick: () => { a.absence_type = value; redraw(); tab.rerender(); },
-            }, value)));
+            }, TYPE_LABELS[value])));
             pane.append(
                 el('h1', editing ? '결석계 고치기' : '결석계 작성'),
                 el('p.sub', '작성 내용을 미리 보고 인쇄합니다. 이 기본 양식은 학교의 공식 서식과 다를 수 있습니다.'),
@@ -177,6 +196,7 @@ export function openAbsenceForm(initial = {}) {
                             el('button.btn', { onclick: guarded(() => save(false)) }, '저장만'))),
                     el('div.pass-preview', preview)));
             redraw();
+            updateDates();
         },
     });
 }
