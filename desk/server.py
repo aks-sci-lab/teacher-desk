@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, ai, bell, coolmsg, extract, neis, picker, queries, schoolcal, timetable
+from . import VERSION, ai, bell, coolmsg, extract, neis, picker, printing, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -370,9 +370,22 @@ def update_pass(app, q, body, pid):
 
 @api("POST", r"/api/print-requests/(\d+)/complete")
 def complete_print_request(app, q, body, pid):
-    queue = [n for n in app.db.get_meta("telegram_print_queue", []) if n != int(pid)]
-    app.db.set_meta("telegram_print_queue", queue)
+    with app.db.lock:
+        queue = [n for n in app.db.get_meta("telegram_print_queue", []) if n != int(pid)]
+        app.db.set_meta("telegram_print_queue", queue)
     return {"ok": True}
+
+
+@api("POST", r"/api/print-requests/(\d+)/print")
+def start_print_request(app, q, body, pid):
+    pass_id = int(pid)
+    need(pass_id in app.db.get_meta("telegram_print_queue", []), "이미 처리했거나 없는 인쇄 요청입니다", 404)
+    need(app.db.one("SELECT id FROM passes WHERE id = ?", (pass_id,)), "없는 발급 기록입니다", 404)
+    try:
+        started = printing.start_silent_pass(app.config, pass_id)
+    except printing.PrintError as e:
+        raise ApiError(503, str(e)) from e
+    return {"ok": True, "started": started}
 
 
 # ---- 결석계 ----
@@ -411,6 +424,98 @@ def list_absences(app, q, body):
         return app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? ORDER BY id DESC",
                             (day, day))
     return app.db.query("SELECT * FROM absences ORDER BY start_date DESC, id DESC LIMIT 200")
+
+
+def weekdays_in_month(start, end, month_start, month_end):
+    first = max(date.fromisoformat(start), month_start)
+    last = min(date.fromisoformat(end), month_end)
+    count = 0
+    while first <= last:
+        count += first.weekday() < 5
+        first += timedelta(days=1)
+    return count
+
+
+@api("GET", "/api/attendance/month")
+def attendance_month(app, q, body):
+    month = q.get("month") or date.today().strftime("%Y-%m")
+    need(isinstance(month, str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month),
+         "월 형식이 잘못되었습니다 (예: 2026-10)")
+    year, month_number = map(int, month.split("-"))
+    try:
+        month_start = date(year, month_number, 1)
+        next_month = date(year + 1, 1, 1) if month_number == 12 else date(year, month_number + 1, 1)
+    except ValueError:
+        raise ApiError(400, "월 형식이 잘못되었습니다 (예: 2026-10)")
+    month_end = next_month - timedelta(days=1)
+
+    rows = {}
+    for student in app.db.students():
+        key = ("number", student["number"])
+        rows[key] = {
+            "student_number": student["number"], "student_name": student["name"],
+            "absence_forms": 0, "absence_days": {"질병": 0, "출석인정": 0, "기타": 0},
+            "early_count": 0, "out_count": 0,
+        }
+
+    def row_for(number, name):
+        if number is not None:
+            key = ("number", number)
+            if key not in rows:
+                rows[key] = {
+                    "student_number": number, "student_name": name,
+                    "absence_forms": 0, "absence_days": {"질병": 0, "출석인정": 0, "기타": 0},
+                    "early_count": 0, "out_count": 0,
+                }
+            return rows[key]
+        named = [row for row in rows.values() if row["student_name"] == name]
+        if len(named) == 1:
+            return named[0]
+        key = ("name", name)
+        if key not in rows:
+            rows[key] = {
+                "student_number": None, "student_name": name,
+                "absence_forms": 0, "absence_days": {"질병": 0, "출석인정": 0, "기타": 0},
+                "early_count": 0, "out_count": 0,
+            }
+        return rows[key]
+
+    absences = app.db.query(
+        "SELECT student_number, student_name, start_date, end_date, absence_type FROM absences "
+        "WHERE start_date <= ? AND end_date >= ?",
+        (month_end.isoformat(), month_start.isoformat()))
+    for absence in absences:
+        student = row_for(absence["student_number"], absence["student_name"])
+        student["absence_forms"] += 1
+        student["absence_days"][absence["absence_type"]] += weekdays_in_month(
+            absence["start_date"], absence["end_date"], month_start, month_end)
+
+    passes = app.db.query(
+        "SELECT student_number, student_name, kind FROM passes "
+        "WHERE date >= ? AND date <= ? AND status != 'cancelled'",
+        (month_start.isoformat(), month_end.isoformat()))
+    for issued in passes:
+        student = row_for(issued["student_number"], issued["student_name"])
+        student["early_count" if issued["kind"] == "early" else "out_count"] += 1
+
+    result_rows = sorted(rows.values(), key=lambda row: (
+        row["student_number"] is None,
+        row["student_number"] if row["student_number"] is not None else 0,
+        row["student_name"],
+    ))
+    totals = {
+        "absence_forms": sum(row["absence_forms"] for row in result_rows),
+        "absence_days": {
+            kind: sum(row["absence_days"][kind] for row in result_rows)
+            for kind in ("질병", "출석인정", "기타")
+        },
+        "early_count": sum(row["early_count"] for row in result_rows),
+        "out_count": sum(row["out_count"] for row in result_rows),
+    }
+    for row in result_rows:
+        row["total_absence_days"] = sum(row["absence_days"].values())
+    totals["total_absence_days"] = sum(row["total_absence_days"] for row in result_rows)
+    return {"month": month, "rows": result_rows, "totals": totals}
 
 
 @api("POST", "/api/absences")

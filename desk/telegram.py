@@ -16,7 +16,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import ai, assist, queries
+from . import ai, assist, printing, queries
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -29,7 +29,7 @@ HELP = (
     "내일 수업 · 금요일 시간표 — 내 수업 (시간표를 불러왔을 때)\n"
     "조퇴 7 [13:30] — 7번 조퇴증 발급 (사유는 단추로)\n"
     "외출 7 [13:30] [14:30] — 7번 외출증 발급\n"
-    "발급 뒤 PC에서 실제 인쇄를 요청할 수 있습니다.\n"
+    "발급 뒤 기본 프린터로 바로 출력할 수 있습니다.\n"
     "새로고침 — 지금 바로 수집\n"
     "요약 — 최근 받은 공문·메시지\n"
     "도움말 — 이 안내"
@@ -369,8 +369,13 @@ class Bot:
                     if int(pid) not in queue:
                         queue.append(int(pid))
                     self.db.set_meta("telegram_print_queue", queue[-20:])
-                text = (f"🖨️ {p['student_number']}번 {KIND[p['kind']]}증 인쇄 요청을 업무 데스크에 보냈습니다.\n"
-                        "PC의 업무 데스크에서 [인쇄 요청]을 눌러 출력하세요.")
+                try:
+                    started = printing.start_silent_pass(self.config, int(pid))
+                except printing.PrintError as e:
+                    text = f"⚠️ 자동 인쇄를 시작하지 못했습니다: {e}\n업무 데스크가 켜져 있는지 확인하세요."
+                else:
+                    text = (f"🖨️ {p['student_number']}번 {KIND[p['kind']]}증을 기본 프린터로 "
+                            f"{'보냈습니다.' if started else '보내는 중입니다.'}")
             else:
                 text = f"✅ {p['student_number']}번 {KIND[p['kind']]}증 발급 완료 · 인쇄하지 않음"
             try:
@@ -385,7 +390,7 @@ class Bot:
             markup = None
             if self.last_issued_pass_id:
                 markup = {"inline_keyboard": [[
-                    {"text": "PC에서 인쇄 요청", "callback_data": f"pp:{self.last_issued_pass_id}:1"},
+                    {"text": "기본 프린터로 바로 출력", "callback_data": f"pp:{self.last_issued_pass_id}:1"},
                     {"text": "인쇄 안 함", "callback_data": f"pp:{self.last_issued_pass_id}:0"},
                 ]]}
             try:
@@ -447,7 +452,7 @@ class Bot:
         when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
         # 이름·사유는 답장에 쓰지 않음
         return (f"✅ {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 발급 · {when}\n"
-                f"발급 번호 {saved['serial']}\n실제 인쇄 여부를 골라 주세요.")
+                f"발급 번호 {saved['serial']}\n기본 프린터로 바로 출력할지 선택하세요.")
 
     # ---- 브리핑 ----
     def brief_text(self, today=None):

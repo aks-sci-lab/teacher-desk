@@ -67,7 +67,9 @@ export function orderViews(ids) {
 }
 
 function normalizedViewOrder(order) {
-    const known = Array.isArray(order) ? order.filter((id, i) => views.has(id) && order.indexOf(id) === i) : [];
+    const aliases = { passes: 'attendance', absence: 'attendance' };
+    const migrated = Array.isArray(order) ? order.map(id => aliases[id] || id) : [];
+    const known = migrated.filter((id, i) => views.has(id) && migrated.indexOf(id) === i);
     return [...known, ...defaultViewOrder.filter(id => !known.includes(id))];
 }
 

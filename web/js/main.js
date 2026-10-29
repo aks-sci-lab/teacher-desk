@@ -2,16 +2,18 @@
 import { guarded, toast } from './ui.js';
 import { showView, statusItem, setStatus, setBadge, applyLayout, setLayout, getLayout, pollLogs, toggleLayoutMode, orderViews, on, emit } from './shell.js';
 import { loadState, loadStudents } from './store.js';
-import { initPasses } from './views/passes.js';
+import { initPasses, printPass } from './views/passes.js';
 import { initAbsences } from './views/absence.js';
+import './views/attendance.js';
 import { initInbox, collectNow } from './views/inbox.js';
 import { initCalendar } from './views/calendar.js';
 import { initTimetable } from './views/timetable.js';
 import './views/today.js';
 import './views/search.js';
 import { openSettings } from './views/settings.js';
+import { api } from './api.js';
 
-orderViews(['today', 'inbox', 'calendar', 'timetable', 'passes', 'absence', 'search', 'settings']);
+orderViews(['today', 'inbox', 'calendar', 'timetable', 'attendance', 'search', 'settings']);
 
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
@@ -36,18 +38,18 @@ on('state', updateStatus);
 let lastRunId = null;
 let lastPass = null;
 const seenPrintRequests = new Set();
+const silentPrintId = new URLSearchParams(location.search).get('silent-print');
 function showPrintRequests(s) {
-    for (const p of s.print_requests || []) {
-        if (p && !seenPrintRequests.has(p.id)) {
-            seenPrintRequests.add(p.id);
-            emit('telegram-print-request', p);
-        }
+    const p = (s.print_requests || [])[0];
+    if (p && !seenPrintRequests.has(p.id)) {
+        seenPrintRequests.add(p.id);
+        emit('telegram-print-request', p);
     }
 }
 const tick = async () => {
     try {
         const s = await loadState();
-        showPrintRequests(s);
+        if (!silentPrintId) showPrintRequests(s);
         // 예약 수집·텔레그램 수집이 끝났거나 텔레그램으로 증을 발급했으면 목록을 새로 고침
         const passChanged = lastPass !== null && s.counts.passes !== lastPass;
         if ((s.last_run && lastRunId !== null && s.last_run.id !== lastRunId) || passChanged) emit('data-changed');
@@ -68,13 +70,23 @@ guarded(async () => {
     else applyLayout(saved, false);
     lastRunId = s.last_run ? s.last_run.id : 0;
     await Promise.all([loadStudents(), initPasses(), initAbsences(), initInbox(), initCalendar(), initTimetable()]);
-    showPrintRequests(s);
+    if (!silentPrintId) showPrintRequests(s);
     showView('today');
     if (!s.settings.school_name && !s.settings.edufine_folder && !s.settings.coolmessenger_name && !s.settings.coolmessenger_path) {
         toast('처음 오셨네요. ⚙ 설정에서 학교·학급과 수집 폴더를 입력하세요.', 'info', 8000);
     }
     pollLogs();
-    setInterval(tick, 15000);
+    if (silentPrintId && /^\d+$/.test(silentPrintId)) {
+        window.addEventListener('afterprint', () => {
+            api.post(`/api/print-requests/${silentPrintId}/complete`, {})
+                .then(() => window.close())
+                .catch(e => toast(`인쇄는 끝났지만 요청을 마무리하지 못했습니다: ${e.message}`, 'error', 10000));
+        }, { once: true });
+        const pass = await api.get(`/api/passes/${silentPrintId}`);
+        await printPass(pass, 2);
+    } else {
+        setInterval(tick, 15000);
+    }
 })();
 
 window.addEventListener('keydown', e => {

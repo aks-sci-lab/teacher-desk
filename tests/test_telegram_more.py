@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, datetime
+from unittest.mock import patch
 
 from desk import assist
 from desk.collect import add_text_item
@@ -55,9 +56,11 @@ class TelegramMoreTests(unittest.TestCase):
         self.assertNotIn("김민준", self.sent_text())
         self.assertNotIn("병원 진료", self.fake.edited[-1]["text"])
         print_choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-        self.assertIn("PC에서 인쇄 요청", self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["text"])
-        requested = self.bot.handle_update(press(print_choice))
-        self.assertIn("인쇄 요청", requested)
+        self.assertIn("기본 프린터로 바로 출력", self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["text"])
+        with patch("desk.telegram.printing.start_silent_pass", return_value=True) as start_print:
+            requested = self.bot.handle_update(press(print_choice))
+        self.assertIn("기본 프린터", requested)
+        start_print.assert_called_once_with(self.env.config, p["id"])
         self.assertEqual(self.env.db.get_meta("telegram_print_queue"), [p["id"]])
         self.assertNotIn("김민준", self.sent_text())
         self.assertNotIn("병원 진료", self.sent_text())

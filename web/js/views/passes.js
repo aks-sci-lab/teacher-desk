@@ -1,7 +1,7 @@
 // 🎫 조퇴증·외출증: 명단 → 작성 → 미리보기 → 인쇄 → 기록 → 학생 공유(QR)
 import { api } from '../api.js';
 import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad } from '../ui.js';
-import { registerView, openTab, refreshSide, findTab, emit, on, showView } from '../shell.js';
+import { openTab, refreshSide, findTab, emit, on, showView } from '../shell.js';
 import { openSettings } from './settings.js';
 import { store, loadStudents } from '../store.js';
 
@@ -102,7 +102,7 @@ async function loadDay() {
     dayPasses = await api.get(`/api/passes?date=${sideDate}`);
 }
 
-function renderSide(body, actions) {
+export function renderPassesSide(body, actions) {
     actions.append(
         el('button.icon-btn', { title: '학생 명단', onclick: openRoster }, '👥'),
         el('button.icon-btn', { title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }) }, '⟳'));
@@ -283,8 +283,8 @@ export function openPass(p, refresh = false) {
                 el('h1', `${KIND[p.kind]}증 · ${p.student_name}`),
                 el('p.sub', `발급 번호 ${p.serial} · ${dayLabel(p.date)} · `, el('b', statusText)),
                 el('div.row',
-                    el('button.btn.primary', { onclick: guarded(() => printPass(p, 2)) }, '인쇄 (2장)'),
-                    el('button.btn', { onclick: guarded(() => printPass(p, 1)) }, '1장만'),
+                    el('button.btn.primary', { onclick: guarded(() => printPass(p, 2)) }, '다시 인쇄 (2장)'),
+                    el('button.btn', { onclick: guarded(() => printPass(p, 1)) }, '다시 인쇄 (1장)'),
                     p.kind === 'out' && p.status === 'issued' && el('button.btn', { onclick: guarded(() => update({ status: 'returned' })) }, '복귀 확인'),
                     p.status !== 'issued' && el('button.btn', { onclick: guarded(() => update({ status: 'issued' })) }, '↺ 발급 상태로'),
                     el('button.btn', { onclick: () => { tab.close(); openForm({ ...p }); } }, '고치기'),
@@ -350,11 +350,6 @@ export function openRoster() {
     });
 }
 
-registerView({
-    id: 'passes', icon: '🎫', label: '조퇴·외출',
-    async renderSide(body, actions) { renderSide(body, actions); },
-});
-
 on('students', () => refreshSide());
 
 export async function initPasses() {
@@ -365,32 +360,6 @@ export async function initPasses() {
 on('passes-changed', guarded(async () => { await loadDay(); refreshSide(); }));
 
 on('telegram-print-request', guarded(async p => {
-    openTab({
-        id: `telegram-print-${p.id}`, title: `${p.student_number}번 ${KIND[p.kind]} 인쇄 요청`,
-        render(pane) {
-            pane.append(
-                el('h1', '텔레그램 인쇄 요청'),
-                el('p.sub', `${p.student_number}번 ${p.student_name} ${KIND[p.kind]}증 · ${p.date} · ${p.time_out || ''}`),
-                el('p', '학생 이름과 사유는 텔레그램으로 보내지 않았습니다. 인쇄는 이 PC에서 직접 확인해 주세요.'),
-                el('div.row',
-                    el('button.btn.primary', { onclick: guarded(async () => {
-                        const full = await api.get(`/api/passes/${p.id}`);
-                        await printPass(full);
-                        await api.post(`/api/print-requests/${p.id}/complete`, {});
-                        toast('인쇄 창을 열었습니다. 출력 여부를 확인하세요.');
-                        emit('print-request-done', p.id);
-                    }) }, '실제로 인쇄'),
-                    el('button.btn', { onclick: guarded(async () => {
-                        await api.post(`/api/print-requests/${p.id}/complete`, {});
-                        toast('인쇄 요청을 취소했습니다.');
-                        emit('print-request-done', p.id);
-                    }) }, '인쇄 안 함')));
-        },
-    });
-}));
-
-on('print-request-done', guarded(async () => {
-    const remaining = await api.get('/api/state');
-    const requests = remaining.print_requests || [];
-    if (requests.length) emit('telegram-print-request', requests[0]);
+    const result = await api.post(`/api/print-requests/${p.id}/print`, {});
+    if (result.started) toast('텔레그램 출력 요청을 기본 프린터로 보내는 중입니다.');
 }));

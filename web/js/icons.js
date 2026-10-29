@@ -5,6 +5,7 @@ const PATHS = {
     calendar: 'M4 6h16v14H4z M4 10h16 M8 3v5 M16 3v5',
     timetable: 'M4 4h16v16H4z M4 9h16 M4 14h16 M9 4v16 M14.5 4v16',
     passes: 'M4 7h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z M14 7v12',
+    attendance: 'M4 5h16v14H4z M8 9h3 M8 13l2 2 5-5',
     search: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13z M15.5 15.5L20 20',
     settings: 'M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z M12 3v2.5 M12 18.5V21 M3 12h2.5 M18.5 12H21 M5.6 5.6l1.8 1.8 M16.6 16.6l1.8 1.8 M5.6 18.4l1.8-1.8 M16.6 7.4l1.8-1.8',
     plus: 'M12 5v14 M5 12h14',

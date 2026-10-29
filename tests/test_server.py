@@ -2,7 +2,8 @@ import http.client
 import json
 import threading
 import unittest
-from datetime import date
+from datetime import date, timedelta
+from unittest.mock import patch
 from urllib.parse import quote
 
 from desk.server import App, make_handler, parse_roster
@@ -113,6 +114,49 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/absences", {**body, "absence_type": "잘못된 종류"})[0], 400)
         self.assertEqual(self.req("POST", "/api/absences", {**body, "student_number": True})[0], 400)
 
+    def test_attendance_month_summary_counts_weekdays_and_excludes_cancelled_passes(self):
+        month_start = date(2099, 2, 1)
+        status, disease = self.req("POST", "/api/absences", {
+            "student_name": "통계학생", "student_number": 73,
+            "start_date": "2099-01-30", "end_date": "2099-02-02",
+            "absence_type": "질병", "reason": "시험 자료",
+        })
+        self.assertEqual(status, 200, disease)
+        saturday = month_start + timedelta(days=(5 - month_start.weekday()) % 7)
+        sunday = saturday + timedelta(days=1)
+        status, weekend = self.req("POST", "/api/absences", {
+            "student_name": "통계학생", "student_number": 73,
+            "start_date": saturday.isoformat(), "end_date": sunday.isoformat(),
+            "absence_type": "기타", "reason": "시험 자료",
+        })
+        self.assertEqual(status, 200, weekend)
+        status, early = self.req("POST", "/api/passes", {
+            "kind": "early", "student_name": "통계학생", "student_number": 73,
+            "date": "2099-02-03", "time_out": "13:00",
+        })
+        self.assertEqual(status, 200, early)
+        self.assertEqual(self.req("PATCH", f"/api/passes/{early['id']}", {"status": "cancelled"})[0], 200)
+        status, out = self.req("POST", "/api/passes", {
+            "kind": "out", "student_name": "통계학생", "student_number": 73,
+            "date": "2099-02-04", "time_out": "13:00",
+        })
+        self.assertEqual(status, 200, out)
+        self.assertEqual(self.req("PATCH", f"/api/passes/{out['id']}", {"status": "returned"})[0], 200)
+
+        status, report = self.req("GET", "/api/attendance/month?month=2099-02")
+        self.assertEqual(status, 200, report)
+        student = next(row for row in report["rows"] if row["student_number"] == 73)
+        expected_disease_days = sum(
+            (month_start + timedelta(days=offset)).weekday() < 5
+            for offset in range(2))
+        self.assertEqual(student["absence_forms"], 2)
+        self.assertEqual(student["absence_days"], {"질병": expected_disease_days, "출석인정": 0, "기타": 0})
+        self.assertEqual(student["total_absence_days"], expected_disease_days)
+        self.assertEqual((student["early_count"], student["out_count"]), (0, 1))
+        self.assertEqual(report["totals"]["out_count"], 1)
+        self.assertEqual(self.req("GET", "/api/attendance/month?month=2026-1")[0], 400)
+        self.assertEqual(self.req("GET", "/api/attendance/month?month=0000-01")[0], 400)
+
     def test_telegram_print_queue_is_local_and_acknowledged(self):
         today = date.today().isoformat()
         status, p = self.req("POST", "/api/passes", {
@@ -126,6 +170,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(state["print_requests"][0]["id"], p["id"])
         self.assertEqual(self.req("POST", f"/api/print-requests/{p['id']}/complete", {})[0], 200)
         self.assertEqual(self.req("GET", "/api/state")[1]["print_requests"], [])
+
+    def test_telegram_print_request_starts_silent_print_only_when_queued(self):
+        today = date.today().isoformat()
+        status, p = self.req("POST", "/api/passes", {
+            "kind": "out", "student_name": "나하늘", "student_number": 2,
+            "date": today, "time_out": "12:00", "time_return": "13:00",
+        })
+        self.assertEqual(status, 200, p)
+        self.assertEqual(self.req("POST", f"/api/print-requests/{p['id']}/print", {})[0], 404)
+        self.env.db.set_meta("telegram_print_queue", [p["id"]])
+        with patch("desk.server.printing.start_silent_pass", return_value=True) as start_print:
+            status, result = self.req("POST", f"/api/print-requests/{p['id']}/print", {})
+        self.assertEqual((status, result["started"]), (200, True))
+        start_print.assert_called_once_with(self.env.config, p["id"])
 
     def test_roster(self):
         rows = parse_roster("번호\t이름\n1\t김가온\n2\t나하늘\n\n3  도윤서\n박지민")

@@ -1,7 +1,7 @@
 // 결석계: 작성 → 미리보기 → 인쇄 → 기록
 import { api } from '../api.js';
 import { el, clear, toast, guarded, todayIso, dayLabel, longDate } from '../ui.js';
-import { registerView, openTab, refreshSide, findTab, on } from '../shell.js';
+import { openTab, refreshSide, findTab, on, emit } from '../shell.js';
 import { store } from '../store.js';
 
 let absences = [];
@@ -43,7 +43,7 @@ function printAbsence(a) {
     window.print();
 }
 
-function renderSide(body, actions) {
+export function renderAbsenceSide(body, actions) {
     actions.append(el('button.icon-btn', {
         title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }),
     }, '⟳'));
@@ -147,6 +147,7 @@ export function openAbsenceForm(initial = {}) {
                 selectedDate = saved.start_date;
                 await loadDay();
                 refreshSide();
+                emit('absences-changed', saved);
                 tab.close();
                 openAbsence(saved);
                 if (printAfter) printAbsence(saved);
@@ -180,7 +181,7 @@ export function openAbsenceForm(initial = {}) {
     });
 }
 
-function openAbsence(a) {
+export function openAbsence(a) {
     openTab({
         id: `absence-${a.id}`, title: `${a.student_name} 결석계`,
         render(pane) {
@@ -194,11 +195,6 @@ function openAbsence(a) {
         },
     });
 }
-
-registerView({
-    id: 'absence', icon: '▤', label: '결석계',
-    renderSide,
-});
 
 on('absences-changed', guarded(async () => { await loadDay(); refreshSide(); }));
 
