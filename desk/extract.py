@@ -19,7 +19,7 @@ CATEGORY_WORDS = [
     # 부고·결혼 안내에도 '연수'·'행사' 같은 낱말이 섞여 있어 가장 먼저 봄
     ("경조사", ("부고", "별세", "발인", "빈소", "장례", "영결", "조의", "부의", "결혼", "화혼", "혼례", "돌잔치")),
     ("회의", ("회의", "협의회", "위원회", "협의", "상담", "면담")),
-    ("연수", ("연수", "워크숍", "컨설팅", "설명회", "교육 실시", "직무교육")),
+    ("연수", ("연수", "워크숍", "컨설팅", "설명회", "교육 실시", "직무교육", "특강", "강연")),
     ("행사", ("행사", "대회", "축제", "체험", "운동회", "졸업식", "입학식", "수학여행",
              "공연", "발표회", "캠프", "견학", "봉사")),
     ("수업·평가", ("수업", "평가", "시험", "고사", "수행", "공개수업", "성적")),
@@ -46,6 +46,9 @@ P_RANGE_END = re.compile(
     r"(\d{1,2})\s*(?:월|\.)\s*(\d{1,2})\s*(?:일|\.)?|"
     r"(\d{1,2})\s*(?:일|\.)"
     r")" + _DOW)
+
+# '2026. 11. 2.(월) 8:30~11. 13.(금)' 처럼 시작 날짜와 '~' 사이의 시각
+P_TIME_GAP = re.compile(r"\s*(?:오전|오후)?\s*\d{1,2}(?::\d{2}|\s*시(?:\s*\d{1,2}\s*분|\s*반)?)")
 
 P_TIME_KO = re.compile(r"(오전|오후|낮|저녁|밤|아침)?\s*(\d{1,2})\s*시(?!간|기|작|행|청|설|점|도)\s*(?:(\d{1,2})\s*분|(반))?")
 P_TIME_COLON = re.compile(r"(?<![\d:])(오전|오후)?\s*(\d{1,2}):(\d{2})(?![\d:])")
@@ -118,6 +121,9 @@ def find_dates(text, ref):
     # 기간 끝 붙이기
     for f in picked:
         m = P_RANGE_END.match(text, f[1])
+        if not m:
+            g = P_TIME_GAP.match(text, f[1])
+            m = g and P_RANGE_END.match(text, g.end())
         if not m:
             continue
         start = f[2]
@@ -227,19 +233,62 @@ def label_only(line, dates):
     return len(rest) <= 2
 
 
-def extract_events(text, ref):
-    """글에서 일정 목록을 뽑습니다."""
+# '가. 행사명: …'·'연수명: …' 처럼 무슨 행사인지 적은 줄
+P_NAME = re.compile(r"^(?:행사|연수|과정|대회|사업|교육|강좌|강의|프로그램|회의|특강|캠프|축제)\s*명\s*[:：]\s*(.{2,})")
+# '강사: …'·'장소: …' 처럼 다른 이름표 줄
+P_KV = re.compile(r"^[가-힣 ]{1,10}[:：]")
+SAME_DAY_LABELS = ("일시", "일자", "날짜", "일정")
+
+
+def event_name(text):
+    """글에서 행사·연수 이름 (행사명 줄 → 공문 제목 줄), 없으면 None."""
+    for i, line in enumerate(_lines(text)):
+        if i >= 40:
+            break
+        m = P_NAME.match(event_text(line))
+        if m:
+            return m.group(1).strip()[:80]
+    return subject_line(text)
+
+
+def label_title(line, dates, prev, ref, name):
+    """'일시: …'·'기간: …' 같은 이름표 줄의 일정 내용. 고칠 것이 없으면 None.
+
+    - 앞 줄이 내용이면 '앞 줄 (이름표)' (예: '보고서 제출 (제출기한)')
+    - 앞 줄이 '사. 신청' 같은 짧은 머리면 '행사명 신청 기간'
+    - 앞 줄이 '강사: …' 같은 다른 이름표면 '행사명' (일시) 또는 '행사명 이름표'
+    """
+    body = event_text(line)
+    lab = P_LABEL.match(body)
+    if not lab:
+        return None
+    label = lab.group(0).rstrip(":： ").strip()
+    only = label_only(line, dates)
+    p = event_text(prev) if prev and not find_dates(prev, ref) else ""
+    header = p if p and len(p) <= 10 and not P_KV.match(p) and not re.search(r"[:：]", p) else ""
+    if only and not header and len(p) >= 4 and not P_KV.match(p):
+        return f"{p} ({label})"
+    if not (only or header) or not name:
+        return None
+    if header:
+        word = label if header in label else f"{header} {label}"
+    else:
+        word = "" if label in SAME_DAY_LABELS else label
+    return f"{name} {word}".strip()
+
+
+def extract_events(text, ref, name=None):
+    """글에서 일정 목록을 뽑습니다. name: 행사·연수 이름 (이름표뿐인 줄의 내용으로 씀)."""
     events = []
     seen = set()
     prev = ""
+    name = name or event_name(text)
     for line in _lines(text):
         dates = find_dates(line, ref)
         if not dates:
             prev = line
             continue
-        text_line = event_text(line)
-        if label_only(line, dates) and len(event_text(prev)) >= 4 and not find_dates(prev, ref):
-            text_line = f"{event_text(prev)} ({P_LABEL.match(event_text(line)).group(0).rstrip(':： ')})"
+        text_line = label_title(line, dates, prev, ref, name) or event_text(line)
         prev = line
         # 줄 전체에서 보는 단서는 한 번만 (날짜가 많은 긴 줄에서 날짜마다 줄 전체를 다시 훑지 않게)
         line_deadline = any(w in line for w in ("마감", "기한", "회신")) or (
@@ -252,9 +301,10 @@ def extract_events(text, ref):
                 continue  # 시행·접수 날짜
             nxt = dates[i + 1][0] if i + 1 < len(dates) else len(line)
             after = line[end:min(nxt, end + 25)]
-            t = find_time(after)
             near = line[end:min(len(line), end + 20)]
             is_deadline = "까지" in near or line_deadline
+            # 기간이면 끝 뒤의 시각 ('~11. 13.(금) 17:00까지'), 행사는 없으면 시작 시각 ('11. 2. 9:00~11. 4.')
+            t = find_time(after) or (None if is_deadline or not end_d else find_time(line[start:end]))
             kind = "deadline" if is_deadline else "event"
             category = "제출·마감" if is_deadline else line_category
             key = (d.isoformat(), t, kind)
