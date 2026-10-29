@@ -1,6 +1,6 @@
 // 📋 브리핑: 지난 마감 · 오늘 일정 · 7일 안 마감 · 오늘 조퇴/외출 · 새로 받은 자료 · 수집 상태
 import { api } from '../api.js';
-import { el, clear, guarded, longDate, todayIso, eventLine, catBadge, srcBadge } from '../ui.js';
+import { el, clear, guarded, toast, longDate, todayIso, dayLabel, ddayInfo, eventLine, catBadge, srcBadge } from '../ui.js';
 import { registerView, openTab, findTab, on } from '../shell.js';
 import { store } from '../store.js';
 import { icon } from '../icons.js';
@@ -77,7 +77,91 @@ function dday(when) {
 // 줄 하나의 이름표 (지운 줄 기억용): 칸·날짜·내용, 띄어쓰기는 무시
 const rowKey = (s, r) => `${s.cls}|${r.when}|${r.text}`.replace(/\s+/g, '');
 
-function aiText(text, ids = [], hiddenList = []) {
+// '11/04(화) 13:30' → { date: '2026-11-04', time: '13:30' } (D-day 와 같은 해 셈)
+function whenToDate(when) {
+    const m = (when || '').match(/(\d{1,2})\s*[\/.월]\s*(\d{1,2})/);
+    if (!m) return { date: null, time: null };
+    const today = new Date(todayIso() + 'T00:00:00');
+    let d = new Date(today.getFullYear(), Number(m[1]) - 1, Number(m[2]));
+    if (d - today < -180 * 86400000) d = new Date(today.getFullYear() + 1, Number(m[1]) - 1, Number(m[2]));
+    const t = (when.slice(m.index + m[0].length).match(/(\d{1,2}):(\d{2})/) || []);
+    const pad = n => String(n).padStart(2, '0');
+    return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: t[0] ? `${pad(t[1])}:${t[2]}` : null };
+}
+
+// ---------------------------------------------------------------- 꼭 할 일 (다른 칸에서 끌어서 옮기기)
+const DRAG_TYPE = 'application/x-desk-todo';
+const ORIGIN = { ai: 'AI 요약', event: '일정', item: '받은 자료', manual: '' };
+let todos = [];
+const rerender = () => findTab('today')?.rerender();
+
+const addTodo = guarded(async payload => {
+    await api.post('/api/todos', payload);
+    toast('꼭 할 일로 옮겼습니다');
+    rerender();
+});
+
+// 이 줄을 끌 수 있게 + 끌기 어려운 화면(폰)용 '할 일로' 단추
+function movable(node, payload) {
+    node.draggable = true;
+    node.classList.add('movable');
+    node.addEventListener('dragstart', e => {
+        e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(payload));
+        e.dataTransfer.setData('text/plain', payload.text);
+        e.dataTransfer.effectAllowed = 'copyMove';
+        document.body.classList.add('dragging-todo');
+    });
+    node.addEventListener('dragend', () => document.body.classList.remove('dragging-todo'));
+    node.append(el('button.to-todo', { title: '꼭 할 일로 옮기기', onclick: e => { e.stopPropagation(); addTodo(payload); } }, '할 일로'));
+    return node;
+}
+
+// 여기에 놓으면 꼭 할 일로
+function dropZone(node) {
+    node.classList.add('drop-zone');
+    node.addEventListener('dragover', e => {
+        if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        node.classList.add('drop-on');
+    });
+    node.addEventListener('dragleave', e => { if (!node.contains(e.relatedTarget)) node.classList.remove('drop-on'); });
+    node.addEventListener('drop', e => {
+        node.classList.remove('drop-on');
+        const raw = e.dataTransfer.getData(DRAG_TYPE);
+        if (!raw) return;
+        e.preventDefault();
+        addTodo(JSON.parse(raw));
+    });
+    return node;
+}
+
+function todoBox() {
+    const patch = guarded(async (t, change) => { await api.patch(`/api/todos/${t.id}`, change); rerender(); });
+    const del = guarded(async t => { await api.del(`/api/todos/${t.id}`); rerender(); });
+    const input = el('input', { type: 'text', placeholder: '+ 직접 쓰기 (Enter)', onkeydown: guarded(async e => {
+        if (e.key !== 'Enter' || !input.value.trim()) return;
+        await api.post('/api/todos', { text: input.value.trim(), origin: 'manual' });
+        rerender();
+    }) });
+    return el('div.todo-box',
+        todos.length > 0 && el('ul.todo-list', todos.map(t => {
+            const dd = t.date && ddayInfo(t.date);
+            return el('li', { className: `todo${t.done ? ' done' : ''}` },
+                el('input', { type: 'checkbox', checked: !!t.done, title: '끝냄', onchange: e => patch(t, { done: e.target.checked }) }),
+                t.date ? el('span.ai-when', dayLabel(t.date, false) + (t.time ? ` ${t.time}` : ''),
+                    !t.done && el('span', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
+                el('span.ai-txt', t.item_id
+                    ? el('a', { href: '#', title: '자료 열기', onclick: e => { e.preventDefault(); openItem(t.item_id); } }, t.text)
+                    : t.text),
+                ORIGIN[t.origin] && el('span.todo-from', ORIGIN[t.origin]),
+                el('button.ai-x', { title: t.hide_key ? '지우기 (AI 요약의 원래 칸으로 되돌림)' : '지우기', onclick: () => del(t) }, '✕'));
+        })),
+        el('div.todo-add', input),
+        el('p.todo-hint', '다른 칸의 줄을 여기로 끌어 놓거나 줄의 [할 일로] 를 누르세요.'));
+}
+
+function aiText(text, ids = [], hiddenList = [], opts = {}) {
     const sections = parseAi(text);
     if (!sections.length) return el('div.ai-text', text);   // 형식이 다르면 글 그대로
     const hidden = new Set(hiddenList);
@@ -97,17 +181,25 @@ function aiText(text, ids = [], hiddenList = []) {
         const dd = r.when && dday(r.when);
         const key = rowKey(s, r);
         const gone = hidden.has(key);
-        return el('li.ai-row', { className: gone ? 'ai-row gone' : 'ai-row' },
+        const li = el('li.ai-row', { className: gone ? 'ai-row gone' : 'ai-row' },
             r.when ? el('span.ai-when', r.when, dd && el('span.ai-dday', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
             el('span.ai-txt', r.text),
             r.refs.length ? el('span.ai-refs', r.refs.map(refChip)) : null,
             gone ? el('button.ai-x', { title: '되돌리기', onclick: () => setHidden(key, false) }, '↺')
                  : el('button.ai-x', { title: '이 줄 지우기 (끝났거나 필요 없음)', onclick: () => setHidden(key, true) }, '✕'));
+        // 행사·회의·알아 둘 내용의 줄은 꼭 할 일로 끌어서 옮길 수 있음
+        if (s.cls !== 'todo' && !gone) {
+            movable(li, { text: r.text, ...whenToDate(r.when), item_id: ids[r.refs[0] - 1] ?? null, origin: 'ai', hide_key: key });
+        }
+        return li;
     };
     const draw = () => {
         let hiddenHere = 0;
+        // 꼭 할 일로 옮긴 줄은 '지운 줄' 이 아님 (꼭 할 일에서 지우면 되돌아옴)
+        const moved = new Set(todos.map(t => t.hide_key).filter(Boolean));
         const secs = sections.map(s => {
             const rows = s.rows.filter(r => {
+                if (moved.has(rowKey(s, r))) return false;
                 const gone = hidden.has(rowKey(s, r));
                 hiddenHere += gone;
                 return showHidden || !gone;
@@ -120,9 +212,16 @@ function aiText(text, ids = [], hiddenList = []) {
                 more.remove();
             } }, `더 보기 (${rows.length - first})`);
             const left = rows.filter(r => !hidden.has(rowKey(s, r))).length;
-            return el('section', { className: `ai-sec ${s.cls}` },
-                el('h4', s.title, el('span.count', left)), list, more || null);
+            const mine = s.cls === 'todo' && opts.todo;
+            const sec = el('section', { className: `ai-sec ${s.cls}` },
+                el('h4', s.title, el('span.count', left + (mine ? todos.filter(t => !t.done).length : 0))),
+                mine && todoBox(), list, more || null);
+            return mine ? dropZone(sec) : sec;
         });
+        // 요약에 꼭 할 일 칸이 없어도 직접 넣은 할 일 칸은 맨 앞에
+        if (opts.todo && !sections.some(s => s.cls === 'todo' && secs[sections.indexOf(s)])) {
+            secs.unshift(dropZone(el('section.ai-sec.todo', el('h4', '꼭 할 일', el('span.count', todos.filter(t => !t.done).length)), todoBox())));
+        }
         clear(wrap,
             el('div.ai-sections', secs.filter(Boolean).length ? secs : el('p.muted.small', '모두 지웠습니다.')),
             hiddenHere ? el('button.btn.small.ai-hidden-toggle', { onclick: () => { showHidden = !showHidden; draw(); } },
@@ -144,11 +243,15 @@ function appliedNote(res, updates) {
     return el('p.small.muted', `요약에 맞춰 수신함 메시지 ${items}건의 분류를 정리하고 일정 후보 ${added}건을 더했습니다 (달력에 넣은 메시지는 그대로).`);
 }
 
-function aiCard() {
+function aiCard(todoCard) {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
+    // 꼭 할 일: AI 요약이 보이면 요약의 '꼭 할 일' 칸 안에, 아니면 따로 카드로
+    const standalone = on => { todoCard.hidden = !on; };
     const show = (r, note) => {
         const res = r.result;
         const updates = (res && res.updates) || [];
+        const main = res && res.text && parseAi(res.text).length > 0;
+        standalone(!main);
         clear(body,
             // 요약 뒤 새 자료 알림 (새 것만 요약하거나 전체 다시 요약)
             r.new_count && !r.running ? el('div.ai-new',
@@ -159,7 +262,7 @@ function aiCard() {
             updates.map(u => el('div.ai-update',
                 el('h4', `새로 들어온 것 · ${u.at.slice(11)} · ${u.used ?? u.count}건`),
                 aiText(u.text, u.ids, r.hidden))),
-            res && res.text ? aiText(res.text, res.ids, r.hidden) : el('p.muted.small', '아직 요약이 없습니다.'),
+            res && res.text ? aiText(res.text, res.ids, r.hidden, { todo: main }) : el('p.muted.small', '아직 요약이 없습니다.'),
             res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
             appliedNote(res, updates),
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
@@ -168,6 +271,7 @@ function aiCard() {
     // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
     let timer = null;
     const waiting = st => {
+        standalone(true);
         const sec = Math.max(0, Math.round((Date.now() - new Date(st.started_at.replace(' ', 'T'))) / 1000));
         const what = st.kind === 'new' ? '새로 들어온 자료를' : '지난 1주일 자료를';
         clear(body,
@@ -191,6 +295,7 @@ function aiCard() {
     const run = async kind => {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
+            standalone(true);
             body.closest('.brief')?.classList.add('no-ai');   // AI 를 안 쓰면 카드가 화면 폭을 다 씀
             clear(body, el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
             return;
@@ -212,7 +317,7 @@ function aiCard() {
             show(st, e.message);
         }
     };
-    setTimeout(() => run('auto').catch(e => show({}, e.message)), 0);  // 카드가 화면에 붙은 뒤 시작
+    setTimeout(() => run('auto').catch(e => { show({}, e.message); standalone(true); }), 0);  // 카드가 화면에 붙은 뒤 시작
     return card('지난 1주일 요약', null, body, { cls: 'ai-card' });
 }
 
@@ -232,7 +337,19 @@ function renderToday(pane) {
         const s = await api.get('/api/today');
         clear(pane);
         const st = store.state;
-        const evList = (evs, empty) => evs.length ? el('div', evs.map(e => eventLine(e, openEv))) : el('p.muted.small', empty);
+        todos = s.todos || [];
+        // 꼭 할 일로 옮긴 일정·자료는 원래 칸에서 뺌 (끝내거나 지우면 다시 보임)
+        const movedEv = new Set(todos.filter(t => !t.done && t.event_id).map(t => t.event_id));
+        const movedIt = new Set(todos.filter(t => !t.done && t.origin === 'item' && t.item_id).map(t => t.item_id));
+        const keep = evs => evs.filter(e => !movedEv.has(e.id));
+        ['overdue', 'today', 'week_deadlines', 'week_events'].forEach(k => { s[k] = keep(s[k]); });
+        s.new_items = s.new_items.filter(it => !movedIt.has(it.id));
+        const evRow = e => movable(eventLine(e, openEv), { text: e.item_title || e.text, date: e.date, time: e.time || null,
+            item_id: e.item_id ?? null, event_id: e.id, origin: 'event' });
+        const evList = (evs, empty) => evs.length ? el('div', evs.map(evRow)) : el('p.muted.small', empty);
+        const todoCard = dropZone(card('꼭 할 일', todos.filter(t => !t.done).length, todoBox(), { cls: 'todo-card' }));
+        todoCard.classList.remove('empty-card');   // 비어도 놓을 자리는 보이게
+        todoCard.hidden = true;
         pane.append(
             el('h1', `${longDate(todayIso())}`),
             el('p.sub', `${store.settings.teacher_name ? store.settings.teacher_name + ' 선생님, ' : ''}오늘 할 일을 모았습니다.`),
@@ -242,11 +359,12 @@ function renderToday(pane) {
                 el('button.btn', { onclick: openPaste }, icon('plus'), '메시지 붙여넣기'),
                 el('button.btn', { onclick: collectNow }, icon('refresh'), '지금 수집')),
             // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
-            el('div.brief', aiCard(), withEmptyStrip(el('div.cards',
+            el('div.brief', aiCard(todoCard), withEmptyStrip(el('div.cards',
+                todoCard,
                 s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                 s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
                     ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },
-                        el('b', `${l.p}교시`), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'))))
+                        el('b', `${l.p}교시`), l.start && el('span.lesson-time', l.start), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'))))
                     : el('p.muted.small', '없음')) : null,
                 card('오늘 일정', s.today.length, evList(s.today, '없음')),
                 card('7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '없음')),
@@ -258,8 +376,9 @@ function renderToday(pane) {
                             p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
                     : el('p.muted.small', '없음')),
                 card('새로 받은 자료', s.new_items.length, s.new_items.length
-                    ? el('ul.list', s.new_items.map(it => el('li', { onclick: () => openItem(it.id) },
-                        el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16)))))
+                    ? el('ul.list', s.new_items.map(it => movable(el('li', { onclick: () => openItem(it.id) },
+                        el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16))),
+                        { text: it.title, item_id: it.id, origin: 'item' })))
                     : el('p.muted.small', '없음')),
                 card('자동 수집', null, el('dl.kvs',
                     el('dt', '마지막'), el('dd', s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'),

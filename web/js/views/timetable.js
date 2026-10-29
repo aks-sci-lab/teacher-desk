@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { el, clear, toast, guarded, todayIso, addDays, parseIso, modal } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, emit, on } from '../shell.js';
+import { store } from '../store.js';
 
 // 시간표 담당용 전체 교체 도구 (사용자가 준 파일, GitHub Pages)
 const WEB_TOOL = 'https://aks-sci-lab.github.io/teacher-desk/timetable/';
@@ -45,6 +46,37 @@ function importBox(after) {
         file,
         el('label.field', el('span', '언제나 잠글 과목 이름 (쉼표로)'), words,
             el('span.hint', '배경색이 있는 칸·가로로 병합된 칸도 잠급니다 (바꿀 수 없음). .xls 는 엑셀에서 .xlsx 로 다시 저장해 주세요.')));
+}
+
+// ---------------------------------------------------------------- 교시 시간·수업 시작 알림
+function periodsBox(tab, periods) {
+    const saved = info.periods || {};
+    const base = Object.keys(saved).length ? saved : info.default_periods || {};
+    const rows = [];
+    for (let p = 1; p <= periods; p++) {
+        const t = base[String(p)] || {};
+        rows.push({ p, start: el('input', { type: 'time', value: t.start || '' }), end: el('input', { type: 'time', value: t.end || '' }) });
+    }
+    const on = el('input', { type: 'checkbox', checked: !!info.bell?.enabled });
+    const lead = el('select', [[0, '시작할 때'], [5, '5분 전'], [10, '10분 전'], [15, '15분 전']].map(([v, l]) =>
+        el('option', { value: v, selected: (info.bell?.lead ?? 5) === v }, l)));
+    const linked = store.state?.telegram?.linked;
+    return el('section.card.tt-periods',
+        el('h3', el('span', '교시 시간 · 수업 시작 알림')),
+        !Object.keys(saved).length && el('p.small.muted', '아래는 흔한 예시입니다 (50분 수업·10분 쉬는 시간·4교시 뒤 점심). 학교 일과에 맞게 고치고 저장하세요.'),
+        el('div.tt-period-grid', rows.map(r => el('label.tt-period', el('b', `${r.p}교시`), r.start, el('span', '~'), r.end))),
+        el('div.row.tt-bell',
+            el('label.check', on, '수업 시작 알림을 텔레그램으로'), lead,
+            !linked && el('span.small.muted', '(설정에서 텔레그램을 연결해야 받습니다)')),
+        el('p.small.muted', '오늘 내 수업(교체 반영)만, 그 학년 행사·휴업 날은 보내지 않습니다. 업무 데스크가 켜져 있어야 보냅니다.'),
+        el('div.row', el('button.btn.small.primary', { onclick: guarded(async () => {
+            const body = {};
+            rows.forEach(r => { if (r.start.value) body[r.p] = { start: r.start.value, end: r.end.value || null }; });
+            info = await api.put('/api/timetable/periods', { periods: body, bell: { enabled: on.checked, lead: Number(lead.value) } });
+            toast(on.checked ? '교시 시간을 저장하고 수업 알림을 켰습니다' : '교시 시간을 저장했습니다');
+            emit('timetable-changed');
+            tab.rerender();
+        }) }, '저장')));
 }
 
 // ---------------------------------------------------------------- 후보 미리보기 팝업
@@ -131,7 +163,8 @@ function renderWeek(pane, tab) {
         }));
         const rows = [];
         for (let p = 1; p <= periods; p++) {
-            rows.push(el('tr', el('th.p', p), info.days.map((d, di) => {
+            const pt = (info.periods || {})[String(p)];
+            rows.push(el('tr', el('th.p', p, pt && el('small', pt.start)), info.days.map((d, di) => {
                 const key = `${di}-${p}`;
                 if (!slotSet.has(key)) return el('td.cell.na');
                 const l = wk.grid[key];
@@ -204,6 +237,7 @@ function renderWeek(pane, tab) {
                         c.block ? el('span.tag.warn', `불가: ${c.block}`) : c.worse ? el('span.tag.warn', `연속 ${c.max_run}교시`) : el('span.tag.run', `최대 연속 ${c.max_run}`),
                         el('span.muted.small', `선생님 ${c.teachers}명`)),
                     el('div.mv', c.moves.slice(1).map(m => el('div', `${m.name} · ${m.cls} ${m.subj} ${m.from_label} → ${m.to_label}`))))))),
+            mine && periodsBox(tab, periods),
             el('p.small.muted.tt-foot', `${info.file} · ${info.sheet} · 선생님 ${info.teachers.length}명 · 수업 ${info.lessons}개 (잠금 ${info.locked}개) · ${info.at} 불러옴`),
             el('p.small.tt-web', '학교 전체 시간표 교체·바뀐 엑셀 저장·교체 안내문 인쇄는 ',
                 el('a', { href: WEB_TOOL, target: '_blank', rel: 'noopener' }, '시간표 교체 도우미 (웹) ↗'),

@@ -82,6 +82,21 @@ CREATE TABLE IF NOT EXISTS runs (
     error TEXT
 );
 
+-- 브리핑의 '꼭 할 일' 에 선생님이 직접 넣은 것 (0.5.18): 다른 칸에서 끌어 오거나 직접 씀
+CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY,
+    text TEXT NOT NULL,
+    date TEXT,
+    time TEXT,
+    item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+    event_id INTEGER,
+    origin TEXT,                     -- ai: AI 요약 줄 / event: 일정 / item: 받은 자료 / manual: 직접
+    hide_key TEXT,                   -- AI 요약에서 옮겨 온 줄 (지우면 원래 칸으로 되돌림)
+    done INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    done_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,

@@ -337,7 +337,8 @@ class Bot:
         for d in assist.lesson_days(text, today) or [today]:
             ls = queries.my_lessons(self.db, self.config, d)
             lines.append(f"📚 {fmt_day(d.isoformat(), today)} 내 수업 {len(ls)}시간")
-            lines += [f"  {l['p']}교시 {l['cls']} {l['subj']}" + (" (교체)" if l["moved"] else "") for l in ls] or ["  없음"]
+            lines += [f"  {l['p']}교시{' ' + l['start'] if l.get('start') else ''} {l['cls']} {l['subj']}"
+                      + (" (교체)" if l["moved"] else "") for l in ls] or ["  없음"]
         return "\n".join(lines)
 
     # ---- 단추 ----
@@ -421,7 +422,12 @@ class Bot:
         """오늘 일정·마감 + 지난 1주일 AI 요약 (지운 줄은 빼고). 자료 번호는 '원문 n' 으로."""
         today = today or date.today()
         lines = [self.answer("today", today).replace("업무", "브리핑", 1)]
-        res = (self.db.get_meta("ai_weekly") or {}).get("result") or {}
+        mine = [t for t in queries.todos(self.db, today) if not t["done"]]
+        if mine:
+            lines.append(f"\n■ 꼭 할 일 (직접 넣은 것 {len(mine)})")
+            lines += [f"- {fmt_day(t['date'], today) + (' ' + t['time'] if t['time'] else '') + ' · ' if t['date'] else ''}{t['text'][:60]}"
+                      for t in mine[:15]]
+        res = self.db.get_meta("ai_weekly") or {}   # weekly_summary 가 저장한 요약 그대로 ({at, text, ids, updates})
         hidden = set(self.db.get_meta("ai_hidden", []))
         refs = res.get("ids") or []
         blocks = [(u.get("text", ""), u.get("ids") or [], f"새로 들어온 것 · {u.get('at', '')[11:16]}") for u in (res.get("updates") or [])]

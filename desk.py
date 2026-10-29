@@ -17,6 +17,7 @@ from desk import VERSION, updater
 from desk.collect import SOURCES, Collector, diagnose
 from desk.config import APP_DIR, Config
 from desk.db import DB
+from desk.bell import LessonBell
 from desk.scheduler import Scheduler
 from desk.server import App, serve
 from desk.telegram import Bot
@@ -97,6 +98,8 @@ def run(args, config, db):
     watcher.start()
     app.watcher = watcher
     bot.start()
+    bell = LessonBell(db, config, bot)   # 수업 시작 알림 (시간표의 교시 시간)
+    bell.start()
     db.log("업무 데스크 시작")
     try:
         httpd.serve_forever()
@@ -106,6 +109,7 @@ def run(args, config, db):
         scheduler.stop()
         watcher.stop()
         bot.stop()
+        bell.stop()
         httpd.server_close()
         db.log("업무 데스크 종료")
     return 0

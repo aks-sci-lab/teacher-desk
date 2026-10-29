@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, ai, coolmsg, extract, neis, picker, queries, schoolcal, timetable
+from . import VERSION, ai, bell, coolmsg, extract, neis, picker, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -678,6 +678,75 @@ def get_today(app, q, body):
     return s
 
 
+# ---- 꼭 할 일 (브리핑) ----
+def todo_fields(body, partial=False):
+    f = {}
+    if "text" in body or not partial:
+        f["text"] = text_field(body.get("text"), "할 일", 300, True)
+    if "date" in body:
+        f["date"] = check_date(body["date"]) if body["date"] else None
+    if "time" in body:
+        f["time"] = check_time(body["time"], "시각") if body["time"] else None
+    return f
+
+
+@api("GET", "/api/todos")
+def todo_list(app, q, body):
+    return queries.todos(app.db)
+
+
+@api("POST", "/api/todos")
+def todo_add(app, q, body):
+    """다른 칸(AI 요약 줄·일정·받은 자료)에서 옮겨 오거나 직접 씀. 같은 일정·자료가 이미 있으면 그것을 돌려줌."""
+    f = todo_fields(body)
+    for k in ("item_id", "event_id"):
+        v = body.get(k)
+        need(v is None or isinstance(v, int), "할 일 내용이 잘못되었습니다")
+        f[k] = v
+    if f["item_id"] is not None and not app.db.one("SELECT id FROM items WHERE id = ?", (f["item_id"],)):
+        f["item_id"] = None
+    origin = body.get("origin") or "manual"
+    need(origin in ("ai", "event", "item", "manual"), "할 일 출처가 잘못되었습니다")
+    f["origin"] = origin
+    key = body.get("hide_key")
+    need(key is None or (isinstance(key, str) and len(key) <= 400), "할 일 내용이 잘못되었습니다")
+    f["hide_key"] = key
+    for k in ("event_id", "item_id") if origin in ("event", "item") else ():
+        if f[k] is not None:
+            same = app.db.one(f"SELECT * FROM todos WHERE {k} = ? AND done = 0", (f[k],))
+            if same:
+                return same
+    f["created_at"] = now_str()
+    tid = app.db.execute(f"INSERT INTO todos({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
+    if key:
+        ai.set_hidden(app.db, key, True)   # AI 요약에서 옮겨 온 줄은 원래 칸에서 숨김
+    return app.db.one("SELECT * FROM todos WHERE id = ?", (tid,))
+
+
+@api("PATCH", r"/api/todos/(\d+)")
+def todo_update(app, q, body, tid):
+    need(app.db.one("SELECT id FROM todos WHERE id = ?", (tid,)), "없는 할 일입니다", 404)
+    f = todo_fields(body, partial=True)
+    if "done" in body:
+        need(isinstance(body["done"], bool), "끝냄 값이 잘못되었습니다")
+        f["done"] = int(body["done"])
+        f["done_at"] = now_str() if body["done"] else None
+    if f:
+        app.db.execute(f"UPDATE todos SET {', '.join(k + ' = ?' for k in f)} WHERE id = ?", (*f.values(), tid))
+    return app.db.one("SELECT * FROM todos WHERE id = ?", (tid,))
+
+
+@api("DELETE", r"/api/todos/(\d+)")
+def todo_delete(app, q, body, tid):
+    """지우면 AI 요약에서 옮겨 온 줄은 원래 칸으로 되돌아감."""
+    t = app.db.one("SELECT * FROM todos WHERE id = ?", (tid,))
+    need(t, "없는 할 일입니다", 404)
+    app.db.execute("DELETE FROM todos WHERE id = ?", (tid,))
+    if t["hide_key"]:
+        ai.set_hidden(app.db, t["hide_key"], False)
+    return {"ok": True}
+
+
 # ---- 내 시간표·수업 교체 ----
 def _tt(app):
     tt = app.db.get_meta("timetable")
@@ -737,6 +806,8 @@ def timetable_get(app, q, body):
         "teachers": [{"id": t["id"], "name": t["name"], "dept": t["dept"], "count": len(t["lessons"])} for t in tt["teachers"]],
         "me": app.db.get_meta("timetable_me"),
         "swaps": app.db.get_meta("timetable_swaps") or [],
+        "periods": app.db.get_meta("timetable_periods"), "default_periods": bell.DEFAULT_PERIODS,
+        "bell": app.db.get_meta("timetable_bell") or {"enabled": False, "lead": 5},
         "lessons": sum(len(t["lessons"]) for t in tt["teachers"]),
         "locked": sum(1 for t in tt["teachers"] for l in t["lessons"].values() if l["locked"]),
     }
@@ -750,6 +821,30 @@ def timetable_delete(app, q, body):
     for k in ("timetable", "timetable_swaps", "timetable_me"):
         app.db.set_meta(k, None)
     return {"ok": True}
+
+
+@api("PUT", "/api/timetable/periods")
+def timetable_periods(app, q, body):
+    """교시별 시작·끝 시각과 수업 시작 알림 (텔레그램)."""
+    tt = _tt(app)
+    periods = body.get("periods")
+    need(isinstance(periods, dict) and len(periods) <= 12, "교시 시간이 잘못되었습니다")
+    clean = {}
+    for p, t in periods.items():
+        need(str(p).isdigit() and 1 <= int(p) <= 12 and isinstance(t, dict), "교시 시간이 잘못되었습니다")
+        start, end = check_time(t.get("start"), f"{p}교시 시작"), check_time(t.get("end"), f"{p}교시 끝")
+        if not start:
+            continue
+        need(not end or start < end, f"{p}교시 끝 시각이 시작보다 빠릅니다")
+        clean[str(int(p))] = {"start": start, "end": end}
+    b = body.get("bell") or {}
+    need(isinstance(b, dict) and isinstance(b.get("enabled", False), bool) and b.get("lead", 0) in bell.LEADS,
+         "수업 알림 설정이 잘못되었습니다")
+    need(not b.get("enabled") or clean, "수업 알림을 켜려면 교시 시간을 넣으세요")
+    app.db.set_meta("timetable_periods", clean or None)
+    app.db.set_meta("timetable_bell", {"enabled": bool(b.get("enabled")), "lead": b.get("lead", 0)})
+    app.db.log(f"교시 시간 {len(clean)}개 저장, 수업 알림 {'켬' if b.get('enabled') else '끔'}")
+    return timetable_get(app, q, {})
 
 
 @api("PUT", "/api/timetable/me")
