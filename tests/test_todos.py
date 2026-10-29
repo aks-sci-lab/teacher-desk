@@ -46,6 +46,44 @@ class TodoApiTests(unittest.TestCase):
         self.assertIn("■ 꼭 할 일 (직접 넣은 것 1)", text)
         self.assertIn("학부모 상담 일지 정리", text)
 
+    def test_order_by_drag(self):
+        db = self.env.db
+        db.execute("DELETE FROM todos")
+        ids = [self.req("POST", "/api/todos", {"text": t, "date": d})[1]["id"]
+               for t, d in (("가", "2026-11-09"), ("나", "2026-11-02"), ("다", None))]
+        # 새 것은 맨 아래 (날짜와 상관없이 넣은 순서)
+        self.assertEqual([t["text"] for t in self.req("GET", "/api/todos")[1]], ["가", "나", "다"])
+        # 끌어서 '다' 를 맨 위로
+        status, rows = self.req("PUT", "/api/todos/order", {"ids": [ids[2], ids[0], ids[1]]})
+        self.assertEqual(status, 200, rows)
+        self.assertEqual([t["text"] for t in rows], ["다", "가", "나"])
+        # 일부만 보내면 나머지는 그 뒤에 원래 순서대로, 끝낸 것은 아래
+        self.req("PATCH", f"/api/todos/{ids[2]}", {"done": True})
+        rows = self.req("PUT", "/api/todos/order", {"ids": [ids[1]]})[1]
+        self.assertEqual([t["text"] for t in rows], ["나", "가", "다"])
+        new = self.req("POST", "/api/todos", {"text": "라"})[1]
+        self.assertEqual([t["text"] for t in self.req("GET", "/api/todos")[1]], ["나", "가", "라", "다"])
+        self.assertEqual(self.req("PUT", "/api/todos/order", {"ids": ["x"]})[0], 400)
+        self.assertGreater(new["sort"], 0)
+
+    def test_old_db_gets_date_order(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from desk.db import DB
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "old.db"
+            DB(path).close()
+            conn = sqlite3.connect(path)   # 0.5.18 모양: sort 열이 없음
+            conn.executescript("ALTER TABLE todos DROP COLUMN sort;"
+                               "INSERT INTO todos(text, date, created_at) VALUES ('늦은 것', '2026-11-09', 'x'), ('빠른 것', '2026-11-02', 'x'), ('날짜 없음', NULL, 'x');")
+            conn.commit()
+            conn.close()
+            db = DB(path)
+            from desk import queries
+            self.assertEqual([t["text"] for t in queries.todos(db)], ["빠른 것", "늦은 것", "날짜 없음"])
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

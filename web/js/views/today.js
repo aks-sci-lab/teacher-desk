@@ -136,7 +136,11 @@ function dropZone(node) {
     return node;
 }
 
-function todoBox() {
+// 꼭 할 일 칸: 내 목록(끌어서 순서 바꿈) + 그 아래 AI 요약이 찾은 할 일 (위로 끌어 올리면 내 목록에) + 직접 쓰기
+const REORDER = 'application/x-desk-reorder';
+const saveOrder = guarded(async ids => { await api.put('/api/todos/order', { ids }); rerender(); });
+
+function todoBox(aiNodes = [], more = null) {
     const patch = guarded(async (t, change) => { await api.patch(`/api/todos/${t.id}`, change); rerender(); });
     const del = guarded(async t => { await api.del(`/api/todos/${t.id}`); rerender(); });
     const input = el('input', { type: 'text', placeholder: '+ 직접 쓰기 (Enter)', onkeydown: guarded(async e => {
@@ -144,21 +148,96 @@ function todoBox() {
         await api.post('/api/todos', { text: input.value.trim(), origin: 'manual' });
         rerender();
     }) });
-    return el('div.todo-box',
-        todos.length > 0 && el('ul.todo-list', todos.map(t => {
-            const dd = t.date && ddayInfo(t.date);
-            return el('li', { className: `todo${t.done ? ' done' : ''}` },
-                el('input', { type: 'checkbox', checked: !!t.done, title: '끝냄', onchange: e => patch(t, { done: e.target.checked }) }),
-                t.date ? el('span.ai-when', dayLabel(t.date, false) + (t.time ? ` ${t.time}` : ''),
-                    !t.done && el('span', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
-                el('span.ai-txt', t.item_id
-                    ? el('a', { href: '#', title: '자료 열기', onclick: e => { e.preventDefault(); openItem(t.item_id); } }, t.text)
-                    : t.text),
-                ORIGIN[t.origin] && el('span.todo-from', ORIGIN[t.origin]),
-                el('button.ai-x', { title: t.hide_key ? '지우기 (AI 요약의 원래 칸으로 되돌림)' : '지우기', onclick: () => del(t) }, '✕'));
-        })),
+    const open = todos.filter(t => !t.done).map(t => t.id);
+    const step = (t, d) => {   // ▲▼ (끌기 어려운 화면)
+        const ids = [...open];
+        const i = ids.indexOf(t.id);
+        if (i < 0 || i + d < 0 || i + d >= ids.length) return;
+        [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
+        saveOrder(ids);
+    };
+    const li = t => {
+        const dd = t.date && ddayInfo(t.date);
+        const node = el('li', { className: `todo${t.done ? ' done' : ''}`, dataset: { todo: t.id } },
+            !t.done && el('span.todo-grip', { title: '끌어서 순서 바꾸기' }, '⠿'),
+            el('input', { type: 'checkbox', checked: !!t.done, title: '끝냄', onchange: e => patch(t, { done: e.target.checked }) }),
+            t.date ? el('span.ai-when', dayLabel(t.date, false) + (t.time ? ` ${t.time}` : ''),
+                !t.done && el('span', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
+            el('span.ai-txt', t.item_id
+                ? el('a', { href: '#', title: '자료 열기', onclick: e => { e.preventDefault(); openItem(t.item_id); } }, t.text)
+                : t.text),
+            ORIGIN[t.origin] && el('span.todo-from', ORIGIN[t.origin]),
+            !t.done && el('span.todo-move',
+                el('button', { title: '위로', onclick: () => step(t, -1) }, '▲'),
+                el('button', { title: '아래로', onclick: () => step(t, 1) }, '▼')),
+            el('button.ai-x', { title: t.hide_key ? '지우기 (AI 요약의 원래 칸으로 되돌림)' : '지우기', onclick: () => del(t) }, '✕'));
+        if (!t.done) {
+            node.draggable = true;
+            node.addEventListener('dragstart', e => {
+                e.dataTransfer.setData(REORDER, String(t.id));
+                e.dataTransfer.effectAllowed = 'move';
+                node.classList.add('dragging');
+            });
+            node.addEventListener('dragend', () => node.classList.remove('dragging'));
+        }
+        return node;
+    };
+    const list = el('ul.todo-list',
+        todos.map(li),
+        aiNodes.length > 0 && el('li.todo-sep', todos.length ? 'AI 요약이 찾은 할 일 — 위로 끌어 올리면 내 목록의 그 자리에' : 'AI 요약이 찾은 할 일 — 끌어서 순서를 정하면 내 목록이 됩니다'),
+        aiNodes);
+    sortable(list, open);
+    return el('div.todo-box', list, more,
         el('div.todo-add', input),
-        el('p.todo-hint', '다른 칸의 줄을 여기로 끌어 놓거나 줄의 [할 일로] 를 누르세요.'));
+        el('p.todo-hint', '줄을 끌어서 순서를 바꾸거나, 다른 칸의 줄을 여기로 끌어 놓으세요 (폰은 [할 일로]·▲▼).'));
+}
+
+// 꼭 할 일 목록 안에서 끌어 놓기: 내 목록 줄 사이에 파란 줄을 보여 주고, 놓으면 그 자리로
+function sortable(list, open) {
+    const unmark = () => list.querySelectorAll('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
+    const spot = e => {   // 놓을 자리: [기준 줄, 앞/뒤]
+        const anchors = [...list.querySelectorAll('li.todo[data-todo]:not(.done)')];
+        const li = e.target.closest('li.todo[data-todo]:not(.done)');
+        if (li) {
+            const r = li.getBoundingClientRect();
+            return [li, e.clientY < r.top + r.height / 2 ? 'before' : 'after'];
+        }
+        return anchors.length ? [anchors[anchors.length - 1], 'after'] : [null, 'after'];
+    };
+    list.addEventListener('dragover', e => {
+        const types = e.dataTransfer.types;
+        if (!types.includes(REORDER) && !types.includes(DRAG_TYPE)) return;
+        e.preventDefault();
+        e.stopPropagation();   // 칸 전체(dropZone)가 따로 받지 않게
+        e.dataTransfer.dropEffect = 'move';
+        unmark();
+        const [li, where] = spot(e);
+        li?.classList.add(`drop-${where}`);
+    });
+    list.addEventListener('dragleave', e => { if (!list.contains(e.relatedTarget)) unmark(); });
+    list.addEventListener('drop', e => {
+        const moving = e.dataTransfer.getData(REORDER);
+        const raw = e.dataTransfer.getData(DRAG_TYPE);
+        if (!moving && !raw) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const [li, where] = spot(e);
+        unmark();
+        const ids = open.filter(id => String(id) !== moving);
+        let at = li ? ids.indexOf(Number(li.dataset.todo)) : ids.length;
+        if (at < 0) at = ids.length;
+        else if (where === 'after') at += 1;
+        guarded(async () => {
+            let id = Number(moving);
+            if (!moving) {   // AI 요약 줄·다른 칸의 줄: 꼭 할 일로 만든 뒤 그 자리에
+                id = (await api.post('/api/todos', JSON.parse(raw))).id;
+                if (ids.includes(id)) ids.splice(ids.indexOf(id), 1);   // 이미 있던 같은 일정·자료
+                toast('꼭 할 일로 옮겼습니다');
+            }
+            ids.splice(Math.min(at, ids.length), 0, id);
+            await saveOrder(ids);
+        })();
+    });
 }
 
 // 요약 묶음들(전체 요약 + 그 뒤 '새로 들어온 것')을 한 벌의 칸으로 합침: 같은 줄은 하나만, 새 줄에는 '새' 표시.
@@ -214,9 +293,14 @@ function aiText(blocks, hiddenList = [], opts = {}) {
             r.refs.length ? el('span.ai-refs', r.refs.map(n => refChip(r, n))) : null,
             gone ? el('button.ai-x', { title: '되돌리기', onclick: () => setHidden(key, false) }, '↺')
                  : el('button.ai-x', { title: '이 줄 지우기 (끝났거나 필요 없음)', onclick: () => setHidden(key, true) }, '✕'));
+        const payload = { text: r.text, ...whenToDate(r.when), item_id: r.ids[r.refs[0] - 1] ?? null, origin: 'ai', hide_key: key };
         // 행사·회의·알아 둘 내용의 줄은 꼭 할 일로 끌어서 옮길 수 있음
-        if (s.cls !== 'todo' && !gone) {
-            movable(li, { text: r.text, ...whenToDate(r.when), item_id: r.ids[r.refs[0] - 1] ?? null, origin: 'ai', hide_key: key });
+        if (s.cls !== 'todo' && !gone) movable(li, payload);
+        // AI 가 찾은 꼭 할 일 줄은 끌어서 내 목록의 원하는 자리로
+        if (s.cls === 'todo' && opts.todo && !gone) {
+            li.draggable = true;
+            li.classList.add('movable');
+            li.addEventListener('dragstart', e => { e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(payload)); e.dataTransfer.effectAllowed = 'move'; });
         }
         return li;
     };
@@ -243,7 +327,8 @@ function aiText(blocks, hiddenList = [], opts = {}) {
             const left = rows.filter(r => !hidden.has(rowKey(s, r))).length;
             const sec = el('section', { className: `ai-sec ${s.cls}` },
                 el('h4', s.title, el('span.count', left + (mine ? openTodos : 0))),
-                mine && todoBox(), list || null, more || null);
+                // 꼭 할 일: 내 목록과 AI 줄을 한 목록으로 (직접 쓰기는 맨 아래)
+                mine ? todoBox(rows.slice(0, first).map(r => row(s, r)), more || null) : [list || null, more || null]);
             return mine ? dropZone(sec) : sec;
         }).filter(Boolean);
         clear(wrap,
@@ -271,12 +356,16 @@ function aiCard(todoCard) {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
     // 꼭 할 일: AI 요약이 보이면 요약의 '꼭 할 일' 칸 안에, 아니면 따로 카드로
     const standalone = on => { todoCard.hidden = !on; };
-    const show = (r, note) => {
+    // 요약을 만드는 동안에도 있던 요약은 그대로 두고, 위에 작은 진행 줄만 (5초마다 이 줄만 바꿈)
+    let progress = null;
+    const show = (r, note, running = false) => {
         const res = r.result;
         const updates = (res && res.updates) || [];
         const main = res && res.text && [res, ...updates].some(b => parseAi(b.text || '').length > 0);
         standalone(!main);
+        progress = running ? el('div.ai-progress') : null;
         clear(body,
+            progress,
             // 요약 뒤 새 자료 알림 (새 것만 요약하거나 전체 다시 요약)
             r.new_count && !r.running ? el('div.ai-new',
                 el('span', `요약 뒤 새 자료 ${r.new_count}건`),
@@ -295,9 +384,15 @@ function aiCard(todoCard) {
     // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
     let timer = null;
     const waiting = st => {
-        standalone(true);
         const sec = Math.max(0, Math.round((Date.now() - new Date(st.started_at.replace(' ', 'T'))) / 1000));
         const what = st.kind === 'new' ? '새로 들어온 자료를' : '지난 1주일 자료를';
+        if (st.result && st.result.text) {
+            if (!progress || !progress.isConnected) show(st, null, true);
+            clear(progress, el('span.spin'), `${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`,
+                el('span.muted', st.kind === 'new' ? ' · 끝나면 새 줄이 「새」 표시로 들어갑니다' : ' · 이 PC 에서 4~5분쯤 (최대 15분)'));
+            return;
+        }
+        standalone(true);   // 처음 요약: 보여 줄 것이 없으니 안내만
         clear(body,
             el('p.small', `${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
             el('p.small.muted', st.kind === 'new'
