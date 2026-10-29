@@ -358,7 +358,15 @@ label.check .hint { font-size: 0.8em; color: var(--muted); }
 dl.kvs { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; font-size: 0.88em; }
 dl.kvs dt { color: var(--muted); }
 dl.kvs dd { margin: 0; }
-.brief-actions { margin: 4px 0 16px; }
+.brief-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-bottom: 14px; }
+.brief-head h1 { margin: 0; font-size: 1.35em; white-space: nowrap; }
+.brief-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.brief-stats .stat { display: inline-flex; gap: 5px; align-items: baseline; padding: 3px 10px; border-radius: 99px; background: var(--surface); border: 1px solid var(--line); font-size: 0.85em; color: var(--muted); }
+.brief-stats .stat b { color: var(--ink); font-size: 1.1em; font-variant-numeric: tabular-nums; }
+.brief-stats .stat.bad { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
+.brief-stats .stat.bad b { color: var(--danger); }
+.brief-stats .stat.zero { opacity: .6; }
+.brief-actions { margin: 0; }
 .empty-strip { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); font-size: 0.88em; grid-column: 1 / -1; }
 .empty-strip b { color: var(--ink); font-weight: 600; margin-right: 4px; }
 .card > .row { margin-bottom: 12px; }
@@ -886,3 +894,4 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .tt-bell label.check { margin: 0; }
 .tt th.p small { font-weight: 500; font-size: 0.72em; }
 .lesson-time { color: var(--muted); font-size: 0.85em; font-variant-numeric: tabular-nums; min-width: 3em; }
+.ai-fresh { display: inline-block; margin-right: 5px; padding: 0 5px; border-radius: 4px; background: var(--accent); color: var(--accent-ink); font-size: 0.72em; font-weight: 800; vertical-align: 1px; cursor: help; }
