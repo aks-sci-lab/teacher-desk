@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from desk import extract
-from desk.collect import add_text_item, drop_admin_events, edufine_title, retitle_edufine
+from desk.collect import add_text_item, drop_admin_events, edufine_title, rescan_events, retitle_edufine
 from tests import test_server  # ServerTests 를 이름으로 가져오면 그 시험이 여기서 또 돔
 from tests.test_collect import Env
 
@@ -24,6 +24,15 @@ DOC = """울산광역시교육청
 시행 중등교육과-21035 (2026. 10. 28.) 접수 천상고등학교-13551 (2026. 10. 28.)
 기안 2026. 10. 27. 결재 2026. 10. 28.
 오늘이 행복한 울산교육"""
+LECTURE = """2026년 경제·금융교육 교원 역량 강화 특강이 있다고 합니다.
+가. 행사명: 2026년 경제·금융교육 교원 역량 강화 특강
+나. 강의 주제: 내지갑이 교과서가 되다
+다. 강사: 서해준(대한민국 교사 부자 재테크 저자)
+라. 일시: 2026. 12. 2.(수) 15:00~18:00
+마. 장소: 시교육청 3층 집현실
+사. 신청
+1) 기간: 2026. 11. 2.(월) 8:30~11. 13.(금) 17:00까지 ※ 선착순 60명 신청 마감
+2) 방법: 교육행정데이터통합관리시스템 입력(바로제출)"""
 STEM = "(천상고등학교-13551 (본문) 울산광역시교육청 중등교육과) [안내] 2026학년도 학점제형 교과교실제 운영 성과점검 계획"
 
 
@@ -48,6 +57,22 @@ class ExtractTests(unittest.TestCase):
         # 이름표 앞 줄에도 날짜가 있으면 그 줄 그대로
         a = extract.analyze("신청: 11월 2일\n마감: 11월 3일", ref=REF)
         self.assertEqual([e["text"] for e in a["events"]], ["신청: 11월 2일", "마감: 11월 3일"])
+
+    def test_label_lines_use_event_name(self):
+        """사용자 화면: '일시:' 가 '강사: … (일시)' 로, 시각이 끼인 신청 기간이 마감 둘로 나뉘던 것."""
+        evs = extract.analyze(LECTURE, ref=REF)["events"]
+        got = [(e["date"], e["end_date"], e["time"], e["kind"], e["text"]) for e in evs]
+        self.assertEqual(got, [
+            ("2026-12-02", None, "15:00", "event", "2026년 경제·금융교육 교원 역량 강화 특강"),
+            ("2026-11-02", "2026-11-13", "17:00", "deadline", "2026년 경제·금융교육 교원 역량 강화 특강 신청 기간"),
+        ])
+        self.assertEqual(evs[0]["category"], "연수")
+        # 행사는 끝에 시각이 없으면 시작 시각
+        e = extract.analyze("체험 캠프 11월 2일 9:00 ~ 11월 4일", ref=REF)["events"][0]
+        self.assertEqual((e["date"], e["end_date"], e["time"]), ("2026-11-02", "2026-11-04", "09:00"))
+        # 행사명이 없고 앞 줄이 다른 이름표면 그 줄 그대로
+        e = extract.analyze("강사: 홍길동\n일시: 11월 5일 14:00", ref=REF)["events"][0]
+        self.assertEqual(e["text"], "일시: 11월 5일 14:00")
 
     def test_event_context(self):
         ctx = extract.event_context(DOC, "2026-11-26", REF)
@@ -92,6 +117,27 @@ class CleanupTests(unittest.TestCase):
         db.execute("UPDATE items SET title = ? WHERE id = ?", (STEM, old))
         self.assertEqual(retitle_edufine(db), 0)
         self.assertEqual(drop_admin_events(db), 0)
+
+
+    def test_rescan_events_once(self):
+        db = self.env.db
+        a = add_text_item(db, "cool", LECTURE, title="특강", received_at="2026-10-28 09:00:00")["id"]
+        b = add_text_item(db, "cool", LECTURE + "\n붙임 1부.", title="특강 2", received_at="2026-10-28 09:00:00")["id"]
+        c = add_text_item(db, "cool", LECTURE + "\n붙임 2부.", title="특강 3", received_at="2026-10-28 09:00:00")["id"]
+        old = [("2026-11-02", "08:30"), ("2026-11-13", "17:00")]
+        for iid in (a, b, c):   # 예전 규칙: 신청 기간이 마감 둘로
+            db.execute("DELETE FROM events WHERE item_id = ?", (iid,))
+            for d, t in old:
+                db.execute("INSERT INTO events(item_id, date, time, kind, category, text) VALUES(?, ?, ?, 'deadline', '제출·마감', '기간')", (iid, d, t))
+        db.execute("UPDATE events SET done = 1 WHERE item_id = ? AND date = '2026-11-02'", (b,))   # 끝냄 표시
+        db.execute("UPDATE events SET date = '2026-11-12' WHERE item_id = ? AND date = '2026-11-13'", (c,))   # 날짜를 고침
+        self.assertEqual(rescan_events(db), 1)
+        self.assertEqual([r["date"] for r in db.query("SELECT date FROM events WHERE item_id = ? ORDER BY date", (a,))],
+                         ["2026-11-02", "2026-12-02"])
+        for iid in (b, c):
+            self.assertEqual(db.one("SELECT COUNT(*) AS n FROM events WHERE item_id = ?", (iid,))["n"], 2)
+            self.assertIsNone(db.one("SELECT end_date FROM events WHERE item_id = ? LIMIT 1", (iid,))["end_date"])
+        self.assertEqual(rescan_events(db), 0)   # 한 번만
 
 
 class ItemApiTests(unittest.TestCase):

@@ -715,31 +715,33 @@ ul.item-summary li::before { content: ""; position: absolute; left: 4px; top: 1e
 .dt { font-weight: 700; color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 3px; padding: 0 2px; }
 
 /* 일정 후보 카드 */
-.evcs { display: flex; flex-direction: column; gap: 10px; }
-.evc { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; gap: 14px; padding: 12px 14px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--surface); }
+.evcs { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.evc { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 8px 12px; border-left: 3px solid var(--accent); }
+.evc + .evc { border-top: 1px solid var(--line); }
 .evc.deadline { border-left-color: var(--c-deadline); }
 .evc.done { opacity: .55; }
 .evc.done .evc-text { text-decoration: line-through; }
-.evc-date { text-align: center; padding-top: 2px; }
-.evc-date .md { font-size: 1.6em; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-.evc.deadline .evc-date .md { color: var(--c-deadline); }
-.evc-date .wd { font-size: 0.85em; color: var(--muted); margin: 2px 0 4px; }
+.evc-when { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; padding-top: 1px; }
+.evc-when .md { font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; white-space: nowrap; }
+.evc.deadline .evc-when .md { color: var(--c-deadline); }
+.evc-time { font-size: 0.88em; font-weight: 700; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.evc-top { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.evc-text { font-weight: 700; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+.evc-ctx { display: block; width: 100%; margin-top: 2px; padding: 0; border: 0; background: none; text-align: left; font: inherit; font-size: 0.84em; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.evc-ctx:hover { color: var(--ink); }
+.evc-ctx .c-from { margin-right: 6px; padding: 0 5px; border-radius: 4px; background: var(--surface-2); font-size: 0.92em; }
+.evc-ctx .dt { font-weight: 700; color: inherit; }
+.evc-tools { display: flex; gap: 2px; align-items: center; }
 .dday { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 0.78em; font-weight: 700; background: var(--surface-2); color: var(--muted); }
 .dday.soon { background: var(--danger-soft); color: var(--danger); }
 .dday.past { text-decoration: line-through; }
-.evc-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; }
 .kind { font-size: 0.78em; font-weight: 800; padding: 0 7px; border-radius: 4px; line-height: 1.7; }
 .kind.deadline { background: var(--c-deadline); color: #fff; }
 .kind.event { background: var(--accent); color: var(--accent-ink); }
-.evc-time { display: inline-flex; gap: 3px; align-items: center; font-size: 0.85em; font-weight: 700; color: var(--ink); }
-.evc-text { font-size: 1.05em; font-weight: 700; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
-.evc-ctx { margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: var(--surface-2); font-size: 0.88em; line-height: 1.55; }
-.evc-ctx .c-side { color: var(--muted); white-space: pre-wrap; }
-.evc-ctx .c-line { white-space: pre-wrap; }
 button.link { border: 0; background: none; padding: 0; margin-top: 4px; color: var(--accent); cursor: pointer; font-size: 0.95em; }
 button.link:hover { text-decoration: underline; }
-.evc-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.evc-tools .done { display: flex; gap: 4px; align-items: center; font-size: 0.85em; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.evc-tools input { margin: 0 6px 0 0; cursor: pointer; }
 .evc-tools .icon-btn { color: var(--muted); }
 .evc-tools .icon-btn:hover { color: var(--ink); }
 .evc-edit { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 10px; }
@@ -772,8 +774,8 @@ iframe.pdf { display: block; width: 100%; height: calc(100vh - 140px); border: 0
     .modal-back { padding: 0; }
     .modal, .modal.wide { width: 100%; max-height: 100vh; height: 100%; border-radius: 0; }
     .raw-text { padding: 14px 16px 24px; }
-    .evc { grid-template-columns: 64px minmax(0, 1fr); }
-    .evc-tools { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+    .evc { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
+    .evc-when { grid-column: 1 / -1; }
     .evc-edit { grid-template-columns: 1fr 1fr; }
     .item-actions .btn.danger { margin-left: 0; }
 }

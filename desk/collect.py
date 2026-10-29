@@ -47,9 +47,10 @@ def add_text_item(db, source, text, title=None, received_at=None, file_path=None
 
 # 윈도우가 파일 열기 자체를 거절할 때의 까닭 (파일 특성 값: OneDrive 등 '클라우드에만 있는 파일')
 CLOUD_ATTRS = 0x400000 | 0x40000 | 0x1000   # RECALL_ON_DATA_ACCESS · RECALL_ON_OPEN · OFFLINE
-CLOUD_REASON = ("클라우드(Synology Drive·OneDrive 등)에만 있고 이 PC 에는 내려받지 않은 파일입니다. "
-                "파일 탐색기에서 폴더를 마우스 오른쪽 → 'Synology Drive → 로컬에 유지(고정)' 또는 "
-                "OneDrive '항상 이 장치에 유지'를 누르거나, 동기화 프로그램이 켜져 있는지 확인하세요")
+CLOUD_REASON = ("이름만 있고 내용은 이 PC 에 없는 파일입니다 (Synology Drive·OneDrive 같은 동기화 프로그램이 남긴 자리 표시). "
+                "동기화 프로그램을 지웠다면 이 파일들은 껍데기라 읽을 수 없습니다 → NAS·클라우드 웹 화면에서 폴더를 내려받아 "
+                "보통 폴더(예: 문서\\공문)에 두고 그 폴더를 지정하세요. 아직 쓰고 있다면 폴더를 마우스 오른쪽 → "
+                "'Synology Drive → 로컬에 유지(고정)' 또는 OneDrive '항상 이 장치에 유지'를 누르세요")
 BLOCKED_REASON = "윈도우가 파일 열기를 막았습니다. 문서보안(DRM)·백신 프로그램이 막았거나, 클라우드에만 있는 파일일 수 있습니다"
 # 윈도우 클라우드 파일 오류 번호 (파이썬은 모르는 번호를 모두 'Invalid argument' 로 보여 줌)
 CLOUD_PROVIDER_OFF = 362          # ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING
@@ -267,6 +268,44 @@ def cool_text(m):
     return m["body"] + (f"\n\n(보낸 사람: {m['sender']})" if m["sender"] else "")
 
 
+EVENT_RULES = 1   # 일정 찾기 규칙이 바뀌면 올림 (0.5.21: 시각이 끼인 기간 하나로, 이름표 줄은 행사명으로)
+
+
+def rescan_events(db):
+    """일정 찾기 규칙이 바뀌면 예전 일정 후보를 한 번 다시 찾음.
+    달력에 넣지 않았고, 일정을 하나도 손대지 않은(끝냄·AI·직접 더함 없음, 날짜가 원문에 있는) 항목만."""
+    if (db.get_meta("event_rules") or 0) >= EVENT_RULES:
+        return 0
+    items = db.query("SELECT id, title, body, received_at FROM items WHERE registered = 0 AND source != 'school'")
+    events = {}
+    for e in db.query("SELECT item_id, date, end_date, time, kind, category, text, done, source FROM events "
+                      "WHERE item_id IS NOT NULL ORDER BY id"):
+        events.setdefault(e["item_id"], []).append(e)
+    changed = 0
+    for it in items:
+        old = events.get(it["id"])
+        body = it["body"] or ""
+        if not old or any(e["done"] or e["source"] for e in old):
+            continue
+        try:
+            ref = datetime.strptime(it["received_at"][:10], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        found = {x.isoformat() for line in body.splitlines() for _, _, d, end in extract.find_dates(line, ref)
+                 for x in (d, end) if x}
+        if any(e["date"] not in found for e in old):
+            continue  # 날짜를 손으로 고친 일정이 있음
+        new = extract.analyze(body, ref=ref, title=it["title"])["events"]
+        shape = lambda es: sorted((e["date"], e.get("end_date"), e.get("time"), e["kind"], e["text"]) for e in es)
+        if new and shape(new) != shape(old):
+            db.replace_events(it["id"], new)
+            changed += 1
+    db.set_meta("event_rules", EVENT_RULES)
+    if changed:
+        db.log(f"일정 후보 {changed}건을 새 규칙으로 다시 찾았습니다 (달력에 넣지 않은 것만)")
+    return changed
+
+
 def reclean_cool_items(db, path):
     """글 정리 방식이 바뀌면 이미 받은 쿨메신저 쪽지를 한 번 다시 정리 (일정은 달력에 넣지 않은 것만 다시 찾음)."""
     key = f"cool_clean:{path}"
@@ -357,6 +396,7 @@ class Collector:
                 try:
                     retitle_edufine(self.db)
                     drop_admin_events(self.db)
+                    rescan_events(self.db)
                 except Exception as e:  # 예전 자료 정리가 실패해도 수집은 계속
                     stats["errors"].append(f"예전 자료 정리 실패: {e}")
                 for source, key in SOURCES.items():
@@ -398,7 +438,7 @@ def diagnose(folder, limit=200):
     if not folder.is_dir():
         return {"error": f"폴더를 찾을 수 없습니다: {folder}"}
     by_ext, files, dbs = {}, [], []
-    supported = cloud = 0
+    supported = cloud = local_supported = 0
     for root, dirs, names in os.walk(folder):
         for name in names:
             p = Path(root) / name
@@ -409,6 +449,7 @@ def diagnose(folder, limit=200):
             is_cloud = bool(getattr(st, "st_file_attributes", 0) & CLOUD_ATTRS)
             cloud += is_cloud
             supported += p.suffix.lower() in SUPPORTED
+            local_supported += p.suffix.lower() in SUPPORTED and not is_cloud
             ext = p.suffix.lower() or "(없음)"
             e = by_ext.setdefault(ext, {"count": 0, "bytes": 0})
             e["count"] += 1
@@ -422,7 +463,7 @@ def diagnose(folder, limit=200):
     files.sort(key=lambda f: f["modified"], reverse=True)
     total = sum(e["count"] for e in by_ext.values())
     return {"folder": str(folder), "total": total, "supported": supported, "cloud_only": cloud,
-            "cloud_hint": CLOUD_REASON if cloud else None,
+            "local_supported": local_supported, "cloud_hint": CLOUD_REASON if cloud else None,
             "extensions": by_ext, "recent_files": files[:60], "databases": dbs,
             "note": "파일 이름·크기·형식과 데이터베이스의 표·열 이름만 담았습니다. 메시지 내용은 없습니다."}
 

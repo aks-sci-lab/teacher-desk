@@ -21,7 +21,7 @@ function pathField(key, label, hint, purpose, placeholder = '') {
             const r = await api.post('/api/pick', { purpose });
             if (r.path) {
                 input.value = r.path;
-                input.dispatchEvent(new Event('change'));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
             }
         } finally {
             browse.disabled = false;
@@ -41,12 +41,36 @@ function section(title, ...children) {
     return el('section.card', { style: 'margin-bottom: 16px' }, el('h3', title), children);
 }
 
+function fieldValue(input) {
+    if (input.type === 'checkbox') return input.checked;
+    if (input.dataset.key === 'collect_times') return input.value.split(',').map(t => t.trim()).filter(Boolean);
+    return input.value;
+}
+
 function collectForm(pane) {
     const out = {};
-    for (const input of pane.querySelectorAll('[data-key]')) {
-        out[input.dataset.key] = input.type === 'checkbox' ? input.checked : input.value;
-    }
+    for (const input of pane.querySelectorAll('[data-key]')) out[input.dataset.key] = fieldValue(input);
     return out;
+}
+
+// 칸을 고치고 다른 곳을 누르면(또는 Enter) 그 칸만 바로 저장 — [설정 저장] 을 잊어도 남게 (사용자 지적: 저장 안 됨)
+function autoSave(pane) {
+    if (pane.dataset.autosave) return;   // 다시 그려도 같은 pane 이라 한 번만
+    pane.dataset.autosave = '1';
+    pane.addEventListener('change', guarded(async ev => {
+        const input = ev.target.closest?.('[data-key]');
+        if (!input || !pane.contains(input)) return;
+        const key = input.dataset.key;
+        const label = input.closest('.field, .check')?.querySelector('span')?.textContent || '설정';
+        try {
+            await saveSettings({ [key]: fieldValue(input) });
+        } finally {
+            delete pane.dataset.dirty;
+        }
+        loadState();
+        toast(`${label} 저장됨`, 'info', 1800);
+    }));
+    pane.addEventListener('input', () => { pane.dataset.dirty = '1'; });
 }
 
 function renderSettings(pane, tab) {
@@ -120,10 +144,10 @@ function renderSettings(pane, tab) {
 
     const save = guarded(async () => {
         const change = collectForm(pane);
-        change.collect_times = change.collect_times.split(',').map(t => t.trim()).filter(Boolean);
         if (token.value.trim()) change.telegram_token = token.value.trim();
         if (neisKey.value.trim()) change.neis_key = neisKey.value.trim();
         await saveSettings(change);
+        delete pane.dataset.dirty;
         await loadState();
         toast('설정을 저장했습니다');
         tab.rerender();
@@ -141,7 +165,12 @@ function renderSettings(pane, tab) {
         if (r.error) return clear(diagBox, el('p', { style: 'color: var(--danger)' }, r.error));
         clear(diagBox,
             el('p', { style: 'font-weight: 700' }, `${r.folder}: 파일 ${r.total}개 (읽는 형식 ${r.supported}개)`),
-            r.cloud_only ? el('p', { style: 'color: var(--danger)' }, `그중 ${r.cloud_only}개는 ${r.cloud_hint}`) : el('p.small', { style: 'color: var(--ok)' }, '모든 파일이 이 PC 에 있습니다.'),
+            r.cloud_only
+                ? el('div',
+                    el('p', { style: 'color: var(--ok)' }, `이 PC 에 있는 공문 파일 ${r.local_supported ?? 0}개는 그대로 읽습니다. 새로 저장하는 공문도 읽습니다.`),
+                    el('p', { style: 'color: var(--danger)' }, `나머지 ${r.cloud_only}개는 ${r.cloud_hint}`),
+                    el('p.small.muted', '읽을 수 없는 파일은 한 번 기록해 두고 다시 시도하지 않으므로 업무 데스크가 느려지지는 않습니다.'))
+                : el('p.small', { style: 'color: var(--ok)' }, '모든 파일이 이 PC 에 있습니다.'),
             !r.saved ? el('p.small', { style: 'color: var(--warn)' }, '아직 저장하지 않은 경로입니다. 아래 💾 설정 저장을 눌러야 이 폴더를 수집합니다.') : '',
             el('details', el('summary.small', '자세한 결과 (개발 담당용)'),
             el('p.small', '아래 결과에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 쿨메신저 전용 읽기 기능을 만들 때 이 결과를 Claude Code 에게 전달하세요.'),
@@ -229,7 +258,9 @@ function renderSettings(pane, tab) {
             el('p.small', '목록 패널 위치·글자 크기·색상을 바꾸고, 바꾸고 싶은 곳을 번호로 Claude Code 에게 전달할 수 있습니다.'),
             el('button.btn', { onclick: toggleLayoutMode }, '화면 배치 모드 열기')),
         el('div.row', { style: 'position: sticky; bottom: 0; background: var(--surface); padding: 10px 0' },
-            el('button.btn.primary', { onclick: save }, '설정 저장')));
+            el('button.btn.primary', { onclick: save }, '설정 저장'),
+            el('span.small.muted', '칸을 고치면 바로 저장됩니다. 텔레그램 토큰·나이스 인증키는 이 단추로 저장하세요.')));
+    autoSave(pane);
 }
 
 export function openSettings() {
@@ -249,7 +280,7 @@ registerView({
 on('state', () => {
     // 텔레그램 연결 상태가 바뀌면 설정 화면을 새로 그림 (입력 중일 때는 건드리지 않음)
     const tab = findTab('settings');
-    if (tab && !tab.pane.contains(document.activeElement)) {
+    if (tab && !tab.pane.contains(document.activeElement) && !tab.pane.dataset.dirty) {
         const linked = tab.pane.dataset.linked;
         const now = String(!!store.state.telegram.linked) + store.state.telegram.status;
         if (linked !== undefined && linked !== now) tab.rerender();

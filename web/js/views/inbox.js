@@ -191,7 +191,7 @@ function renderItem(pane, tab, it) {
         it.events.length
             ? el('div.evcs', it.events.map(e => eventCard(e, it, tab)))
             : el('p.muted', '글에서 날짜를 찾지 못했습니다. 필요하면 ＋ 일정 추가로 직접 넣으세요.'),
-        !it.registered && open > 0 && el('p.small.muted', '맞으면 위의 [일정 등록] 을 누르거나 수신함 목록에서 체크하세요. 틀린 것은 고치거나 지우면 됩니다.'));
+        !it.registered && open > 0 && el('p.small.muted', '맞으면 위의 [일정 등록] 또는 수신함 목록에서 체크. 틀린 것은 ✎ 고치기·지우기.'));
 
     // ---- 내용 요약
     const sumSec = el('section.item-sec',
@@ -221,7 +221,7 @@ function renderItem(pane, tab, it) {
     pane.append(el('div.item-view', head, el('div.item-grid', el('div.item-main', evSec, sumSec), side)));
 }
 
-// 일정 후보 하나: 날짜를 크게(D-day), 무엇인지, 원문 어느 줄에서 찾았는지. ✎ 로 고치기
+// 일정 후보 한 줄 (사용자 지적: 카드가 커서 비효율): 날짜·시각·D-day | 내용·분류 | 원문 한 줄 | 끝냄·고치기·지우기
 function eventCard(e, it, tab) {
     const card = el('div', { className: `evc ${e.kind}${e.done ? ' done' : ''}` });
     const save = guarded(async change => {
@@ -229,28 +229,28 @@ function eventCard(e, it, tab) {
         emit('data-changed');
         tab.rerender();
     });
-    const d = parseIso(e.date);
-    const dd = ddayInfo(e.date);
+    const short = iso => { const d = parseIso(iso); return `${d.getMonth() + 1}.${d.getDate()}(${WD[d.getDay()]})`; };
+    // 마감 기간은 끝 날짜까지 남은 날, 행사 기간은 진행 중이면 '진행 중'
+    const today = todayIso();
+    const dd = e.end_date && e.date <= today && today <= e.end_date && e.kind !== 'deadline'
+        ? { label: '진행 중', cls: 'soon' } : ddayInfo(e.kind === 'deadline' && e.end_date ? e.end_date : e.date);
+    const time = e.time ? (e.kind === 'deadline' ? `${e.time}까지` : e.time) : (e.kind === 'deadline' ? '까지' : '');
+    const ctx = e.context;
     const view = () => clear(card,
-        el('div.evc-date',
-            el('div.md', `${d.getMonth() + 1}.${d.getDate()}`),
-            el('div.wd', `${WD[d.getDay()]}요일`),
+        el('div.evc-when',
+            el('span.md', short(e.date) + (e.end_date ? `~${short(e.end_date)}` : '')),
+            time && el('span.evc-time', time),
             !e.done && el('span', { className: `dday ${dd.cls}` }, dd.label)),
         el('div.evc-body',
             el('div.evc-top',
                 el('span', { className: `kind ${e.kind}` }, e.kind === 'deadline' ? '마감' : '일정'),
+                el('span.evc-text', e.text),
                 catBadge(e.category),
-                e.time && el('span.evc-time', icon('clock'), e.time),
-                e.end_date && el('span.evc-time', `~ ${dayLabel(e.end_date, false)} 까지`),
                 e.source === 'ai' && el('span.ai-mark', { title: '브리핑 AI 요약에서 찾은 일정입니다' }, icon('spark'), 'AI')),
-            el('div.evc-text', e.text),
-            e.context && el('div.evc-ctx', { title: '원문에서 이 날짜가 나온 곳' },
-                e.context.before && el('div.c-side', e.context.before),
-                el('div.c-line', markDates(e.context.line)),
-                e.context.after && el('div.c-side', e.context.after),
-                el('button.link', { onclick: () => openOriginal(it, { line: e.context.index }) }, '원문에서 보기 →'))),
+            ctx && el('button.evc-ctx', { title: [ctx.before, ctx.line, ctx.after].filter(Boolean).join('\n') + '\n\n누르면 원문에서 이 줄을 보여 줍니다',
+                onclick: () => openOriginal(it, { line: ctx.index }) }, el('span.c-from', '원문'), markDates(ctx.line))),
         el('div.evc-tools',
-            el('label.done', { title: '끝냄 표시' }, el('input', { type: 'checkbox', checked: !!e.done, onchange: ev => save({ done: ev.target.checked }) }), '끝냄'),
+            el('input', { type: 'checkbox', title: '끝냄 표시', checked: !!e.done, onchange: ev => save({ done: ev.target.checked }) }),
             el('button.icon-btn', { title: '고치기', onclick: edit }, icon('edit')),
             el('button.icon-btn', { title: '이 일정 지우기', onclick: guarded(async () => {
                 await api.del(`/api/events/${e.id}`);
