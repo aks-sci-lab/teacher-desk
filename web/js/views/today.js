@@ -161,9 +161,36 @@ function todoBox() {
         el('p.todo-hint', '다른 칸의 줄을 여기로 끌어 놓거나 줄의 [할 일로] 를 누르세요.'));
 }
 
-function aiText(text, ids = [], hiddenList = [], opts = {}) {
-    const sections = parseAi(text);
-    if (!sections.length) return el('div.ai-text', text);   // 형식이 다르면 글 그대로
+// 요약 묶음들(전체 요약 + 그 뒤 '새로 들어온 것')을 한 벌의 칸으로 합침: 같은 줄은 하나만, 새 줄에는 '새' 표시.
+// blocks: [{ text, ids, fresh: 'HH:MM' | null }] (새 것 먼저)
+function mergeAi(blocks) {
+    const byCls = new Map(AI_KINDS.map(k => [k.cls, { ...k, rows: [] }]));
+    const seen = new Set();
+    let parsed = 0;
+    for (const b of blocks) {
+        const secs = parseAi(b.text || '');
+        parsed += secs.length;
+        for (const s of secs) {
+            for (const r of s.rows) {
+                const key = rowKey(s, r);
+                if (seen.has(key)) continue;
+                seen.add(key);
+                byCls.get(s.cls).rows.push({ ...r, ids: b.ids || [], fresh: b.fresh || null });
+            }
+        }
+    }
+    // 할 일·행사는 날짜 순 (날짜 없는 것은 뒤), 알아 둘 내용은 새 것 먼저
+    const order = r => whenToDate(r.when).date || '9999';
+    for (const s of byCls.values()) {
+        if (s.cls === 'note') s.rows.sort((a, b) => !!b.fresh - !!a.fresh);
+        else s.rows.sort((a, b) => order(a).localeCompare(order(b)));
+    }
+    return parsed ? [...byCls.values()] : [];
+}
+
+function aiText(blocks, hiddenList = [], opts = {}) {
+    const sections = mergeAi(blocks);
+    if (!sections.length) return el('div.ai-text', blocks.map(b => b.text).filter(Boolean).join('\n\n'));   // 형식이 다르면 글 그대로
     const hidden = new Set(hiddenList);
     let showHidden = false;
     const wrap = el('div');
@@ -172,8 +199,8 @@ function aiText(text, ids = [], hiddenList = [], opts = {}) {
         if (hide) hidden.add(key); else hidden.delete(key);
         draw();
     });
-    const refChip = n => {
-        const id = ids[n - 1];
+    const refChip = (r, n) => {
+        const id = r.ids[n - 1];
         return id ? el('a.ai-ref', { href: '#', title: '이 자료 열기', onclick: e => { e.preventDefault(); openItem(id); } }, n)
                   : el('span.ai-ref', n);
     };
@@ -183,13 +210,13 @@ function aiText(text, ids = [], hiddenList = [], opts = {}) {
         const gone = hidden.has(key);
         const li = el('li.ai-row', { className: gone ? 'ai-row gone' : 'ai-row' },
             r.when ? el('span.ai-when', r.when, dd && el('span.ai-dday', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
-            el('span.ai-txt', r.text),
-            r.refs.length ? el('span.ai-refs', r.refs.map(refChip)) : null,
+            el('span.ai-txt', r.fresh && el('span.ai-fresh', { title: `${r.fresh} 에 새로 들어온 자료` }, '새'), r.text),
+            r.refs.length ? el('span.ai-refs', r.refs.map(n => refChip(r, n))) : null,
             gone ? el('button.ai-x', { title: '되돌리기', onclick: () => setHidden(key, false) }, '↺')
                  : el('button.ai-x', { title: '이 줄 지우기 (끝났거나 필요 없음)', onclick: () => setHidden(key, true) }, '✕'));
         // 행사·회의·알아 둘 내용의 줄은 꼭 할 일로 끌어서 옮길 수 있음
         if (s.cls !== 'todo' && !gone) {
-            movable(li, { text: r.text, ...whenToDate(r.when), item_id: ids[r.refs[0] - 1] ?? null, origin: 'ai', hide_key: key });
+            movable(li, { text: r.text, ...whenToDate(r.when), item_id: r.ids[r.refs[0] - 1] ?? null, origin: 'ai', hide_key: key });
         }
         return li;
     };
@@ -197,6 +224,7 @@ function aiText(text, ids = [], hiddenList = [], opts = {}) {
         let hiddenHere = 0;
         // 꼭 할 일로 옮긴 줄은 '지운 줄' 이 아님 (꼭 할 일에서 지우면 되돌아옴)
         const moved = new Set(todos.map(t => t.hide_key).filter(Boolean));
+        const openTodos = todos.filter(t => !t.done).length;
         const secs = sections.map(s => {
             const rows = s.rows.filter(r => {
                 if (moved.has(rowKey(s, r))) return false;
@@ -204,26 +232,22 @@ function aiText(text, ids = [], hiddenList = [], opts = {}) {
                 hiddenHere += gone;
                 return showHidden || !gone;
             });
-            if (!rows.length) return null;
+            const mine = s.cls === 'todo' && opts.todo;
+            if (!rows.length && !mine) return null;   // 비거나 다 지운 칸은 숨김
             const first = showHidden ? rows.length : (SHOW_FIRST[s.cls] ?? 6);
-            const list = el('ul.ai-list', rows.slice(0, first).map(r => row(s, r)));
+            const list = rows.length > 0 && el('ul.ai-list', rows.slice(0, first).map(r => row(s, r)));
             const more = rows.length > first && el('button.btn.small.ai-more', { onclick: () => {
                 list.append(...rows.slice(first).map(r => row(s, r)));
                 more.remove();
             } }, `더 보기 (${rows.length - first})`);
             const left = rows.filter(r => !hidden.has(rowKey(s, r))).length;
-            const mine = s.cls === 'todo' && opts.todo;
             const sec = el('section', { className: `ai-sec ${s.cls}` },
-                el('h4', s.title, el('span.count', left + (mine ? todos.filter(t => !t.done).length : 0))),
-                mine && todoBox(), list, more || null);
+                el('h4', s.title, el('span.count', left + (mine ? openTodos : 0))),
+                mine && todoBox(), list || null, more || null);
             return mine ? dropZone(sec) : sec;
-        });
-        // 요약에 꼭 할 일 칸이 없어도 직접 넣은 할 일 칸은 맨 앞에
-        if (opts.todo && !sections.some(s => s.cls === 'todo' && secs[sections.indexOf(s)])) {
-            secs.unshift(dropZone(el('section.ai-sec.todo', el('h4', '꼭 할 일', el('span.count', todos.filter(t => !t.done).length)), todoBox())));
-        }
+        }).filter(Boolean);
         clear(wrap,
-            el('div.ai-sections', secs.filter(Boolean).length ? secs : el('p.muted.small', '모두 지웠습니다.')),
+            el('div.ai-sections', secs.length ? secs : el('p.muted.small', '모두 지웠습니다.')),
             hiddenHere ? el('button.btn.small.ai-hidden-toggle', { onclick: () => { showHidden = !showHidden; draw(); } },
                 showHidden ? '지운 줄 감추기' : `지운 줄 ${hiddenHere}개 보기`) : '');
     };
@@ -250,7 +274,7 @@ function aiCard(todoCard) {
     const show = (r, note) => {
         const res = r.result;
         const updates = (res && res.updates) || [];
-        const main = res && res.text && parseAi(res.text).length > 0;
+        const main = res && res.text && [res, ...updates].some(b => parseAi(b.text || '').length > 0);
         standalone(!main);
         clear(body,
             // 요약 뒤 새 자료 알림 (새 것만 요약하거나 전체 다시 요약)
@@ -258,12 +282,12 @@ function aiCard(todoCard) {
                 el('span', `요약 뒤 새 자료 ${r.new_count}건`),
                 el('button.btn.small.primary', { onclick: () => run('new') }, '새 것만 요약'),
                 el('button.btn.small', { onclick: () => run('full') }, '전체 다시 요약')) : '',
-            // 덧붙인 '새로 들어온 것' (최근 것 먼저)
-            updates.map(u => el('div.ai-update',
-                el('h4', `새로 들어온 것 · ${u.at.slice(11)} · ${u.used ?? u.count}건`),
-                aiText(u.text, u.ids, r.hidden))),
-            res && res.text ? aiText(res.text, res.ids, r.hidden, { todo: main }) : el('p.muted.small', '아직 요약이 없습니다.'),
-            res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}${res.model ? ' · ' + res.model : ''}`) : null,
+            // 전체 요약 + 그 뒤 '새로 들어온 것' 들을 한 벌의 칸으로 (새 줄에는 '새' 표시)
+            res && res.text ? aiText([...updates.map(u => ({ text: u.text, ids: u.ids, fresh: u.at.slice(11, 16) })),
+                { text: res.text, ids: res.ids }], r.hidden, { todo: main }) : el('p.muted.small', '아직 요약이 없습니다.'),
+            res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}`
+                + (updates.length ? ` · 그 뒤 새 자료 ${updates.reduce((n, u) => n + (u.used ?? u.count ?? 0), 0)}건 덧붙임 (${updates.map(u => u.at.slice(11, 16)).reverse().join('·')})` : '')
+                + `${res.model ? ' · ' + res.model : ''}`) : null,
             appliedNote(res, updates),
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
             el('div.row', el('button.btn.small', { onclick: () => run('full') }, '전체 다시 요약')));
@@ -351,13 +375,19 @@ function renderToday(pane) {
         todoCard.classList.remove('empty-card');   // 비어도 놓을 자리는 보이게
         todoCard.hidden = true;
         pane.append(
-            el('h1', `${longDate(todayIso())}`),
-            el('p.sub', `${store.settings.teacher_name ? store.settings.teacher_name + ' 선생님, ' : ''}오늘 할 일을 모았습니다.`),
-            el('div.row.brief-actions',
-                el('button.btn', { onclick: () => openForm({ kind: 'early' }) }, icon('passes'), '조퇴증'),
-                el('button.btn', { onclick: () => openForm({ kind: 'out' }) }, icon('passes'), '외출증'),
-                el('button.btn', { onclick: openPaste }, icon('plus'), '메시지 붙여넣기'),
-                el('button.btn', { onclick: collectNow }, icon('refresh'), '지금 수집')),
+            // 머리: 날짜 · 오늘 숫자 · 단추를 한 줄에 (빈 곳 없이)
+            el('div.brief-head',
+                el('h1', longDate(todayIso())),
+                el('div.brief-stats', [
+                    ['지난 마감', s.overdue.length, 'bad'], ['7일 안 마감', s.week_deadlines.length, ''], ['오늘 일정', s.today.length, ''],
+                    ['꼭 할 일', todos.filter(t => !t.done).length, ''], ['새 자료', s.new_items.length, ''], ['조퇴·외출', s.passes.length, ''],
+                ].filter(([, n]) => n > 0).map(([label, n, cls]) => el('span', { className: `stat${cls ? ' ' + cls : ''}` }, el('b', n), label))),   // 0 인 것은 아래 '없음' 줄에
+                el('span.spacer'),
+                el('div.row.brief-actions',
+                    el('button.btn.small', { onclick: () => openForm({ kind: 'early' }) }, icon('passes'), '조퇴증'),
+                    el('button.btn.small', { onclick: () => openForm({ kind: 'out' }) }, icon('passes'), '외출증'),
+                    el('button.btn.small', { onclick: openPaste }, icon('plus'), '붙여넣기'),
+                    el('button.btn.small', { onclick: collectNow }, icon('refresh'), '지금 수집'))),
             // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
             el('div.brief', aiCard(todoCard), withEmptyStrip(el('div.cards',
                 todoCard,

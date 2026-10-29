@@ -142,3 +142,30 @@ class TelegramMoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BriefMergeTests(unittest.TestCase):
+    def test_updates_merge_into_one_summary(self):
+        env = Env()
+        try:
+            db = env.db
+            db.set_meta("ai_weekly", {"at": "2026-10-29 08:00", "ids": [11, 12], "text":
+                "## 꼭 할 일\n- 11/06(금) · 계획서 제출 [1]\n## 알아 둘 내용\n- 상시 · 급식 메뉴 변경 [2]",
+                "updates": [
+                    {"at": "2026-10-29 10:38", "ids": [13], "text": "## 꼭 할 일\n- 11/02(월) · 연수 신청 [1]\n- 11/06(금) · 계획서 제출 [1]"},
+                    {"at": "2026-10-29 10:20", "ids": [14], "text": "## 알아 둘 내용\n- 상시 · 지운 줄 [1]"},
+                ]})
+            db.set_meta("ai_hidden", ["note|상시|지운줄"])
+            text = Bot(db, env.config).brief_text(date(2026, 10, 29))
+            self.assertEqual(text.count("━━"), 2)                          # 머리는 하나 (예전엔 묶음마다)
+            self.assertIn("(+새 자료 2번)", text)
+            todo = text[text.index("■ 꼭 할 일"):text.index("■ 알아 둘 내용")]
+            self.assertLess(todo.index("연수 신청"), todo.index("계획서 제출"))   # 날짜 순으로 합침
+            self.assertEqual(text.count("계획서 제출"), 1)                     # 같은 줄은 하나만
+            self.assertIn("- (새) 11/02(월) · 연수 신청 [1]", text)
+            self.assertNotIn("지운 줄", text)
+            # 다 지웠으면 빈 머리 대신 한 줄
+            db.set_meta("ai_hidden", ["todo|11/06(금)|계획서제출", "todo|11/02(월)|연수신청", "note|상시|급식메뉴변경", "note|상시|지운줄"])
+            self.assertIn("(AI 요약은 모두 지웠습니다)", Bot(db, env.config).brief_text(date(2026, 10, 29)))
+        finally:
+            env.close()

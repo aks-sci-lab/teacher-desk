@@ -430,33 +430,41 @@ class Bot:
         res = self.db.get_meta("ai_weekly") or {}   # weekly_summary 가 저장한 요약 그대로 ({at, text, ids, updates})
         hidden = set(self.db.get_meta("ai_hidden", []))
         refs = res.get("ids") or []
-        blocks = [(u.get("text", ""), u.get("ids") or [], f"새로 들어온 것 · {u.get('at', '')[11:16]}") for u in (res.get("updates") or [])]
+        # 전체 요약과 그 뒤 '새로 들어온 것' 들을 한 벌로 합침 (같은 줄은 하나만, 새 줄은 '(새)') — 화면과 같음
+        blocks = [(u.get("text", ""), u.get("ids") or [], True) for u in (res.get("updates") or [])]
         if res.get("text"):
-            blocks.append((res["text"], refs, f"지난 1주일 요약 · {res.get('at', '')[5:16]}"))
-        if not blocks:
-            lines.append("\n(AI 요약 없음 — 업무 데스크 브리핑에서 만들어집니다)")
-            self.set_refs(refs)
-            return "\n".join(lines)
-        all_refs = []
-        heads = {"todo": "■ 꼭 할 일", "event": "■ 행사·회의", "note": "■ 알아 둘 내용"}
-        for text, ids, title in blocks:
-            lines.append(f"\n━━ {title} ━━")
-            last = None
+            blocks.append((res["text"], refs, False))
+        merged = {"todo": [], "event": [], "note": []}
+        seen = set()
+        for text, ids, fresh in blocks:
             for kind, when, what, nums in ai.parse_summary(text):
                 key = re.sub(r"\s+", "", f"{kind}|{when}|{what}")
-                if key in hidden:
+                if key in hidden or key in seen:
                     continue
-                if kind != last:
-                    lines.append(heads[kind])
-                    last = kind
-                # 자료 번호는 이 메시지 안에서 하나로 이어지게 다시 매김
-                marks = []
-                for n in nums:
-                    if 0 < n <= len(ids):
-                        if ids[n - 1] not in all_refs:
-                            all_refs.append(ids[n - 1])
-                        marks.append(str(all_refs.index(ids[n - 1]) + 1))
-                lines.append(f"- {when + ' · ' if when else ''}{what}{' [' + ','.join(marks) + ']' if marks else ''}")
+                seen.add(key)
+                merged[kind].append((when, what, [ids[n - 1] for n in nums if 0 < n <= len(ids)], fresh))
+        if not any(merged.values()):
+            lines.append("\n(AI 요약 없음 — 업무 데스크 브리핑에서 만들어집니다)" if not blocks else "\n(AI 요약은 모두 지웠습니다)")
+            self.set_refs(refs)
+            return "\n".join(lines)
+        for kind in ("todo", "event"):   # 할 일·행사는 날짜 순 (날짜 없는 것은 뒤)
+            merged[kind].sort(key=lambda r: ai.row_date(r[0], today) or date.max)
+        merged["note"].sort(key=lambda r: not r[3])
+        n_upd = len(res.get("updates") or [])
+        lines.append(f"\n━━ 지난 1주일 요약 · {res.get('at', '')[5:16]}" + (f" (+새 자료 {n_upd}번)" if n_upd else "") + " ━━")
+        heads = {"todo": "■ 꼭 할 일", "event": "■ 행사·회의", "note": "■ 알아 둘 내용"}
+        all_refs = []
+        for kind, rows in merged.items():
+            if not rows:
+                continue
+            lines.append(heads[kind])
+            for when, what, item_ids, fresh in rows:
+                marks = []   # 자료 번호는 이 메시지 안에서 하나로 이어지게 다시 매김
+                for iid in item_ids:
+                    if iid not in all_refs:
+                        all_refs.append(iid)
+                    marks.append(str(all_refs.index(iid) + 1))
+                lines.append(f"- {'(새) ' if fresh else ''}{when + ' · ' if when else ''}{what}{' [' + ','.join(marks) + ']' if marks else ''}")
         self.set_refs(all_refs)
         if all_refs:
             lines.append("\n[번호] 자료의 원문: '원문 2' · 원본 파일: '파일 2'")
