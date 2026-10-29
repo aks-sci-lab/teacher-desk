@@ -854,3 +854,35 @@ pre.tt-request { margin: 0; padding: 10px 14px; border-radius: 8px; background: 
 .tt-view { display: inline-flex; gap: 6px; align-items: center; font-size: 0.88em; color: var(--muted); }
 .tt-view select { color: var(--ink); }
 .tt-me-field { max-width: 360px; margin-top: 10px; }
+
+/* ---------- 꼭 할 일: 끌어서 옮기기 (0.5.18) ---------- */
+.movable { cursor: grab; position: relative; }
+.movable:active { cursor: grabbing; }
+.to-todo { flex: none; margin-left: auto; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--accent); font-size: 0.75em; font-weight: 700; padding: 0 6px; line-height: 1.7; cursor: pointer; opacity: 0; }
+.movable:hover > .to-todo, .to-todo:focus { opacity: 1; }
+@media (hover: none) { .to-todo { opacity: .85; } }
+.list li.movable > .to-todo { position: absolute; right: var(--pad); top: 8px; }
+.ev.movable { align-items: center; }
+body.dragging-todo .drop-zone { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.drop-zone.drop-on { background: var(--accent-soft); }
+.todo-box { margin-bottom: 6px; }
+ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.todo-list li { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+.todo-list li:first-child { border-top: 0; }
+.todo-list li input[type=checkbox] { flex: none; width: 16px; height: 16px; margin: 0; align-self: center; cursor: pointer; }
+.todo-list li.done .ai-txt { text-decoration: line-through; color: var(--muted); }
+.todo-list .ai-txt a { color: inherit; text-decoration: none; }
+.todo-list .ai-txt a:hover { text-decoration: underline; }
+.todo-from { flex: none; font-size: 0.72em; font-weight: 700; color: var(--muted); background: var(--surface-2); border-radius: 4px; padding: 0 5px; }
+.todo-add input { width: 100%; border-style: dashed; background: transparent; }
+.todo-hint { margin: 4px 0 0; font-size: 0.78em; color: var(--muted); }
+.ai-sec.todo .todo-box + .ai-list { border-top: 1px dashed var(--line-strong); padding-top: 4px; }
+.tt-periods { margin-top: 14px; }
+.tt-period-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 6px 16px; margin: 8px 0 12px; }
+.tt-period { display: flex; gap: 6px; align-items: center; }
+.tt-period b { min-width: 3.4em; }
+.tt-period input { width: 8.6em; }
+.tt-bell { margin-bottom: 4px; }
+.tt-bell label.check { margin: 0; }
+.tt th.p small { font-weight: 500; font-size: 0.72em; }
+.lesson-time { color: var(--muted); font-size: 0.85em; font-variant-numeric: tabular-nums; min-width: 3em; }

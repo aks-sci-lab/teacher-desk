@@ -40,7 +40,14 @@ def today_summary(db, today=None):
     last_run = db.one("SELECT * FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1")
     return {"date": today.isoformat(), "overdue": overdue, "today": todays, "week_deadlines": week,
             "week_events": week_events,
-            "passes": passes, "new_items": new_items, "last_run": last_run}
+            "passes": passes, "new_items": new_items, "last_run": last_run, "todos": todos(db, today)}
+
+
+def todos(db, today=None):
+    """꼭 할 일: 끝내지 않은 것 + 오늘 끝낸 것 (날짜 빠른 순, 날짜 없는 것은 뒤)."""
+    today = today or date.today()
+    return db.query("SELECT * FROM todos WHERE done = 0 OR substr(done_at, 1, 10) = ? "
+                    "ORDER BY done, date IS NULL, date, COALESCE(time, '99'), id", (today.isoformat(),))
 
 
 def school_day_events(db, start, end):
@@ -66,7 +73,12 @@ def my_lessons(db, config, day):
     me = db.get_meta("timetable_me")
     if not tt or me is None or me >= len(tt["teachers"]):
         return None
-    return timetable.lessons_on(tt, me, day, db.get_meta("timetable_swaps") or [])
+    periods = db.get_meta("timetable_periods") or {}
+    out = timetable.lessons_on(tt, me, day, db.get_meta("timetable_swaps") or [])
+    for l in out:   # 교시 시간을 정했으면 시작·끝 시각도
+        t = periods.get(str(l["p"])) or {}
+        l["start"], l["end"] = t.get("start"), t.get("end")
+    return out
 
 
 def issue_pass(db, f):

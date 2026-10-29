@@ -76,8 +76,9 @@ class TelegramMoreTests(unittest.TestCase):
                           title="연수 신청 안내", received_at="2026-10-28 09:00:00", file_path=str(pdf))["id"]
         b = add_text_item(db, "cool", "학업성적관리위원회 11월 4일 15:30 교무실", title="성적관리위원회",
                           received_at="2026-10-28 10:00:00")["id"]
-        db.set_meta("ai_weekly", {"result": {"at": "2026-10-28 11:00", "ids": [b, a], "text":
-            "## 꼭 할 일 (마감 순)\n- 11/02(월) · 연수 신청 [2]\n- 상시 · 지운 줄 [1]\n## 다가오는 행사·회의\n- 11/04(수) 15:30 · 성적관리위원회 [1]"}})
+        # ai.weekly_summary 가 저장하는 모양 그대로 (0.5.15 에서는 {"result": …} 로 잘못 읽어 브리핑에 요약이 빠졌음)
+        db.set_meta("ai_weekly", {"at": "2026-10-28 11:00", "ids": [b, a], "text":
+            "## 꼭 할 일 (마감 순)\n- 11/02(월) · 연수 신청 [2]\n- 상시 · 지운 줄 [1]\n## 다가오는 행사·회의\n- 11/04(수) 15:30 · 성적관리위원회 [1]"})
         db.set_meta("ai_hidden", ["todo|상시|지운줄"])
         text = self.bot.brief_text(date(2026, 10, 28))
         self.assertIn("■ 꼭 할 일", text)
