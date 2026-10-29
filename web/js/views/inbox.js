@@ -207,9 +207,9 @@ function renderItem(pane, tab, it) {
         el('section.card.info',
             el('h3', '원문'),
             el('div.info-btns',
-                el('button.btn', { onclick: () => openOriginal(it) }, icon('doc'), `글자로 보기 (${it.body.length.toLocaleString()}자)`),
-                f && f.pdf && el('button.btn', { onclick: () => openOriginal(it, { pdf: true }) }, icon('doc'), 'PDF 원본 보기'),
-                f && f.can_open && el('button.btn', { onclick: () => openFile(it) }, icon('open'), f.ext === '.pdf' ? 'PDF 프로그램으로 열기' : '한글로 열기')),
+                el('button.btn', { onclick: () => openOriginal(it, { text: true }) }, icon('doc'), `추출한 글자 (${it.body.length.toLocaleString()}자)`),
+                f && f.preview && el('button.btn', { onclick: () => openOriginal(it) }, icon('doc'), '원본 서식 보기'),
+                f && f.can_open && el('button.btn', { onclick: () => openFile(it) }, icon('open'), '원본 프로그램으로 열기')),
             f && el('div.kv', el('span', '파일'), el('span.path', { title: it.file_path }, f.name)),
             it.doc_numbers.length > 0 && el('div.kv', el('span', '문서번호'), el('span', it.doc_numbers.map(n => el('span.tag', n))))),
         it.related.length > 0 && el('section.card.info',
@@ -282,7 +282,7 @@ function eventCard(e, it, tab) {
     return card;
 }
 
-// 원문 팝업: 줄바꿈·띄어쓰기를 받은 그대로 (원래 양식). PDF 는 원본 그대로도 볼 수 있음
+// 첨부파일은 PDF로 원래 서식, 일정의 원문 줄을 누르면 추출한 글자로.
 function openOriginal(it, opts = {}) {
     const textBox = el('div.raw-text');
     let n = -1;
@@ -297,26 +297,50 @@ function openOriginal(it, opts = {}) {
     }
     const body = el('div.raw-wrap', textBox);
     const f = it.file;
-    const showPdf = guarded(async () => {
-        const res = await api.get(`/api/items/${it.id}/file`);
-        const url = URL.createObjectURL(await res.blob());
-        clear(body, el('iframe.pdf', { src: url, title: 'PDF 원본' }));
+    let url = null;
+    let request = 0;
+    const release = () => {
+        request += 1;
+        if (url) {
+            const previous = url;
+            url = null;
+            body.querySelector('iframe.pdf')?.remove();
+            // PDF 보기가 주소를 쓰는 동안 해제하지 않도록 프레임을 먼저 분리.
+            setTimeout(() => URL.revokeObjectURL(previous), 0);
+        }
+    };
+    const showPdf = async () => {
+        release();
+        const current = request;
+        clear(body, el('p.muted', f.pdf ? '원본을 여는 중…' : '이 PC에서 PDF로 변환 중… 최대 90초. 한글의 파일 접근 허용 창이 뜨면 확인해 주세요.'));
         seg.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === 1));
-    });
+        try {
+            const res = f.pdf ? await api.get(`/api/items/${it.id}/file`) : await api.post(`/api/items/${it.id}/preview`);
+            const blob = await res.blob();
+            if (request !== current || !body.isConnected) return;
+            url = URL.createObjectURL(blob);
+            clear(body, el('iframe.pdf', { src: url, title: '원본 서식' }));
+        } catch (e) {
+            if (request === current && body.isConnected) {
+                clear(body, el('p', e.message), el('p.muted', '위의 [추출한 글자] 또는 [원본 프로그램으로 열기]로 확인할 수 있습니다.'));
+            }
+        }
+    };
     const showText = () => {
+        release();
         clear(body, textBox);
         seg.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === 0));
     };
-    const seg = f && f.pdf ? el('div.seg', el('button.on', { onclick: showText }, '글자'), el('button', { onclick: showPdf }, 'PDF 원본')) : null;
+    const seg = f && f.preview ? el('div.seg', el('button.on', { onclick: showText }, '추출한 글자'), el('button', { onclick: showPdf }, '원본 서식')) : null;
     modal({
-        title: it.title, wide: true, body,
+        title: it.title, wide: true, body, onClose: release,
         actions: [
             seg,
             el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(it.body); toast('원문을 복사했습니다'); }) }, icon('copy'), '복사'),
-            f && f.can_open && el('button.btn.small', { onclick: () => openFile(it) }, icon('open'), f.ext === '.pdf' ? 'PDF 프로그램으로' : '한글로 열기'),
+            f && f.can_open && el('button.btn.small', { onclick: () => openFile(it) }, icon('open'), '원본 프로그램으로 열기'),
         ],
     });
-    if (opts.pdf) showPdf();
+    if (f?.preview && !opts.text && opts.line === undefined) showPdf();
     else if (target) setTimeout(() => target.scrollIntoView({ block: 'center' }), 0);
 }
 

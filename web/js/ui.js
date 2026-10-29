@@ -151,11 +151,12 @@ export function markDates(text) {
 }
 
 // 팝업 창: modal({ title, body, actions }) → { close, box }. Esc·바깥을 누르면 닫힘
-export function modal({ title, body, actions = [], wide = false }) {
+export function modal({ title, body, actions = [], wide = false, onClose }) {
     const prev = document.activeElement;
     const close = () => {
         back.remove();
         document.removeEventListener('keydown', onKey);
+        onClose?.();
         prev?.focus?.();
     };
     const onKey = e => { if (e.key === 'Escape') close(); };

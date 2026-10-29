@@ -139,7 +139,7 @@ class TelegramMoreTests(unittest.TestCase):
         self.bot.handle_update(msg("검색 연수"))
         last = self.fake.sent[-1]
         self.assertIn("연수 신청 안내", last["text"])
-        self.assertEqual([b["text"] for b in last["reply_markup"]["inline_keyboard"][0]], ["1 원문", "1 파일"])
+        self.assertEqual([b["text"] for b in last["reply_markup"]["inline_keyboard"][0]], ["1 원문", "1 원본 파일 받기"])
         self.bot.handle_update(press(f"o:{a}"))
         self.assertIn("신청: 11월 2일까지", self.fake.sent[-1]["text"])
         # AI 를 안 쓰면 질문에는 찾은 자료만
@@ -147,6 +147,39 @@ class TelegramMoreTests(unittest.TestCase):
         self.bot.handle_update(press(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]))
         self.assertIn("성적관리위원회", self.fake.sent[-1]["text"])
         self.assertIn("AI 를 켜면", self.fake.sent[-1]["text"])
+
+    def test_notifications_summary_and_refresh_offer_original_only_on_request(self):
+        from tests.xlsx_fixture import build_xlsx
+        path = self.env.cool / "연수 첨부.xlsx"
+        original = build_xlsx([("안내", [["연수 신청", "2099년 1월 2일까지"]], [])])
+        path.write_bytes(original)
+        stats = self.env.collector.run("manual")
+        self.assertEqual(stats["items"], 1, stats)
+        iid = stats["new_ids"][0]
+        self.bot.notify_collect(stats, "schedule")
+        notice = self.fake.sent[-1]
+        self.assertIn("[1]", notice["text"])
+        self.assertEqual(notice["reply_markup"]["inline_keyboard"][0][1],
+                         {"text": "1 원본 파일 받기", "callback_data": f"f:{iid}"})
+        self.assertEqual(self.fake.docs, [])
+        self.assertIsNone(self.bot.handle_update(press(f"f:{iid}", chat=6)))
+        self.assertEqual(self.fake.docs, [])
+        self.bot.handle_update(press(f"f:{iid}"))
+        self.assertIn(original, self.fake.docs[-1])
+        self.bot.handle_update(msg("요약"))
+        self.assertEqual(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][1]["callback_data"], f"f:{iid}")
+        with patch.object(self.env.collector, "run", return_value=stats):
+            self.bot.handle_update(msg("수집"))
+        self.assertEqual(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][1]["callback_data"], f"f:{iid}")
+        self.assertEqual(self.bot.ref_item(1), iid)
+        self.env.config.values["telegram_detail"] = "counts"
+        self.bot.notify_collect(stats, "schedule")
+        self.assertNotIn("연수", self.fake.sent[-1]["text"])
+        self.assertNotIn("reply_markup", self.fake.sent[-1])
+        self.bot.handle_update(msg("요약"))
+        self.assertNotIn("reply_markup", self.fake.sent[-1])
+        path.unlink()
+        self.assertIn("원본 파일이 없습니다", self.bot.handle_update(press(f"f:{iid}")))
 
     def test_question_answered_by_local_ai(self):
         lm = FakeLMStudio()
@@ -200,7 +233,9 @@ class TelegramMoreTests(unittest.TestCase):
             ask.assert_not_called()
             self.bot.handle_update(msg("다른 양식"))
             buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
-            self.assertIn("결석계 이름 번호", self.bot.handle_update(press(buttons[1][2]["callback_data"])))
+            self.assertIn("학생 번호", self.bot.handle_update(press(buttons[1][2]["callback_data"])))
+            self.assertEqual(self.bot.dialog["kind"], "absence")
+            self.bot.handle_update(msg("취소"))
             self.bot.handle_update(msg("처음 질문"))
             old = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
             for n in range(10):
