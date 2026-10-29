@@ -144,6 +144,7 @@ class TelegramMoreTests(unittest.TestCase):
         self.assertIn("신청: 11월 2일까지", self.fake.sent[-1]["text"])
         # AI 를 안 쓰면 질문에는 찾은 자료만
         self.bot.handle_update(msg("성적관리위원회 언제야?"))
+        self.bot.handle_update(press(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]))
         self.assertIn("성적관리위원회", self.fake.sent[-1]["text"])
         self.assertIn("AI 를 켜면", self.fake.sent[-1]["text"])
 
@@ -157,6 +158,8 @@ class TelegramMoreTests(unittest.TestCase):
             add_text_item(db, "cool", "급식 메뉴 변경", title="급식", received_at="2026-10-28 10:00:00")
             lm.reply = "11/4(수) 15:30 교무실에서 열립니다 [1]\n할 일: 이의 신청 건 검토 (김민준) [1]"
             self.bot.handle_update(msg("학업성적관리위원회 언제 열려?"))
+            self.assertEqual(lm.requests, [])
+            self.bot.handle_update(press(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]))
             req = lm.requests[-1]
             self.assertEqual(req["messages"][0]["content"], assist.SYSTEM_QA)
             prompt = req["messages"][1]["content"]
@@ -170,6 +173,54 @@ class TelegramMoreTests(unittest.TestCase):
             self.assertIsNone(self.bot.asking)
         finally:
             lm.close()
+
+    def test_unknown_input_offers_commands_and_ai_without_running_it(self):
+        for text in ("자료를 찾아줘", "/unknown"):
+            with self.subTest(text=text), patch.object(self.bot, "ask") as ask:
+                reply = self.bot.handle_update(msg(text))
+                self.assertIn("업무 데스크 명령", reply)
+                self.assertIn("AI가 꺼져", reply)
+                buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
+                ai_choice = buttons[-1][0]["callback_data"]
+                self.assertNotIn(text, ai_choice)
+                ask.assert_not_called()
+                self.assertIsNone(self.bot.handle_update(press(ai_choice, chat=6)))
+                ask.assert_not_called()
+                self.bot.handle_update(press(ai_choice))
+                ask.assert_called_once_with(CHAT, text)
+                self.assertIn("이미 처리", self.bot.handle_update(press(ai_choice)))
+                ask.assert_called_once()
+
+    def test_unknown_input_command_choice_and_old_requests(self):
+        with patch.object(self.bot, "ask") as ask:
+            self.bot.handle_update(msg("무엇을 할까"))
+            buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
+            reply = self.bot.handle_update(press(buttons[0][1]["callback_data"]))
+            self.assertIn("오늘 일정", reply)
+            ask.assert_not_called()
+            self.bot.handle_update(msg("다른 양식"))
+            buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
+            self.assertIn("결석계 이름 번호", self.bot.handle_update(press(buttons[1][2]["callback_data"])))
+            self.bot.handle_update(msg("처음 질문"))
+            old = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+            for n in range(10):
+                self.bot.handle_update(msg(f"질문 {n}"))
+            self.assertEqual(len(self.bot.choice_requests), 10)
+            self.assertIn("오래된 선택", self.bot.handle_update(press(old)))
+            ask.assert_not_called()
+
+    def test_ai_choice_is_retained_while_another_question_is_running(self):
+        self.bot.handle_update(msg("질문 내용"))
+        choice = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]
+        self.bot.asking = "다른 질문"
+        with patch.object(self.bot, "ask") as ask:
+            self.assertIn("답하는 중", self.bot.handle_update(press(choice)))
+            ask.assert_not_called()
+            self.bot.asking = None
+            self.bot.handle_update(press(choice))
+            ask.assert_called_once_with(CHAT, "질문 내용")
+        self.bot.unpair()
+        self.assertEqual(self.bot.choice_requests, {})
 
     def test_intent_and_period(self):
         self.assertEqual(assist.intent("7번 조퇴 1시 30분"), ("early", ["7", "13:30"]))

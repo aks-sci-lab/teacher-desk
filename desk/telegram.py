@@ -35,6 +35,7 @@ HELP = (
     "새로고침 — 지금 바로 수집\n"
     "요약 — 최근 받은 공문·메시지\n"
     "도움말 — 이 안내"
+    "\n목록에 없는 말은 명령어 안내와 AI 검색 단추를 보여 줍니다. 선택하기 전에는 검색하지 않습니다."
 )
 COMMANDS = {
     "오늘": "today", "/today": "today",
@@ -154,6 +155,7 @@ class Bot:
         self.status = "꺼짐"
         self.asking = None      # 지금 답을 만드는 질문 (한 번에 하나)
         self.sync = False       # 시험: 질문의 답을 기다렸다가 돌려줌
+        self.choice_requests = {}
 
     # ---- 텔레그램 API ----
     @property
@@ -214,6 +216,7 @@ class Bot:
 
     def unpair(self):
         self.db.set_meta("telegram_chat_id", None)
+        self.choice_requests.clear()
         self.pair_code(renew=True)
 
     # ---- 명령 처리 ----
@@ -255,14 +258,32 @@ class Bot:
         if cmd:
             return self.reply(cid, self.answer(cmd))
         if text.startswith("/"):
-            return self.reply(cid, HELP)
+            return self.offer_choices(cid, text)
         # 자연스러운 말: '7번 조퇴 1시 반'·'브리핑 보여줘'·'3번 원문' 은 명령으로
         found = assist.intent(text)
         if found:
             cmd, args = found
             return self.send_brief(cid) if cmd == "brief" else self.run_arg(cid, cmd, args)
-        # 그 밖의 말은 질문: 자료를 찾아 이 PC 의 AI 가 읽고 답함 (AI 를 안 쓰면 찾은 자료만)
-        return self.ask(cid, text)
+        return self.offer_choices(cid, text)
+
+    def offer_choices(self, cid, text):
+        request_id = secrets.token_hex(6)
+        self.choice_requests[request_id] = {"chat_id": cid, "text": text}
+        while len(self.choice_requests) > 10:
+            del self.choice_requests[next(iter(self.choice_requests))]
+        options = [
+            [("브리핑", "brief"), ("오늘", "today"), ("마감", "deadlines")],
+            [("조퇴증 작성", "early"), ("외출증 작성", "out"), ("결석계 작성", "absence")],
+            [("이 내용으로 AI 검색", "ai")],
+        ]
+        buttons = [[{"text": label, "callback_data": f"choice:{request_id}:{action}"}
+                    for label, action in row] for row in options]
+        message = ("입력한 내용을 명령어로 알아듣지 못했습니다.\n"
+                   "아래 목록의 명령을 보내거나 단추를 선택하세요.\n\n" + HELP
+                   + "\n\nAI 검색은 방금 보낸 내용으로 이 PC의 자료를 찾습니다."
+                   + ("" if self.config["ai_enabled"] else "\n현재 AI가 꺼져 있어 검색한 자료만 보여 드립니다."))
+        self.send(message, cid, buttons)
+        return message
 
     # ---- 질문에 답하기 (assist) ----
     def ask(self, cid, question):
@@ -379,6 +400,26 @@ class Bot:
             pass
         data = cq.get("data") or ""
         kind, _, rest = data.partition(":")
+        if kind == "choice":
+            request_id, _, action = rest.partition(":")
+            request = self.choice_requests.get(request_id)
+            if not request or request["chat_id"] != cid:
+                return self.reply(cid, "이미 처리했거나 오래된 선택입니다. 내용을 다시 보내 주세요.")
+            if action not in ("ai", "brief", "today", "deadlines", "early", "out", "absence"):
+                return self.reply(cid, "알 수 없는 선택입니다. 내용을 다시 보내 주세요.")
+            if action == "ai" and self.asking:
+                return self.reply(cid, "앞 질문에 답하는 중입니다. 끝나면 AI 검색 단추를 다시 눌러 주세요.")
+            del self.choice_requests[request_id]
+            if action == "ai":
+                return self.ask(cid, request["text"])
+            if action == "brief":
+                return self.send_brief(cid)
+            if action in ("today", "deadlines"):
+                return self.reply(cid, self.answer(action))
+            if action == "absence":
+                return self.reply(cid, "결석계 이름 번호 종류 날짜를 보내세요.\n"
+                                  "예: 결석계 김가온 7 병결 10/29~11/3\n종류: 병결·인정결·기타결·미인정결")
+            return self.run_arg(cid, action, [])
         if kind == "o" and rest.isdigit():
             return self.send_original(cid, int(rest))
         if kind == "f" and rest.isdigit():
