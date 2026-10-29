@@ -145,6 +145,30 @@ class ItemApiTests(unittest.TestCase):
     tearDownClass = classmethod(test_server.ServerTests.tearDownClass.__func__)
     req = test_server.ServerTests.req
 
+    def test_local_document_preview_and_safe_paths(self):
+        hwp = self.env.cool / "받은 첨부.hwp"
+        hwp.write_bytes(b"fake hwp")
+        it = add_text_item(self.env.db, "cool", "첨부 문서 시험", file_path=str(hwp))
+        pdf = b"%PDF-1.4\n%%EOF\n"
+        with patch("desk.server.preview.pdf_bytes", return_value=pdf) as convert:
+            self.assertEqual(self.req("POST", f"/api/items/{it['id']}/preview", {}, token=False)[0], 401)
+            convert.assert_not_called()
+            self.assertEqual(self.req("POST", f"/api/items/{it['id']}/preview", {}), (200, pdf))
+            convert.assert_called_once_with(hwp.resolve())
+            self.assertEqual(self.req("GET", f"/api/items/{it['id']}/file")[0], 404)
+        from desk.preview import PreviewError
+        with patch("desk.server.preview.pdf_bytes", side_effect=PreviewError("한글 설치 필요")):
+            status, body = self.req("POST", f"/api/items/{it['id']}/preview", {})
+            self.assertEqual(status, 400)
+            self.assertIn("한글 설치 필요", body["error"])
+        outside = Path(self.env.tmp.name) / "outside.hwp"
+        outside.write_bytes(b"fake")
+        for fp in (str(outside), str(hwp) + "#1", str(self.env.cool / "missing.xlsx")):
+            other = add_text_item(self.env.db, "cool", f"허용하지 않는 원본 {fp}", file_path=fp)
+            with patch("desk.server.preview.pdf_bytes") as convert:
+                self.assertEqual(self.req("POST", f"/api/items/{other['id']}/preview", {})[0], 404)
+                convert.assert_not_called()
+
     def test_context_and_original_file(self):
         db = self.env.db
         pdf = self.env.edu / "공문.pdf"

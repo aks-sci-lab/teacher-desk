@@ -1,4 +1,4 @@
-"""저장한 문서에서 글자만 뽑기: .hwp .hwpx .pdf .txt .html
+"""저장한 문서에서 글자만 뽑기: .hwp .hwpx .pdf .xlsx .txt .html
 
 - .hwp  : 표준 라이브러리만으로 읽음 (cfb.py). 배포용·암호 문서는 읽을 수 없음
 - .hwpx : zip 안의 XML 을 읽음
@@ -14,8 +14,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .cfb import CompoundFile, CFBError
+from . import xlsx
 
-SUPPORTED = (".hwp", ".hwpx", ".pdf", ".txt", ".html", ".htm")
+SUPPORTED = (".hwp", ".hwpx", ".pdf", ".xlsx", ".txt", ".html", ".htm")
 MAX_BYTES = 50 * 1024 * 1024
 
 
@@ -37,6 +38,14 @@ def read_document(path):
         text = hwpx_text(data)
     elif ext == ".pdf":
         text = pdf_text(path)
+    elif ext == ".xlsx":
+        try:
+            sheets = xlsx.read(data)
+        except (xlsx.XlsxError, zipfile.BadZipFile, ET.ParseError, KeyError, ValueError) as e:
+            raise DocError("엑셀 파일을 읽을 수 없습니다. Excel에서 .xlsx로 다시 저장해 주세요.") from e
+        text = "\n\n".join(s["name"] + "\n" + "\n".join(
+            "\t".join(str(v) if v is not None else "" for v in row) for row in s["rows"]
+        ) for s in sheets)
     elif ext in (".html", ".htm"):
         text = html_text(decode_text(data))
     else:

@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, absence, ai, bell, coolmsg, extract, neis, picker, printing, queries, schoolcal, timetable
+from . import VERSION, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -619,6 +619,7 @@ def get_item(app, q, body, item_id):
         e["context"] = extract.event_context(it.get("body") or "", e["date"], ref)
     p = _item_file(app, it)
     it["file"] = {"name": p.name, "ext": p.suffix.lower(), "pdf": p.suffix.lower() == ".pdf",
+                  "preview": p.suffix.lower() == ".pdf" or (os.name == "nt" and p.suffix.lower() in preview.EXTENSIONS),
                   "can_open": hasattr(os, "startfile")} if p else None
     return it
 
@@ -636,6 +637,19 @@ def item_original_pdf(app, q, body, item_id):
     need(p and p.suffix.lower() == ".pdf", "원본 PDF 파일을 찾을 수 없습니다 (폴더에서 옮겼거나 지워짐)", 404)
     need(p.stat().st_size <= 50 * 1024 * 1024, "파일이 너무 큽니다", 413)
     return 200, p.read_bytes(), "application/pdf", {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+@api("POST", r"/api/items/(\d+)/preview")
+def item_preview(app, q, body, item_id):
+    it = app.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
+    need(it, "없는 항목입니다", 404)
+    p = _item_file(app, it)
+    need(p, "원본 파일을 찾을 수 없습니다 (폴더에서 옮겼거나 지워짐)", 404)
+    try:
+        data = preview.pdf_bytes(p)
+    except preview.PreviewError as e:
+        raise ApiError(400, str(e)) from e
+    return 200, data, "application/pdf", {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
 
 @api("POST", r"/api/items/(\d+)/open")
@@ -1184,6 +1198,37 @@ def ai_check(app, q, body):
         return ai.check(base)
     except ai.AIError as e:
         raise ApiError(400, str(e))
+
+
+@api("POST", "/api/ai/setup/spec")
+def ai_setup_spec(app, q, body):
+    try:
+        return localai.hardware(app.config.data_dir)
+    except localai.SetupError as e:
+        raise ApiError(400, str(e)) from e
+
+
+@api("POST", "/api/ai/setup/batch")
+def ai_setup_batch(app, q, body):
+    model = text_field(body.get("model"), "모델", 40, True)
+    port = body.get("port", 1234)
+    try:
+        localai.validate_port(port)
+        need(port != app.config["port"], "AI 포트와 업무 데스크 포트는 달라야 합니다.")
+        data = localai.setup_batch(model, port)
+    except localai.SetupError as e:
+        raise ApiError(400, str(e)) from e
+    return 200, data, "application/octet-stream", {
+        "Content-Disposition": 'attachment; filename="setup-local-ai.bat"', "Cache-Control": "no-store"}
+
+
+@api("POST", "/api/ai/setup/apply")
+def ai_setup_apply(app, q, body):
+    model = text_field(body.get("model"), "모델", 40, True)
+    try:
+        return localai.apply(app.config, model, body.get("port", 1234))
+    except (localai.SetupError, ai.AIError, ValueError) as e:
+        raise ApiError(400, str(e)) from e
 
 
 @api("GET", "/api/search")

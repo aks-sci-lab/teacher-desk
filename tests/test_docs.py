@@ -52,6 +52,20 @@ class HwpTests(unittest.TestCase):
 
 
 class OtherFormatTests(unittest.TestCase):
+    def test_received_xlsx_text_and_original_preserved(self):
+        from tests.xlsx_fixture import build_xlsx
+        data = build_xlsx([("안내", [["회의", "11월 3일"], ["장소", "교무실"]], [])])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write(tmp, "받은 파일.xlsx", data)
+            text = docs.read_document(path)
+            self.assertIn("회의", text)
+            self.assertIn("11월 3일", text)
+            self.assertIn("교무실", text)
+            self.assertEqual(path.read_bytes(), data)
+            path.write_bytes(b"invalid")
+            with self.assertRaises(docs.DocError):
+                docs.read_document(path)
+
     def test_hwpx(self):
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as z:

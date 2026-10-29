@@ -1,6 +1,6 @@
 // ⚙ 설정: 학교·학급, 수집 폴더·시각, 텔레그램, 공유 페이지
 import { api } from '../api.js';
-import { el, clear, toast, guarded } from '../ui.js';
+import { el, clear, toast, guarded, download } from '../ui.js';
 import { registerView, openTab, findTab, on, toggleLayoutMode } from '../shell.js';
 import { store, loadState, saveSettings } from '../store.js';
 
@@ -39,6 +39,74 @@ function checkField(key, label, hint) {
 
 function section(title, ...children) {
     return el('section.card', { style: 'margin-bottom: 16px' }, el('h3', title), children);
+}
+
+function aiSetup(pane) {
+    const result = el('div');
+    const check = el('button.btn', { onclick: guarded(async () => {
+        check.disabled = true;
+        clear(result, el('p.muted', '이 PC의 CPU·메모리·그래픽과 여유 공간을 확인하는 중…'));
+        try {
+            const spec = await api.post('/api/ai/setup/spec');
+            const recommendation = spec.recommendation;
+            const model = el('select', recommendation.models.map(m => el('option', {
+                value: m.id, disabled: !m.eligible, selected: m.id === recommendation.selected,
+            }, `${m.name}${m.eligible ? '' : ' — ' + m.reasons.join(', ')}`)));
+            const port = el('input', { type: 'number', min: 1024, max: 65535, value: 1234 });
+            const notice = el('p.small');
+            const selectedModel = () => recommendation.models.find(m => m.id === model.value);
+            const explain = () => { notice.textContent = selectedModel()?.description || ''; };
+            model.onchange = explain;
+            explain();
+            const message = el('div');
+            const apply = el('button.btn', { disabled: !recommendation.selected, onclick: guarded(async () => {
+                const selection = { model: model.value, port: Number(port.value) };
+                apply.disabled = true;
+                model.disabled = true;
+                port.disabled = true;
+                pane.dataset.setupBusy = '1';
+                clear(message, el('p.muted', '로컬 모델의 짧은 답변까지 확인하는 중… 모델에 따라 1~2분 걸릴 수 있습니다. 학교 자료는 보내지 않습니다.'));
+                try {
+                    const r = await api.post('/api/ai/setup/apply', selection);
+                    for (const [key, value] of Object.entries({
+                        ai_base: r.settings.ai_base, ai_model: r.settings.ai_model, ai_input_size: r.settings.ai_input_size,
+                    })) {
+                        const input = pane.querySelector(`[data-key="${key}"]`);
+                        if (input) input.value = value;
+                    }
+                    pane.querySelector('[data-key="ai_enabled"]').checked = true;
+                    await loadState();
+                    clear(message, el('p', '연결과 설정 저장을 마쳤습니다. 브리핑에서 요약하거나 텔레그램으로 질문하세요.'));
+                } catch (e) {
+                    clear(message, el('p', { style: 'color: var(--danger)' }, e.message));
+                } finally {
+                    apply.disabled = false;
+                    model.disabled = false;
+                    port.disabled = false;
+                    delete pane.dataset.setupBusy;
+                }
+            }) }, '3. 연결 확인 후 적용');
+            clear(result,
+                el('p.small', `CPU: ${spec.cpu} · ${spec.cores}개 논리 코어`),
+                el('p.small', `메모리 ${spec.ram_gb}GB / 현재 사용 가능 ${spec.free_gb}GB · 남은 디스크 ${spec.disk_gb}GB`),
+                el('p.small', `그래픽: ${(spec.gpus || []).join(', ') || '확인 안 됨'}`),
+                el('p.small', spec.lms_installed ? 'LM Studio 명령 도구가 있습니다. 기존 설치를 재사용합니다.' : 'LM Studio가 없으면 배치파일에서 설치 여부를 먼저 묻습니다.'),
+                el('label.field', el('span', '추천 모델'), model), notice,
+                !recommendation.selected && el('p', '현재 여유 사양으로는 권장할 모델이 없습니다. 다른 프로그램을 닫고 다시 확인하거나 기존 AI 설정을 사용하세요.'),
+                el('label.field', el('span', 'AI 서버 포트 (업무 데스크와 달라야 함)'), port),
+                el('p.small.muted', recommendation.note),
+                el('button.btn', { disabled: !recommendation.selected, onclick: guarded(async () => {
+                    const res = await api.post('/api/ai/setup/batch', { model: model.value, port: Number(port.value) });
+                    download(await res.blob(), 'setup-local-ai.bat');
+                    clear(message, el('p', '받은 배치파일을 더블클릭하세요. 모델은 수 GB라 오래 걸릴 수 있습니다. 설치 직후에는 LM Studio를 한 번 열어 초기 설정을 마친 뒤 배치파일을 다시 실행하세요.'));
+                }) }, '2. 설치·실행 배치파일 받기'), apply, message);
+        } catch (e) {
+            clear(result, el('p', { style: 'color: var(--danger)' }, e.message));
+        } finally {
+            check.disabled = false;
+        }
+    }) }, '1. PC 사양 확인·모델 추천');
+    return el('div', el('p.small', '다운로드할 때만 인터넷을 사용합니다. 학교 자료는 이 PC의 AI로만 보냅니다. 기존 AI 설정은 마지막 [적용] 전까지 바꾸지 않습니다.'), check, result);
 }
 
 function fieldValue(input) {
@@ -233,6 +301,7 @@ function renderSettings(pane, tab) {
             el('label.field', el('span', '나이스 인증키'), neisKey),
             s.neis_school && s.neis_school.name ? el('p.small', `고른 학교: ${s.neis_school.name}`) : null),
         section('AI 요약 (이 PC 의 LM Studio)',
+            aiSetup(pane),
             el('p.small', '브리핑에서 지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문을 AI 로 요약합니다. AI 는 이 PC 의 LM Studio 에서 돌기 때문에 쪽지·공문이 PC 밖으로 나가지 않습니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).'),
             el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
                 el('li', 'LM Studio 에서 한국어가 되는 모델을 받아 불러옵니다 (예: Qwen3 8B, Gemma 3 12B, EXAONE 3.5 7.8B).'),
@@ -287,7 +356,7 @@ registerView({
 on('state', () => {
     // 텔레그램 연결 상태가 바뀌면 설정 화면을 새로 그림 (입력 중일 때는 건드리지 않음)
     const tab = findTab('settings');
-    if (tab && !tab.pane.contains(document.activeElement) && !tab.pane.dataset.dirty) {
+    if (tab && !tab.pane.contains(document.activeElement) && !tab.pane.dataset.dirty && !tab.pane.dataset.setupBusy) {
         const linked = tab.pane.dataset.linked;
         const now = String(!!store.state.telegram.linked) + store.state.telegram.status;
         if (linked !== undefined && linked !== now) tab.rerender();
