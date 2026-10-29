@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS todos (
     hide_key TEXT,                   -- AI 요약에서 옮겨 온 줄 (지우면 원래 칸으로 되돌림)
     done INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
-    done_at TEXT
+    done_at TEXT,
+    sort REAL                        -- 선생님이 끌어서 정한 순서 (0.5.20)
 );
 
 CREATE TABLE IF NOT EXISTS logs (
@@ -134,6 +135,12 @@ class DB:
             self.conn.execute("ALTER TABLE events ADD COLUMN source TEXT")  # 0.5.11
         if "images" not in cols:
             self.conn.execute("ALTER TABLE items ADD COLUMN images TEXT")  # 0.5.2: 쿨메신저 사진
+        if "sort" not in {r[1] for r in self.conn.execute("PRAGMA table_info(todos)")}:
+            # 0.5.20: 꼭 할 일 순서를 끌어서 바꿈. 예전 것은 그때 보이던 순서(날짜 순)대로 번호를 매김
+            self.conn.execute("ALTER TABLE todos ADD COLUMN sort REAL")
+            ids = [r[0] for r in self.conn.execute(
+                "SELECT id FROM todos ORDER BY date IS NULL, date, COALESCE(time, '99'), id")]
+            self.conn.executemany("UPDATE todos SET sort = ? WHERE id = ?", [(i, tid) for i, tid in enumerate(ids)])
 
     def close(self):
         with self.lock:

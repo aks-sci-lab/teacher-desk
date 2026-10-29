@@ -717,10 +717,22 @@ def todo_add(app, q, body):
             if same:
                 return same
     f["created_at"] = now_str()
+    f["sort"] = (app.db.one("SELECT MAX(sort) AS m FROM todos")["m"] or 0) + 1   # 새 것은 맨 아래
     tid = app.db.execute(f"INSERT INTO todos({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
     if key:
         ai.set_hidden(app.db, key, True)   # AI 요약에서 옮겨 온 줄은 원래 칸에서 숨김
     return app.db.one("SELECT * FROM todos WHERE id = ?", (tid,))
+
+
+@api("PUT", "/api/todos/order")
+def todo_order(app, q, body):
+    """끌어서 바꾼 순서: ids 를 위에서부터 (빠진 것은 그 뒤에 원래 순서대로)."""
+    ids = body.get("ids")
+    need(isinstance(ids, list) and len(ids) <= 500 and all(isinstance(i, int) for i in ids), "순서가 잘못되었습니다")
+    rest = [r["id"] for r in app.db.query("SELECT id FROM todos ORDER BY sort IS NULL, sort, id") if r["id"] not in ids]
+    for n, tid in enumerate(list(dict.fromkeys(ids)) + rest):
+        app.db.execute("UPDATE todos SET sort = ? WHERE id = ?", (n, tid))
+    return queries.todos(app.db)
 
 
 @api("PATCH", r"/api/todos/(\d+)")
