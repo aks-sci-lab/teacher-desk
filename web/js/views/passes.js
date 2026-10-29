@@ -85,7 +85,7 @@ function fitPreview(box) {
     return fit;
 }
 
-async function printPass(p, copies = 2) {
+export async function printPass(p, copies = 2) {
     const area = document.getElementById('print-area');
     const url = shareUrl(p);
     const qr = url ? await qrDataUrl(url) : null;
@@ -364,3 +364,33 @@ export async function initPasses() {
 // 텔레그램으로 발급하면 목록을 새로 고침
 on('passes-changed', guarded(async () => { await loadDay(); refreshSide(); }));
 
+on('telegram-print-request', guarded(async p => {
+    openTab({
+        id: `telegram-print-${p.id}`, title: `${p.student_number}번 ${KIND[p.kind]} 인쇄 요청`,
+        render(pane) {
+            pane.append(
+                el('h1', '텔레그램 인쇄 요청'),
+                el('p.sub', `${p.student_number}번 ${p.student_name} ${KIND[p.kind]}증 · ${p.date} · ${p.time_out || ''}`),
+                el('p', '학생 이름과 사유는 텔레그램으로 보내지 않았습니다. 인쇄는 이 PC에서 직접 확인해 주세요.'),
+                el('div.row',
+                    el('button.btn.primary', { onclick: guarded(async () => {
+                        const full = await api.get(`/api/passes/${p.id}`);
+                        await printPass(full);
+                        await api.post(`/api/print-requests/${p.id}/complete`, {});
+                        toast('인쇄 창을 열었습니다. 출력 여부를 확인하세요.');
+                        emit('print-request-done', p.id);
+                    }) }, '실제로 인쇄'),
+                    el('button.btn', { onclick: guarded(async () => {
+                        await api.post(`/api/print-requests/${p.id}/complete`, {});
+                        toast('인쇄 요청을 취소했습니다.');
+                        emit('print-request-done', p.id);
+                    }) }, '인쇄 안 함')));
+        },
+    });
+}));
+
+on('print-request-done', guarded(async () => {
+    const remaining = await api.get('/api/state');
+    const requests = remaining.print_requests || [];
+    if (requests.length) emit('telegram-print-request', requests[0]);
+}));

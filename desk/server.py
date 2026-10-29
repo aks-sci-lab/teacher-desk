@@ -258,6 +258,8 @@ def get_state(app, q, body):
             # 텔레그램으로 발급하면 화면이 알아채고 목록을 새로 고침
             "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
         },
+        "print_requests": [db.one("SELECT * FROM passes WHERE id = ?", (pid,))
+                           for pid in db.get_meta("telegram_print_queue", [])],
         "telegram": {
             "status": app.bot.status if app.bot else "꺼짐",
             "linked": bool(app.bot and app.bot.chat_id),
@@ -317,7 +319,7 @@ def pass_fields(body, partial=False):
         out["student_name"] = text_field(body.get("student_name"), "학생 이름", 20, True)
     if "student_number" in body:
         n = body["student_number"]
-        need(n is None or (isinstance(n, int) and 0 <= n < 1000), "번호가 잘못되었습니다")
+        need(n is None or (isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 1000), "번호가 잘못되었습니다")
         out["student_number"] = n
     if "date" in body or not partial:
         out["date"] = check_date(body.get("date"))
@@ -341,6 +343,13 @@ def list_passes(app, q, body):
     return app.db.query("SELECT * FROM passes ORDER BY date DESC, id DESC LIMIT 200")
 
 
+@api("GET", r"/api/passes/(\d+)")
+def get_pass(app, q, body, pid):
+    row = app.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
+    need(row, "없는 발급 기록입니다", 404)
+    return row
+
+
 @api("POST", "/api/passes")
 def create_pass(app, q, body):
     return queries.issue_pass(app.db, pass_fields(body))
@@ -357,6 +366,79 @@ def update_pass(app, q, body, pid):
     if f:
         app.db.execute(f"UPDATE passes SET {', '.join(k + ' = ?' for k in f)} WHERE id = ?", (*f.values(), pid))
     return app.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
+
+
+@api("POST", r"/api/print-requests/(\d+)/complete")
+def complete_print_request(app, q, body, pid):
+    queue = [n for n in app.db.get_meta("telegram_print_queue", []) if n != int(pid)]
+    app.db.set_meta("telegram_print_queue", queue)
+    return {"ok": True}
+
+
+# ---- 결석계 ----
+def absence_fields(body, partial=False):
+    out = {}
+    required = ("student_name", "start_date", "end_date", "absence_type", "reason")
+    for key in required:
+        if key in body or not partial:
+            if key == "student_name":
+                out[key] = text_field(body.get(key), "학생 이름", 20, True)
+            elif key in ("start_date", "end_date"):
+                out[key] = check_date(body.get(key), "결석 날짜")
+            elif key == "absence_type":
+                need(body.get(key) in ("질병", "출석인정", "기타"), "결석 종류를 고르세요")
+                out[key] = body[key]
+            else:
+                out[key] = text_field(body.get(key), "결석 사유", 500, True)
+    if "student_number" in body:
+        n = body["student_number"]
+        need(n is None or (isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 1000), "번호가 잘못되었습니다")
+        out["student_number"] = n
+    elif not partial:
+        out["student_number"] = None
+    for key, name, limit in (("guardian_name", "보호자 이름", 40), ("note", "비고", 200)):
+        if key in body or not partial:
+            out[key] = text_field(body.get(key), name, limit)
+    if "start_date" in out and "end_date" in out:
+        need(out["end_date"] >= out["start_date"], "끝 날짜가 시작 날짜보다 빠릅니다")
+    return out
+
+
+@api("GET", "/api/absences")
+def list_absences(app, q, body):
+    if q.get("date"):
+        day = check_date(q["date"], "결석 날짜")
+        return app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? ORDER BY id DESC",
+                            (day, day))
+    return app.db.query("SELECT * FROM absences ORDER BY start_date DESC, id DESC LIMIT 200")
+
+
+@api("POST", "/api/absences")
+def create_absence(app, q, body):
+    fields = absence_fields(body)
+    with app.db.lock:
+        n = app.db.one("SELECT COUNT(*) AS n FROM absences WHERE start_date = ?", (fields["start_date"],))["n"] + 1
+        fields["serial"] = fields["start_date"].replace("-", "") + f"-{n:02d}"
+        fields["created_at"] = now_str()
+        absence_id = app.db.execute(
+            f"INSERT INTO absences({', '.join(fields)}) VALUES({', '.join('?' * len(fields))})",
+            tuple(fields.values()))
+    app.db.log(f"결석계 작성 {fields['serial']}")
+    return app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,))
+
+
+@api("PATCH", r"/api/absences/(\d+)")
+def update_absence(app, q, body, absence_id):
+    fields = absence_fields(body, partial=True)
+    need(app.db.one("SELECT id FROM absences WHERE id = ?", (absence_id,)), "없는 결석계입니다", 404)
+    if fields:
+        row = app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,))
+        start = fields.get("start_date", row["start_date"])
+        end = fields.get("end_date", row["end_date"])
+        need(end >= start, "끝 날짜가 시작 날짜보다 빠릅니다")
+        app.db.execute(f"UPDATE absences SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
+                       (*fields.values(), absence_id))
+    return app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,))
 
 
 # ---- 수신함 ----

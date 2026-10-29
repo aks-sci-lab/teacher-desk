@@ -54,6 +54,13 @@ class TelegramMoreTests(unittest.TestCase):
         # 학생 이름·사유는 텔레그램으로 나가지 않음
         self.assertNotIn("김민준", self.sent_text())
         self.assertNotIn("병원 진료", self.fake.edited[-1]["text"])
+        print_choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        self.assertIn("PC에서 인쇄 요청", self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["text"])
+        requested = self.bot.handle_update(press(print_choice))
+        self.assertIn("인쇄 요청", requested)
+        self.assertEqual(self.env.db.get_meta("telegram_print_queue"), [p["id"]])
+        self.assertNotIn("김민준", self.sent_text())
+        self.assertNotIn("병원 진료", self.sent_text())
         self.assertIn("이미 처리", self.bot.handle_update(press(data)))     # 두 번 누르면
 
     def test_natural_pass_and_cancel(self):
@@ -67,6 +74,16 @@ class TelegramMoreTests(unittest.TestCase):
         # 시각이 없으면 지금(5분 올림), 외출 복귀는 1시간 뒤
         self.bot.start_pass(CHAT, "out", ["7"], now=datetime(2026, 10, 28, 9, 2))
         self.assertIn("09:05~10:05", self.fake.sent[-1]["text"])
+
+    def test_pass_can_be_issued_without_print_request(self):
+        self.bot.start_pass(CHAT, "out", ["12"], now=datetime(2026, 10, 29, 9, 2))
+        buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
+        issued = self.bot.handle_update(press(buttons[-1][0]["callback_data"]))
+        self.assertIn("발급 번호", issued)
+        choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][1]["callback_data"]
+        result = self.bot.handle_update(press(choice))
+        self.assertIn("인쇄하지 않음", result)
+        self.assertEqual(self.env.db.get_meta("telegram_print_queue", []), [])
 
     def test_brief_search_and_originals(self):
         db = self.env.db

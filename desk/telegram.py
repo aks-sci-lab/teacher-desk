@@ -29,6 +29,7 @@ HELP = (
     "내일 수업 · 금요일 시간표 — 내 수업 (시간표를 불러왔을 때)\n"
     "조퇴 7 [13:30] — 7번 조퇴증 발급 (사유는 단추로)\n"
     "외출 7 [13:30] [14:30] — 7번 외출증 발급\n"
+    "발급 뒤 PC에서 실제 인쇄를 요청할 수 있습니다.\n"
     "새로고침 — 지금 바로 수집\n"
     "요약 — 최근 받은 공문·메시지\n"
     "도움말 — 이 안내"
@@ -357,13 +358,43 @@ class Bot:
             return self.send_original(cid, int(rest))
         if kind == "f" and rest.isdigit():
             return self.send_item_file(cid, int(rest))
-        if kind in ("pr", "px"):
+        if kind == "pp":
             pid, _, choice = rest.partition(":")
-            text = self.finish_pass(pid, choice if kind == "pr" else None)
+            p = self.db.one("SELECT id, kind, student_number, date, time_out, time_return, serial FROM passes WHERE id = ?", (pid,))
+            if not p or choice not in ("0", "1"):
+                return self.reply(cid, "이미 처리했거나 없는 발급 기록입니다.")
+            if choice == "1":
+                with self.db.lock:
+                    queue = self.db.get_meta("telegram_print_queue", [])
+                    if int(pid) not in queue:
+                        queue.append(int(pid))
+                    self.db.set_meta("telegram_print_queue", queue[-20:])
+                text = (f"🖨️ {p['student_number']}번 {KIND[p['kind']]}증 인쇄 요청을 업무 데스크에 보냈습니다.\n"
+                        "PC의 업무 데스크에서 [인쇄 요청]을 눌러 출력하세요.")
+            else:
+                text = f"✅ {p['student_number']}번 {KIND[p['kind']]}증 발급 완료 · 인쇄하지 않음"
             try:
                 self.api("editMessageText", {"chat_id": cid, "message_id": msg.get("message_id"), "text": text}, timeout=15)
             except (urllib.error.URLError, OSError, RuntimeError):
                 self.send(text, cid)
+            return text
+        if kind in ("pr", "px"):
+            pid, _, choice = rest.partition(":")
+            self.last_issued_pass_id = None
+            text = self.finish_pass(pid, choice if kind == "pr" else None)
+            markup = None
+            if self.last_issued_pass_id:
+                markup = {"inline_keyboard": [[
+                    {"text": "PC에서 인쇄 요청", "callback_data": f"pp:{self.last_issued_pass_id}:1"},
+                    {"text": "인쇄 안 함", "callback_data": f"pp:{self.last_issued_pass_id}:0"},
+                ]]}
+            try:
+                params = {"chat_id": cid, "message_id": msg.get("message_id"), "text": text}
+                if markup:
+                    params["reply_markup"] = markup
+                self.api("editMessageText", params, timeout=15)
+            except (urllib.error.URLError, OSError, RuntimeError):
+                self.send(text, cid, markup["inline_keyboard"] if markup else None)
             return text
         return None
 
@@ -412,10 +443,11 @@ class Bot:
             "date": p["date"], "time_out": p["time_out"], "time_return": p["time_return"],
             "reason": reason, "guardian_ok": 0, "share_reason": 0,
         })
+        self.last_issued_pass_id = saved["id"]
         when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
         # 이름·사유는 답장에 쓰지 않음
         return (f"✅ {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 발급 · {when}\n"
-                f"발급 번호 {saved['serial']} — 업무 데스크의 조퇴·외출에서 인쇄하세요.")
+                f"발급 번호 {saved['serial']}\n실제 인쇄 여부를 골라 주세요.")
 
     # ---- 브리핑 ----
     def brief_text(self, today=None):

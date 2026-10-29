@@ -129,6 +129,10 @@ a { color: var(--accent); }
 .act:hover .ico { background: var(--surface-2); }
 .act.on { color: var(--activity-on); font-weight: 700; }
 .act.on .ico { background: var(--accent-soft); color: var(--accent); }
+body.layout-edit .act { cursor: grab; }
+.act.dragging { opacity: 0.4; }
+.act.drop-before { box-shadow: inset 0 2px var(--accent); }
+.act.drop-after { box-shadow: inset 0 -2px var(--accent); }
 .ic { width: 1.25em; height: 1.25em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .act .ic { width: 21px; height: 21px; }
 .btn .ic { width: 1.1em; height: 1.1em; }
@@ -545,6 +549,28 @@ ul.summary li { margin: 2px 0; }
 .slip .qr + .sign { padding-left: 24mm; }
 .slip .school { text-align: center; font-size: 11pt; }
 .slip-cut { border: 0; border-top: 1px dashed #888; margin: 6mm 0; position: relative; }
+.absence-paper {
+    width: 170mm;
+    min-height: 240mm;
+    margin: 0 auto;
+    padding: 18mm 16mm;
+    background: #fff;
+    color: #000;
+    border: 1.5px solid #000;
+    font-family: "Malgun Gothic", "Batang", serif;
+    font-size: 12pt;
+}
+.absence-paper .school { text-align: center; font-size: 11pt; }
+.absence-paper h1 { margin: 10mm 0 2mm; text-align: center; font-size: 24pt; letter-spacing: 8px; }
+.absence-note { margin: 0 0 8mm; text-align: center; color: #555; font-size: 9pt; }
+.absence-paper table { width: 100%; border-collapse: collapse; }
+.absence-paper th, .absence-paper td { border: 1px solid #000; padding: 4mm; text-align: left; vertical-align: middle; }
+.absence-paper th { width: 30mm; text-align: center; background: #f2f2f2; white-space: nowrap; }
+.absence-paper .absence-reason { min-height: 28mm; white-space: pre-wrap; }
+.absence-confirm { margin: 18mm 0 12mm; text-align: center; }
+.absence-sign { display: flex; justify-content: space-between; gap: 8mm; min-height: 25mm; align-items: flex-end; text-align: right; }
+.absence-school { margin-top: 15mm; text-align: center; font-size: 17pt; font-weight: 700; }
+.absence-serial { margin-top: 12mm; text-align: right; color: #555; font-size: 9pt; }
 #print-area { display: none; }
 
 /* 토스트 */
@@ -580,7 +606,7 @@ body.layout-edit [data-region]::after {
 #layout-panel {
     position: fixed;
     right: 16px; top: 16px;
-    width: 300px;
+    width: min(360px, calc(100vw - 32px));
     max-height: calc(100% - 60px);
     overflow: auto;
     z-index: 40;
@@ -594,6 +620,14 @@ body.layout-edit [data-region]::after {
 #layout-panel h3 { margin-bottom: 4px; }
 #layout-panel .seg button { white-space: nowrap; padding: 6px 10px; }
 #layout-panel .field { margin-bottom: 10px; }
+#layout-panel .layout-font { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+#layout-panel .layout-font input { grid-column: 1 / -1; width: 100%; margin: 4px 0; }
+#layout-panel .layout-font output { font-size: 0.9em; font-variant-numeric: tabular-nums; color: var(--muted); }
+#layout-panel .layout-menus > .small { margin: 0 0 6px; }
+.layout-menu-row { display: grid; grid-template-columns: minmax(0, 1fr) 28px 28px; gap: 4px; align-items: center; padding: 5px 0; border-top: 1px solid var(--line); }
+.layout-menu-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 0.82em; color: var(--muted); }
+.layout-menu-name input { width: 100%; }
+.layout-menu-row .icon-btn:disabled { opacity: 0.35; cursor: default; }
 
 /* ---------- 좁은 화면 (휴대폰·작은 창) ---------- */
 @media (max-width: 760px) {
@@ -632,7 +666,7 @@ body.layout-edit [data-region]::after {
     body { overflow: visible; background: #fff; }
     body > *:not(#print-area) { display: none !important; }
     #print-area { display: block !important; }
-    .slip { border-width: 1.5px; page-break-inside: avoid; }
+    .slip, .absence-paper { border-width: 1.5px; page-break-inside: avoid; }
 }
 
 /* 브리핑 AI 요약 */

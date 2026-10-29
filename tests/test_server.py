@@ -93,6 +93,40 @@ class ServerTests(unittest.TestCase):
         st, rows = self.req("GET", f"/api/passes?date={today}")
         self.assertGreaterEqual(len(rows), 2)
 
+    def test_absence_flow(self):
+        body = {
+            "student_name": "김가온", "student_number": 1,
+            "start_date": "2026-10-29", "end_date": "2026-10-30",
+            "absence_type": "질병", "reason": "감기", "guardian_name": "보호자",
+        }
+        status, saved = self.req("POST", "/api/absences", body)
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(saved["serial"], "20261029-01")
+        status, rows = self.req("GET", "/api/absences?date=2026-10-30")
+        self.assertEqual(status, 200)
+        self.assertEqual([r["id"] for r in rows], [saved["id"]])
+        status, changed = self.req("PATCH", f"/api/absences/{saved['id']}", {"reason": "독감"})
+        self.assertEqual((status, changed["reason"]), (200, "독감"))
+        self.assertEqual(self.req("POST", "/api/absences", {
+            **body, "start_date": "2026-10-31", "end_date": "2026-10-30",
+        })[0], 400)
+        self.assertEqual(self.req("POST", "/api/absences", {**body, "absence_type": "잘못된 종류"})[0], 400)
+        self.assertEqual(self.req("POST", "/api/absences", {**body, "student_number": True})[0], 400)
+
+    def test_telegram_print_queue_is_local_and_acknowledged(self):
+        today = date.today().isoformat()
+        status, p = self.req("POST", "/api/passes", {
+            "kind": "early", "student_name": "김가온", "student_number": 1,
+            "date": today, "time_out": "13:20",
+        })
+        self.assertEqual(status, 200, p)
+        self.env.db.set_meta("telegram_print_queue", [p["id"]])
+        status, state = self.req("GET", "/api/state")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["print_requests"][0]["id"], p["id"])
+        self.assertEqual(self.req("POST", f"/api/print-requests/{p['id']}/complete", {})[0], 200)
+        self.assertEqual(self.req("GET", "/api/state")[1]["print_requests"], [])
+
     def test_roster(self):
         rows = parse_roster("번호\t이름\n1\t김가온\n2\t나하늘\n\n3  도윤서\n박지민")
         self.assertEqual(rows, [{"number": 1, "name": "김가온"}, {"number": 2, "name": "나하늘"},

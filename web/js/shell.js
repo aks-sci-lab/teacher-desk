@@ -9,6 +9,8 @@ const views = new Map();
 const tabs = new Map();
 let currentView = null;
 let activeTab = null;
+let defaultViewOrder = [];
+let draggingViewId = null;
 
 export const bus = new EventTarget();
 export const emit = (name, detail) => bus.dispatchEvent(new CustomEvent(name, { detail }));
@@ -18,18 +20,91 @@ export const on = (name, fn) => bus.addEventListener(name, e => fn(e.detail));
 // view = { id, icon, label, bottom?, noSide?(목록 패널 없이 작업 영역만), renderSide(body, actions), open?() }
 export function registerView(view) {
     views.set(view.id, view);
-    const btn = el('button.act', { title: view.label, dataset: { view: view.id }, onclick: () => showView(view.id, true) },
-        el('span.ico', icon(view.id) || view.icon), el('span.lbl', view.label), el('span.badge', { hidden: true }));
+    const label = menuLabel(view);
+    const btn = el('button.act', {
+        title: label, 'aria-label': label, draggable: true, dataset: { view: view.id },
+        onclick: () => showView(view.id, true),
+        ondragstart: e => {
+            if (!document.body.classList.contains('layout-edit')) {
+                e.preventDefault();
+                return;
+            }
+            draggingViewId = view.id;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', view.id);
+            btn.classList.add('dragging');
+        },
+        ondragover: e => {
+            const source = views.get(draggingViewId);
+            if (!source || source.button.parentElement !== btn.parentElement || source === view) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            btn.classList.toggle('drop-after', e.clientY > btn.getBoundingClientRect().top + btn.offsetHeight / 2);
+            btn.classList.toggle('drop-before', !btn.classList.contains('drop-after'));
+        },
+        ondragleave: () => btn.classList.remove('drop-before', 'drop-after'),
+        ondrop: e => {
+            const sourceId = e.dataTransfer.getData('text/plain') || draggingViewId;
+            const after = btn.classList.contains('drop-after');
+            e.preventDefault();
+            btn.classList.remove('drop-before', 'drop-after');
+            moveView(sourceId, view.id, after);
+        },
+        ondragend: () => {
+            draggingViewId = null;
+            for (const item of views.values()) item.button.classList.remove('dragging', 'drop-before', 'drop-after');
+        },
+    },
+        el('span.ico', icon(view.id) || view.icon), el('span.lbl', label), el('span.badge', { hidden: true }));
     $(view.bottom ? 'activity-bottom' : 'activity-top').append(btn);
     view.button = btn;
 }
 
 // 활동 막대 버튼 순서 정하기 (모듈을 불러오는 순서와 상관없이)
 export function orderViews(ids) {
-    for (const id of ids) {
-        const v = views.get(id);
-        if (v) v.button.parentElement.append(v.button);
+    defaultViewOrder = ids.filter(id => views.has(id));
+    applyViewOrder(layout.viewOrder);
+}
+
+function normalizedViewOrder(order) {
+    const known = Array.isArray(order) ? order.filter((id, i) => views.has(id) && order.indexOf(id) === i) : [];
+    return [...known, ...defaultViewOrder.filter(id => !known.includes(id))];
+}
+
+function applyViewOrder(order) {
+    const ids = normalizedViewOrder(order);
+    for (const parent of [$('activity-top'), $('activity-bottom')]) {
+        for (const id of ids) {
+            const view = views.get(id);
+            if (view?.button.parentElement === parent) parent.append(view.button);
+        }
     }
+}
+
+function moveView(sourceId, targetId, after) {
+    const source = views.get(sourceId);
+    const target = views.get(targetId);
+    if (!source || !target || source === target || source.button.parentElement !== target.button.parentElement) return;
+    const ids = normalizedViewOrder(layout.viewOrder);
+    ids.splice(ids.indexOf(sourceId), 1);
+    const targetIndex = ids.indexOf(targetId);
+    ids.splice(targetIndex + Number(after), 0, sourceId);
+    setLayout({ viewOrder: ids });
+}
+
+function menuLabel(view) {
+    const custom = layout?.menuLabels?.[view.id];
+    return typeof custom === 'string' && custom.trim() ? custom.trim().slice(0, 20) : view.label;
+}
+
+function applyMenuLabels() {
+    for (const view of views.values()) {
+        const label = menuLabel(view);
+        view.button.title = label;
+        view.button.setAttribute('aria-label', label);
+        view.button.querySelector('.lbl').textContent = label;
+    }
+    if (currentView) $('side-title').textContent = menuLabel(views.get(currentView));
 }
 
 export function setBadge(viewId, n) {
@@ -51,7 +126,7 @@ export function showView(id, fromClick = false) {
     app.classList.toggle('no-side', !!view.noSide);   // 목록이 필요 없는 화면은 빈 목록 패널을 숨김
     currentView = id;
     for (const v of views.values()) v.button.classList.toggle('on', v.id === id);
-    $('side-title').textContent = view.label;
+    $('side-title').textContent = menuLabel(view);
     clear($('side-actions'));
     clear($('side-body'));
     view.renderSide($('side-body'), $('side-actions'));
@@ -196,6 +271,8 @@ export const DEFAULT_LAYOUT = {
     compact: false,
     theme: 'auto',
     labels: true,
+    menuLabels: {},
+    viewOrder: [],
 };
 let layout = { ...DEFAULT_LAYOUT };
 let saveTimer;
@@ -206,6 +283,7 @@ export function getLayout() {
 
 export function applyLayout(next, save = true) {
     layout = { ...DEFAULT_LAYOUT, ...next };
+    layout.fontScale = Math.min(1.5, Math.max(0.8, Number(layout.fontScale) || DEFAULT_LAYOUT.fontScale));
     const root = document.documentElement;
     app.classList.toggle('side-right', layout.sidePosition === 'right');
     app.classList.toggle('side-left', layout.sidePosition !== 'right');
@@ -215,6 +293,8 @@ export function applyLayout(next, save = true) {
     root.style.setProperty('--side-w', `${layout.sideWidth}px`);
     root.style.setProperty('--bottom-h', `${layout.bottomHeight}px`);
     root.style.setProperty('--font-scale', layout.fontScale);
+    applyMenuLabels();
+    applyViewOrder(layout.viewOrder);
     const dark = layout.theme === 'dark' || (layout.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
     root.dataset.theme = dark ? 'dark' : 'light';
     if (save) {
@@ -267,6 +347,7 @@ export function describeLayout(l = layout) {
         `⑤ 하단 패널: ${l.bottomVisible ? `보임, 높이 ${l.bottomHeight}px` : '숨김'}`,
         `① 활동 막대 글자: ${l.labels ? '보임' : '숨김'}`,
         `글자 크기: ${Math.round(l.fontScale * 100)}%, 간격: ${l.compact ? '촘촘하게' : '넉넉하게'}`,
+        `메뉴 순서: ${normalizedViewOrder(l.viewOrder).map(id => menuLabel(views.get(id))).join(' → ')}`,
         `색상: ${{ auto: '시스템 따라', light: '밝게', dark: '어둡게' }[l.theme]}`,
         `창 크기: ${window.innerWidth}×${window.innerHeight}`,
         '바라는 점: (여기에 적어 주세요. 예: ④ 작업 영역의 오늘 카드를 2줄로)',
@@ -280,17 +361,50 @@ export function toggleLayoutMode() {
     const panel = el('div#layout-panel');
     const render = () => {
         const l = getLayout();
+        const viewOrder = normalizedViewOrder(l.viewOrder);
+        const updateMenuLabel = (id, value) => {
+            const menuLabels = { ...(layout.menuLabels || {}) };
+            const text = value.trim().slice(0, 20);
+            if (text) menuLabels[id] = text;
+            else delete menuLabels[id];
+            setLayout({ menuLabels });
+        };
         const seg = (key, options) => el('div.seg', options.map(([v, label]) =>
             el('button', { className: l[key] === v ? 'on' : '', onclick: () => { setLayout({ [key]: v }); render(); } }, label)));
+        const fontScaleLabel = el('output', `${Math.round(l.fontScale * 100)}%`);
+        const menuRows = viewOrder.map(id => {
+            const view = views.get(id);
+            return el('div.layout-menu-row',
+                el('label', { className: 'layout-menu-name' },
+                    el('span', view.label),
+                    el('input', {
+                        type: 'text', maxlength: 20, value: l.menuLabels?.[id] || '',
+                        placeholder: view.label, 'aria-label': `${view.label} 메뉴 이름`,
+                        oninput: e => updateMenuLabel(id, e.target.value),
+                    })));
+        });
         clear(panel,
             el('h3', '화면 배치'),
             el('p.small.muted', '점선 영역의 번호(①~⑥)로 부르면 바꾸고 싶은 곳을 정확히 전달할 수 있습니다. 경계선을 끌어 크기를 조절하세요.'),
             el('div.field', el('span', '② 목록 패널 위치'), seg('sidePosition', [['left', '왼쪽'], ['right', '오른쪽']])),
             el('div.field', el('span', '⑤ 하단 패널(기록)'), seg('bottomVisible', [[true, '보이기'], [false, '숨기기']])),
             el('div.field', el('span', '① 활동 막대 글자'), seg('labels', [[true, '보이기'], [false, '아이콘만']])),
-            el('div.field', el('span', '글자 크기'), seg('fontScale', [[0.9, '작게'], [1, '보통'], [1.15, '크게'], [1.3, '아주 크게']])),
+            el('label.field.layout-font', el('span', '글자 크기'), fontScaleLabel,
+                el('input', {
+                    type: 'range', min: 0.8, max: 1.5, step: 0.05, value: l.fontScale,
+                    'aria-label': '글자 크기',
+                    oninput: e => {
+                        const fontScale = Math.round(Number(e.target.value) * 100) / 100;
+                        fontScaleLabel.value = `${Math.round(fontScale * 100)}%`;
+                        fontScaleLabel.textContent = fontScaleLabel.value;
+                        setLayout({ fontScale });
+                    },
+                })),
             el('div.field', el('span', '간격'), seg('compact', [[false, '넉넉하게'], [true, '촘촘하게']])),
             el('div.field', el('span', '색상'), seg('theme', [['auto', '자동'], ['light', '밝게'], ['dark', '어둡게']])),
+            el('div.field.layout-menus', el('span', '메뉴 이름과 순서'),
+                el('p.small.muted', '메뉴 순서는 왼쪽 메뉴를 같은 묶음 안에서 끌어 바꾸세요. 이름을 비우면 원래대로 돌아옵니다.'),
+                ...menuRows),
             el('div.row',
                 el('button.btn', { onclick: async () => {
                     const text = describeLayout();

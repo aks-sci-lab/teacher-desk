@@ -32,6 +32,20 @@ CREATE TABLE IF NOT EXISTS passes (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS absences (
+    id INTEGER PRIMARY KEY,
+    serial TEXT NOT NULL,
+    student_number INTEGER,
+    student_name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    absence_type TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    guardian_name TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,            -- cool / edufine / paste
