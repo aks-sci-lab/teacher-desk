@@ -11,6 +11,7 @@ import re
 import threading
 import urllib.error
 import urllib.parse
+import hashlib
 import urllib.request
 from datetime import date, datetime, timedelta
 
@@ -381,6 +382,81 @@ class Job:
                 "started_at": self.started_at if self.running else None, "error": self.error,
                 "result": result, "timeout": TIMEOUT, "hidden": self.db.get_meta("ai_hidden", []),
                 "new_count": len(new_items(self.db, result)) if result and result.get("text") else 0}
+
+
+ITEM_SYSTEM = ("너는 한국 중·고등학교 담임 교사의 업무 비서다. 쪽지나 공문 한 건을 읽고 교사가 10초 안에 파악하게 "
+               "한국어로 요약한다. 자료에 없는 내용은 지어내지 않고, 날짜·숫자는 원문 그대로 쓴다.")
+ITEM_INSTRUCTION = """아래 자료 한 건을 이 형식으로만 요약해 줘 (앞뒤 인사말 없이, 없는 칸은 줄 자체를 빼기).
+
+한 줄 요약: (40자 안쪽)
+- 해야 할 일: 
+- 날짜·시간·장소: 
+- 대상·제출 방법: 
+
+자료:
+"""
+ITEM_CHARS = 3500
+
+
+def body_hash(body):
+    return hashlib.sha256(" ".join((body or "").split()).encode("utf-8")).hexdigest()
+
+
+def item_ai(db, it, job=None):
+    """항목 화면에 줄 AI 요약 상태: 글(원문은 그대로 두고 따로)·만든 때·원문이 바뀌었는지·진행 중·실패."""
+    fresh = bool(it.get("ai_summary")) and it.get("ai_summary_hash") == body_hash(it.get("body"))
+    st = job.status(it["id"]) if job else {}
+    return {"text": it.get("ai_summary") or "", "at": it.get("ai_summary_at"), "model": it.get("ai_summary_model"),
+            "stale": bool(it.get("ai_summary")) and not fresh, "running": bool(st.get("running")),
+            "error": st.get("error")}
+
+
+class ItemJob:
+    """항목 하나의 요약을 뒤에서 만들어 저장 (한 번에 하나, 원문이 바뀐 때만 다시, 실패는 화면에 그대로)."""
+
+    def __init__(self, db, config):
+        self.db, self.config = db, config
+        self.lock = threading.Lock()
+        self.current = None
+        self.thread = None
+        self.errors = {}
+
+    def status(self, item_id):
+        return {"running": self.current == item_id and bool(self.thread and self.thread.is_alive()),
+                "error": self.errors.get(item_id)}
+
+    def start(self, item_id, force=False):
+        """True: 새로 시작, False: 이미 최신이거나 다른 요약이 진행 중."""
+        it = self.db.one("SELECT id, title, body, source, ai_summary, ai_summary_hash FROM items WHERE id = ?", (item_id,))
+        if not it:
+            raise AIError("없는 항목입니다")
+        if not force and it["ai_summary"] and it["ai_summary_hash"] == body_hash(it["body"]):
+            return False
+        with self.lock:
+            if self.thread and self.thread.is_alive():
+                raise AIError("다른 항목을 요약하는 중입니다. 끝나면 다시 눌러 주세요.")
+            self.errors.pop(item_id, None)
+            self.current = item_id
+            self.thread = threading.Thread(target=self._run, args=(it,), name="ai-item", daemon=True)
+            self.thread.start()
+            return True
+
+    def _run(self, it):
+        try:
+            check_local(self.config["ai_base"])
+            model = pick_model(self.config)
+            body = re.sub(r"[ \t]+", " ", it["body"]).strip()[:ITEM_CHARS]
+            prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}",
+                                [s["name"] for s in self.db.students()])
+            text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500),
+                              [s["name"] for s in self.db.students()])
+            self.db.execute("UPDATE items SET ai_summary = ?, ai_summary_hash = ?, ai_summary_at = ?, ai_summary_model = ? "
+                            "WHERE id = ?", (text, body_hash(it["body"]), datetime.now().strftime("%Y-%m-%d %H:%M"), model, it["id"]))
+        except AIError as e:
+            self.errors[it["id"]] = str(e)
+        except Exception as e:
+            self.errors[it["id"]] = f"요약 중 오류: {type(e).__name__}"
+            self.db.log(f"항목 AI 요약 오류: {type(e).__name__}: {e}", "error")
 
 
 MAX_HIDDEN = 300

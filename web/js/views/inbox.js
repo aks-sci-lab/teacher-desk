@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { el, clear, toast, guarded, dayLabel, debounce, catBadge, srcBadge, todayIso, parseIso, ddayInfo, markDates, modal, WD, CATEGORIES, SOURCE_NAMES } from '../ui.js';
 import { icon } from '../icons.js';
 import { registerView, openTab, refreshSide, findTab, setBadge, emit, on } from '../shell.js';
-import { loadState } from '../store.js';
+import { loadState, store } from '../store.js';
 
 let filter = { status: 'active', source: '' };
 let items = [];
@@ -211,6 +211,7 @@ function renderItem(pane, tab, it) {
     const sumSec = el('section.item-sec',
         el('div.sec-head', el('h2', '내용 요약'), el('span.spacer'),
             el('button.btn.small', { onclick: () => openOriginal(it) }, icon('doc'), '원문 보기')),
+        aiSummaryBox(it, tab),
         it.summary.length
             ? el('ul.item-summary', it.summary.map(s => el('li', markDates(s))))
             : el('p.muted', '요약할 줄을 찾지 못했습니다. 원문 보기로 확인하세요.'));
@@ -233,6 +234,33 @@ function renderItem(pane, tab, it) {
         it.images && it.images.length > 0 && el('section.card.info', el('h3', `사진 ${it.images.length}장`), imageGrid(it)));
 
     pane.append(el('div.item-view', head, el('div.item-grid', el('div.item-main', evSec, sumSec), side)));
+}
+
+// 이 항목만 AI 로 요약 (눌렀을 때만, 이 PC 의 LM Studio, 원문은 그대로 두고 따로 보여 줌)
+function aiSummaryBox(it, tab) {
+    if (!store.settings.ai_enabled) return null;
+    const a = it.ai || {};
+    const start = (force = false) => guarded(async () => {
+        await api.post(`/api/items/${it.id}/ai-summary`, { force });
+        tab.rerender();
+    });
+    if (a.running) {
+        setTimeout(() => { if (tab.pane.isConnected) tab.rerender(); }, 3000);   // 끝났는지 몇 초마다 확인
+        return el('div.ai-item-sum', el('span.spin'), ' AI 가 이 항목을 요약하는 중… (이 PC 에서 돌아 몇 분 걸릴 수 있습니다. 다른 화면을 써도 됩니다)');
+    }
+    if (a.error) {
+        return el('div.ai-item-sum.bad', el('p', `AI 요약 실패: ${a.error}`),
+            el('button.btn.small', { onclick: start(true) }, '다시 요약'));
+    }
+    if (a.text) {
+        return el('div.ai-item-sum',
+            el('div.ai-item-head', el('b', 'AI 요약'), el('span.muted.small', `${a.at || ''} · 틀릴 수 있으니 중요한 날짜·숫자는 원문 확인`),
+                el('span.spacer'), el('button.btn.small', { onclick: start(true) }, '다시 요약')),
+            a.stale && el('p.small', { style: 'color: var(--warn)' }, '원문이 바뀐 뒤에 만든 요약이 아닙니다. 다시 요약을 눌러 갱신하세요.'),
+            el('div.ai-item-text', a.text));
+    }
+    return el('div.ai-item-sum', el('button.btn.small', { onclick: start(false) }, icon('spark'), 'AI 로 요약하기'),
+        el('span.muted.small', ' 이 항목 하나만, 이 PC 의 AI 로 요약합니다 (원문은 그대로).'));
 }
 
 // 일정 후보 한 줄 (사용자 지적: 카드가 커서 비효율): 날짜·시각·D-day | 내용·분류 | 원문 한 줄 | 끝냄·고치기·지우기

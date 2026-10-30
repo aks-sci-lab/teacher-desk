@@ -158,6 +158,9 @@ class DB:
             self.conn.execute("ALTER TABLE events ADD COLUMN source TEXT")  # 0.5.11
         if "images" not in cols:
             self.conn.execute("ALTER TABLE items ADD COLUMN images TEXT")  # 0.5.2: 쿨메신저 사진
+        for col in ("ai_summary", "ai_summary_hash", "ai_summary_at", "ai_summary_model"):   # 0.5.35: 항목별 AI 요약
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
         if "sort" not in {r[1] for r in self.conn.execute("PRAGMA table_info(todos)")}:
             # 0.5.20: 꼭 할 일 순서를 끌어서 바꿈. 예전 것은 그때 보이던 순서(날짜 순)대로 번호를 매김
             self.conn.execute("ALTER TABLE todos ADD COLUMN sort REAL")

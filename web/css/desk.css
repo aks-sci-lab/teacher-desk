@@ -959,3 +959,8 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .todo-note .note-at { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .todo-note .note-txt { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .todo-notes input { width: 100%; border: 0; border-bottom: 1px dashed var(--line); background: transparent; font: inherit; font-size: 0.88em; padding: 2px 0; }
+
+.ai-item-sum { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); font-size: 0.92em; }
+.ai-item-sum.bad { background: var(--danger-soft); color: var(--danger); }
+.ai-item-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+.ai-item-text { white-space: pre-wrap; line-height: 1.6; }
