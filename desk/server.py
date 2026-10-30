@@ -76,6 +76,18 @@ def text_field(v, name, limit, required=False):
     return v
 
 
+def month_range(v):
+    """'2026-10' → ('2026-10-01', '2026-10-31') (목록을 월별로 볼 때)."""
+    need(isinstance(v, str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", v), "월 형식이 잘못되었습니다 (예: 2026-10)")
+    year, number = map(int, v.split("-"))
+    try:
+        start = date(year, number, 1)
+        nxt = date(year + 1, 1, 1) if number == 12 else date(year, number + 1, 1)
+    except ValueError:
+        raise ApiError(400, "월 형식이 잘못되었습니다 (예: 2026-10)")
+    return start.isoformat(), (nxt - timedelta(days=1)).isoformat()
+
+
 def parse_roster(text):
     """엑셀에서 복사한 '번호  이름' 줄들 → [{number, name}]. 번호가 없으면 순서대로."""
     rows, auto = [], 0
@@ -416,6 +428,10 @@ def pass_fields(body, partial=False):
 def list_passes(app, q, body):
     if q.get("date"):
         return app.db.query("SELECT * FROM passes WHERE date = ? ORDER BY time_out, id", (check_date(q["date"]),))
+    if q.get("month"):   # 그 달 전체, 최근 날짜가 위로 (날짜 안에서는 시각 순)
+        first, last = month_range(q["month"])
+        return app.db.query("SELECT * FROM passes WHERE date >= ? AND date <= ? ORDER BY date DESC, time_out, id",
+                            (first, last))
     return app.db.query("SELECT * FROM passes ORDER BY date DESC, id DESC LIMIT 200")
 
 
@@ -500,6 +516,10 @@ def list_absences(app, q, body):
         day = check_date(q["date"], "결석 날짜")
         rows = app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? ORDER BY id DESC",
                             (day, day))
+    elif q.get("month"):   # 그 달에 하루라도 걸치는 결석계 (전달에서 이어진 것 포함)
+        first, last = month_range(q["month"])
+        rows = app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? "
+                            "ORDER BY start_date DESC, id DESC", (last, first))
     else:
         rows = app.db.query("SELECT * FROM absences ORDER BY start_date DESC, id DESC LIMIT 200")
     return [absence.record(app.db, row, app.config["grade"]) for row in rows]

@@ -81,6 +81,39 @@ export function addDays(iso, n) {
     return isoDate(d);
 }
 
+// ---- 월별 목록 (조퇴·외출, 결석계 왼쪽 목록) ----
+export function monthKey(iso) {
+    return iso.slice(0, 7);
+}
+
+// 'YYYY-MM' 을 열 때 기준 날짜: 이번 달이면 오늘, 다른 달이면 그 달 1일 (새 증·결석계의 기본 날짜로도 씀)
+export function dateForMonth(key) {
+    const today = todayIso();
+    return monthKey(today) === key ? today : `${key}-01`;
+}
+
+export function shiftMonth(iso, n) {
+    const [y, m] = monthKey(iso).split('-').map(Number);
+    const d = new Date(y, m - 1 + n, 1);
+    return dateForMonth(`${d.getFullYear()}-${pad(d.getMonth() + 1)}`);
+}
+
+// ◀ [2026-10] ▶ [이번 달]  — onPick(기준 날짜)
+export function monthNav(iso, onPick) {
+    const input = el('input', { type: 'month', value: monthKey(iso), 'aria-label': '월 고르기',
+        onchange: e => onPick(dateForMonth(e.target.value || monthKey(todayIso()))) });
+    return el('div.filters',
+        el('button.icon-btn', { title: '전달', onclick: () => onPick(shiftMonth(iso, -1)) }, '◀'),
+        input,
+        el('button.icon-btn', { title: '다음달', onclick: () => onPick(shiftMonth(iso, 1)) }, '▶'),
+        monthKey(iso) !== monthKey(todayIso()) && el('button.chip', { onclick: () => onPick(todayIso()) }, '이번 달'));
+}
+
+// 날짜 묶음 제목 줄: '10/30(금) · 2건'
+export function dayHead(label, count) {
+    return el('li.day-head', el('span', label), el('span.cnt', `${count}건`));
+}
+
 // '11/3(화)' + 오늘/내일/모레
 export function dayLabel(iso, withRel = true) {
     const d = parseIso(iso);
