@@ -831,12 +831,18 @@ class Bot:
             if link:   # 이름이 들어 있는 링크 (사용자 결정 2026-10-30: 사유는 뺌) — 학생에게만 전달
                 self.send(f"🔗 {who} 학생용 링크 (이름 포함, 사유 없음)\n{link}\n학생에게만 전달하세요.", cid)
             return text
-        if kind in ("pr", "px"):
+        if kind in ("pr", "px", "pc"):
             pid, _, choice = rest.partition(":")
-            self.last_issued_pass_id = None
-            text = self.finish_pass(pid, choice if kind == "pr" else None)
+            self.last_issued_pass_id = self.last_confirm_pid = None
+            if kind == "pc" and choice not in ("0", "1"):
+                return self.reply(cid, "알 수 없는 선택입니다.")
+            text = self.finish_pass(pid, None if kind == "px" else choice, "confirm" if kind == "pc" else "reason")
             markup = None
-            if self.last_issued_pass_id:
+            if self.last_confirm_pid:
+                markup = {"inline_keyboard": [[
+                    {"text": "✅ 학부모 확인함", "callback_data": f"pc:{pid}:1"},
+                    {"text": "🚫 거절", "callback_data": f"pc:{pid}:0"}]]}
+            elif self.last_issued_pass_id:
                 pid = self.last_issued_pass_id
                 markup = {"inline_keyboard": [
                     [{"text": "🖨 기본 프린터로 인쇄", "callback_data": f"pp:{pid}:1"},
@@ -879,7 +885,7 @@ class Bot:
         pid = secrets.token_hex(3)
         pending[pid] = {"kind": kind, "number": number, "time_out": time_out, "time_return": time_return,
                         "date": (now or datetime.now()).date().isoformat()}
-        self.db.set_meta("telegram_pending", dict(list(pending.items())[-5:]))   # 최근 5개만
+        self.db.set_meta("telegram_pending", dict(list(pending.items())[-20:]))   # 최근 20개만 (학부모 확인 대기 포함)
         when = time_out + (f"~{time_return}" if time_return else "")
         buttons = [[{"text": r, "callback_data": f"pr:{pid}:{i}"}] for i, r in enumerate(REASONS[kind])]
         buttons.append([{"text": "사유 없이 발급", "callback_data": f"pr:{pid}:-"},
@@ -888,28 +894,48 @@ class Bot:
         self.send(text, cid, buttons)
         return text
 
-    def finish_pass(self, pid, choice):
+    def finish_pass(self, pid, choice, stage="reason"):
+        """증 발급 2단계. stage 'reason': 사유를 고르면 학부모 확인 대기로 / 'confirm': 학부모 확인함(1)·거절(0)이면 발급.
+        choice None 은 취소. 학부모 확인을 거치기 전에는 발급하지 않음 (사용자 결정 2026-10-30)."""
         pending = self.db.get_meta("telegram_pending") or {}
-        p = pending.pop(pid, None)
-        self.db.set_meta("telegram_pending", pending)
+        p = pending.get(pid)
         if not p:
             return "이미 처리했거나 오래된 요청입니다."
+        word = KIND[p["kind"]]
         if choice is None:
-            return f"취소했습니다 ({p['number']}번 {KIND[p['kind']]}증)."
+            pending.pop(pid)
+            self.db.set_meta("telegram_pending", pending)
+            return f"취소했습니다 ({p['number']}번 {word}증)."
         students = [s for s in self.db.students() if s["number"] == p["number"]]
         if len(students) != 1:
             return f"학생 명단에 {p['number']}번이 없습니다."
-        reasons = REASONS[p["kind"]]
-        reason = reasons[int(choice)] if choice.isdigit() and int(choice) < len(reasons) else ""
+        who = f"{p['number']}번 {masked(students[0]['name'])}"
+        when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
+        if stage == "reason":
+            if p.get("stage") != "confirm":   # 사유 단추를 또 눌러도 처음 고른 사유·확인 단추를 그대로 둠
+                reasons = REASONS[p["kind"]]
+                p["reason"] = reasons[int(choice)] if choice.isdigit() and int(choice) < len(reasons) else ""
+                p["stage"] = "confirm"
+                self.db.set_meta("telegram_pending", pending)
+            self.last_confirm_pid = pid
+            phone = students[0]["parent_phone"]
+            # 학부모 연락처는 확인 알림에만 (사용자 결정 2026-10-30). 사유는 싣지 않음
+            return (f"📞 {who} {word}증 {when}\n학부모 연락처: {phone or '없음 (학생 명단에서 입력하세요)'}\n"
+                    "학부모와 통화해 확인한 뒤 [학부모 확인함]을 누르면 발급합니다.")
+        if p.get("stage") != "confirm":
+            return "먼저 사유를 골라 주세요."
+        pending.pop(pid)
+        self.db.set_meta("telegram_pending", pending)
+        if choice != "1":
+            return f"🚫 {who} {word}증을 거절했습니다. 발급하지 않았습니다."
         saved = queries.issue_pass(self.db, {
             "kind": p["kind"], "student_name": students[0]["name"], "student_number": p["number"],
             "date": p["date"], "time_out": p["time_out"], "time_return": p["time_return"],
-            "reason": reason, "guardian_ok": 0, "share_reason": 0,
+            "reason": p.get("reason", ""), "guardian_ok": 1, "share_reason": 0,
         })
         self.last_issued_pass_id = saved["id"]
-        when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
         # 이름·사유는 답장에 쓰지 않음
-        return (f"✅ {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 발급 · {when}\n"
+        return (f"✅ {who} {word}증 발급 (학부모 확인) · {when}\n"
                 f"발급 번호 {saved['serial']}\n인쇄할지, 학생에게 줄 웹 링크를 받을지 고르세요.")
 
     def queue_print(self, p, who):
@@ -927,6 +953,10 @@ class Bot:
         """오늘 일정·마감 + 지난 1주일 AI 요약 (지운 줄은 빼고). 자료 번호는 '원문 n' 으로."""
         today = today or date.today()
         lines = [self.answer("today", today).replace("업무", "브리핑", 1)]
+        waiting = [p for p in (self.db.get_meta("telegram_pending") or {}).values() if p.get("stage") == "confirm"]
+        if waiting:
+            lines.append(f"\n■ 학부모 확인 대기 {len(waiting)}건: " + ", ".join(
+                f"{p['number']}번 {KIND[p['kind']]} {p['time_out']}" for p in waiting[:10]))
         mine = [t for t in queries.todos(self.db, today) if not t["done"]]
         if mine:
             lines.append(f"\n■ 꼭 할 일 (직접 넣은 것 {len(mine)})")

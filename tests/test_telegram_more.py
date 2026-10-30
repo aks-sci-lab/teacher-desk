@@ -40,6 +40,43 @@ class TelegramMoreTests(unittest.TestCase):
     def sent_text(self):
         return "\n".join(m["text"] for m in self.fake.sent) + "\n".join(m["text"] for m in self.fake.edited)
 
+    def parent_confirm(self, ok=True):
+        """사유를 고른 뒤 나온 학부모 확인 단추를 누름 (한 번 더 거침: 사용자 결정 2026-10-30)."""
+        row = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0]
+        return self.bot.handle_update(press(row[0 if ok else 1]["callback_data"]))
+
+    def test_pass_needs_parent_confirmation_with_phone_and_can_be_rejected(self):
+        self.env.db.replace_students([{"number": 7, "name": "김민준", "parent_phone": "010-1111-2222"},
+                                      {"number": 12, "name": "이서연"}])
+        self.bot.handle_update(msg("조퇴 7 13:30"))
+        reason = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        waiting = self.bot.handle_update(press(reason))
+        self.assertIsNone(self.env.db.one("SELECT * FROM passes"))      # 확인 전에는 발급하지 않음
+        self.assertIn("010-1111-2222", waiting)
+        self.assertIn("7번 김○○", waiting)
+        self.assertNotIn("병원", waiting)
+        self.assertIn("확인 대기 1건", self.bot.brief_text())
+        self.assertEqual(self.bot.handle_update(press(reason)), waiting)   # 사유 단추 두 번 눌러도 그대로
+        row = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0]
+        self.assertEqual([b["text"] for b in row], ["✅ 학부모 확인함", "🚫 거절"])
+        self.assertTrue(all(len(b["callback_data"].encode()) <= 64 for b in row))
+        self.assertIsNone(self.bot.handle_update(press(row[0]["callback_data"], chat=6)))
+        self.assertIn("거절", self.parent_confirm(ok=False))
+        self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
+        self.assertIn("오래된", self.bot.handle_update(press(row[0]["callback_data"])))
+        self.assertNotIn("확인 대기", self.bot.brief_text())
+        self.bot.start_pass(CHAT, "early", ["7", "13:30"])
+        self.bot.handle_update(press(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+        pid = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].split(":")[1]
+        self.assertIn("알 수 없는", self.bot.handle_update(press(f"pc:{pid}:9")))
+
+    def test_pass_without_parent_phone_still_needs_confirmation(self):
+        self.bot.handle_update(msg("외출 12 13:30 14:30"))
+        waiting = self.bot.handle_update(press(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]["callback_data"]))
+        self.assertIn("없음", waiting)
+        self.assertIn("발급 번호", self.parent_confirm())
+        self.assertEqual(self.env.db.one("SELECT guardian_ok FROM passes")["guardian_ok"], 1)
+
     def test_issue_pass_by_number_and_button(self):
         self.assertEqual(masked("김민준"), "김○○")
         reply = self.bot.handle_update(msg("조퇴 7 13:30"))
@@ -48,9 +85,11 @@ class TelegramMoreTests(unittest.TestCase):
         self.assertEqual(buttons[0][0]["text"], "병원 진료")
         data = buttons[0][0]["callback_data"]
         self.assertIsNone(self.bot.handle_update(press(data, chat=6)))     # 다른 사람의 단추는 무시
-        done = self.bot.handle_update(press(data))
+        self.assertIn("학부모", self.bot.handle_update(press(data)))
+        done = self.parent_confirm()
         self.assertIn("발급 번호", done)
         p = self.env.db.one("SELECT * FROM passes")
+        self.assertEqual(p["guardian_ok"], 1)
         self.assertEqual((p["student_name"], p["student_number"], p["kind"], p["time_out"], p["reason"]),
                          ("김민준", 7, "early", "13:30", "병원 진료"))
         self.assertIn(p["serial"], self.fake.edited[-1]["text"])
@@ -83,7 +122,8 @@ class TelegramMoreTests(unittest.TestCase):
     def test_pass_can_be_issued_without_print_request(self):
         self.bot.start_pass(CHAT, "out", ["12"], now=datetime(2026, 10, 29, 9, 2))
         buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
-        issued = self.bot.handle_update(press(buttons[-1][0]["callback_data"]))
+        self.bot.handle_update(press(buttons[-1][0]["callback_data"]))
+        issued = self.parent_confirm()
         self.assertIn("발급 번호", issued)
         choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][1][1]["callback_data"]
         self.assertTrue(choice.endswith(":0"))
@@ -95,6 +135,7 @@ class TelegramMoreTests(unittest.TestCase):
         self.bot.start_pass(CHAT, "early", ["7", "13:30"], now=datetime(2026, 10, 30, 9, 2))
         first = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
         self.bot.handle_update(press(first))
+        self.parent_confirm()
         return {b["text"]: b["callback_data"] for row in self.fake.edited[-1]["reply_markup"]["inline_keyboard"] for b in row}
 
     def test_pass_web_link_choice(self):

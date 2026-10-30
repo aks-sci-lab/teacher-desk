@@ -87,6 +87,8 @@ class TelegramGuidedTests(unittest.TestCase):
         self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
         reason = self.last_button()
         self.bot.handle_update(press(reason))
+        self.assertIsNone(self.env.db.one("SELECT * FROM passes"))   # 학부모 확인 전
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
         record = self.env.db.one("SELECT * FROM passes")
         self.assertEqual((record["student_number"], record["time_out"], record["time_return"]), (7, "13:30", "14:30"))
         self.assertNotIn("최별빛", self.texts())
