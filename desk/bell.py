@@ -54,10 +54,13 @@ def due(db, now):
         begin = _at(today, start)
         if not (begin - lead <= now < begin + LATE):
             continue
-        if timetable.block_reason(evs, today, timetable.grade_of(l["cls"]), today):
+        note = timetable.day_note(evs, today, timetable.grade_of(l["cls"]))
+        if note and note["level"] == "off":
             continue   # 현장체험학습·휴업 등으로 그 학년 수업이 없는 날
         head = "🔔 지금 " if now >= begin or not lead else f"🔔 {round((begin - now).total_seconds() / 60)}분 뒤 "
         text = head + lesson_text(l, periods) + (" (교체된 수업)" if l.get("moved") else "")
+        if note:   # 학년이 안 적힌 행사 등: 수업이 없다고 단정하지 않고 확인하라고만 덧붙임
+            text += f"\n⚠ 학사일정 확인: {note['text'][:40]}"
         nxt = lessons[i + 1] if i + 1 < len(lessons) else None
         text += f"\n다음: {lesson_text(nxt, periods)}" if nxt else "\n오늘 마지막 수업입니다."
         out.append((key, text))

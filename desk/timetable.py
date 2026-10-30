@@ -20,6 +20,8 @@ P_CLS = re.compile(r"^\d{1,2}\s*-\s*\d{0,2}$")
 # 이런 학사일정이 있는 날은 수업을 옮기지 않음 (원래 도구와 같은 낱말)
 P_BLOCK = re.compile(r"공휴일|휴일|휴업|방학|어린이날|기념일|연휴|한글날|제헌절|성탄절|광복절|개천절|현충일|삼일절|선거|노동절|"
                      r"고사|수학능력|수능|수학여행|현장체험|방학식|졸업식|종업식|축제|체육|학력평가|모의평가|진단검사|창의체험|학술제|행사")
+# 수업 자체가 없는 날 (학년이 안 적혀 있으면 전교). 나머지 P_BLOCK 낱말(행사·체육·고사…)은 일부 교시만 바뀔 수 있음
+P_OFF = re.compile(r"공휴일|휴일|휴업|방학|어린이날|기념일|연휴|한글날|제헌절|성탄절|광복절|개천절|현충일|삼일절|선거|노동절|수학능력|수능")
 P_GRADES = re.compile(r"(?:^|[\s(])([1-3](?:\s*[,.·]\s*[1-3])*)\s*학?년")
 
 
@@ -241,6 +243,26 @@ def block_reason(day_events, d, grade, today):
         if not grades or grade is None or grade in grades:
             return text
     return None
+
+
+def day_note(day_events, d, grade):
+    """그날 내 수업(grade 학년)에 대한 학사일정 판정 — 화면·텔레그램·수업 알림이 함께 씀.
+
+    {'level': 'off', 'text'}   수업이 없는 날 (휴업·공휴일, 또는 그 학년이 적힌 행사)
+    {'level': 'maybe', 'text'} 학년이 안 적힌 행사·체육·고사 등: 일부 교시가 바뀔 수 있어 확인 필요 (수업이 없다고 단정하지 않음)
+    없으면 None (여러 개면 off 우선)."""
+    maybe = None
+    for text in day_events.get(d.isoformat(), []):
+        if not P_BLOCK.search(text):
+            continue
+        g = P_GRADES.search(text)
+        grades = {int(x) for x in re.split(r"[,.·]", g.group(1))} if g else None
+        if grades and grade is not None and grade not in grades:
+            continue   # 다른 학년 행사
+        if P_OFF.search(text) or grades:
+            return {"level": "off", "text": text}
+        maybe = maybe or {"level": "maybe", "text": text}
+    return maybe
 
 
 def longest_run(day_lessons, periods):

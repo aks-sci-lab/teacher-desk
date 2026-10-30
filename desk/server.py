@@ -897,7 +897,7 @@ def calendar_ics(app, q, body):
 @api("GET", "/api/today")
 def get_today(app, q, body):
     s = queries.today_summary(app.db)
-    s["lessons"] = queries.my_lessons(app.db, app.config, date.today())
+    s["lessons"] = queries.day_lessons(app.db, app.config, date.today())
     return s
 
 

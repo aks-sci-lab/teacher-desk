@@ -490,7 +490,8 @@ function renderToday(pane) {
                 s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
                 s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
                     ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },
-                        el('b', `${l.p}교시`), l.start && el('span.lesson-time', l.start), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'))))
+                        el('b', `${l.p}교시`), l.start && el('span.lesson-time', l.start), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'),
+                        l.note && el('span', { className: `tag lesson-note ${l.note.level}`, title: l.note.text }, l.note.level === 'off' ? `수업 없음 · ${l.note.text.slice(0, 14)}` : `확인 · ${l.note.text.slice(0, 14)}`))))
                     : el('p.muted.small', '없음')) : null,
                 card('오늘 일정', s.today.length, evList(s.today, '없음')),
                 card('7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '없음')),
