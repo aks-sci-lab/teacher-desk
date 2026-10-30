@@ -10,7 +10,9 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 LATEST_JSON = "https://github.com/aks-sci-lab/teacher-desk/releases/download/desk-latest/latest.json"
@@ -32,17 +34,74 @@ def is_portable(app_dir):
     return (Path(app_dir) / "python" / "python.exe").is_file()
 
 
+def fetch_latest(url=None, timeout=4):
+    """배포된 최신 정보 {'version', ...}. 인터넷이 안 되거나 형식이 다르면 예외."""
+    url = url or os.environ.get("DESK_UPDATE_JSON") or LATEST_JSON
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        info = json.loads(r.read().decode("utf-8"))
+    if not isinstance(info, dict) or "version" not in info:
+        raise ValueError("latest.json 형식이 다릅니다")
+    return info
+
+
 def check(current, url=None, timeout=4):
     """새 버전이 있으면 {'version', ...}, 없거나 확인할 수 없으면 None."""
-    url = url or os.environ.get("DESK_UPDATE_JSON") or LATEST_JSON
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            info = json.loads(r.read().decode("utf-8"))
+        info = fetch_latest(url, timeout)
     except Exception:  # 인터넷이 안 되거나 주소가 없으면 조용히 넘어감 (켜는 것을 막지 않음)
         return None
-    if not isinstance(info, dict) or "version" not in info:
-        return None
     return info if parse_version(info["version"]) > parse_version(current) else None
+
+
+CHECK_EVERY = 6 * 3600   # 켜 둔 채로 새 배포를 알아보는 간격
+FIRST_CHECK = 30         # 켠 뒤 처음 확인까지 (켜는 것을 늦추지 않게)
+
+
+class Checker:
+    """켜 둔 채로 새 배포가 있는지 가끔 확인 (알림만, 바꾸는 것은 사용자가 [지금 업데이트] 를 눌러야)."""
+
+    def __init__(self, version, app_dir, interval=CHECK_EVERY):
+        self.version, self.app_dir, self.interval = version, app_dir, interval
+        self.latest = None        # 새 버전이 있을 때 {'version', ...}
+        self.latest_seen = None   # 마지막으로 읽은 배포 버전
+        self.checked_at = None
+        self.error = None
+        self.stop_event = threading.Event()
+        self.thread = None
+
+    def check(self, timeout=6):
+        """지금 확인하고 상태를 돌려줌 (실패하면 error 에 이유)."""
+        try:
+            info = fetch_latest(timeout=timeout)
+            self.error = None
+            self.latest_seen = str(info["version"])
+            self.latest = info if parse_version(info["version"]) > parse_version(self.version) else None
+        except Exception as e:
+            self.error = f"새 버전을 확인하지 못했습니다 ({type(e).__name__}). 인터넷 연결을 확인하세요."
+        self.checked_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        return self.state()
+
+    def state(self):
+        return {"current": self.version, "latest": self.latest_seen, "available": bool(self.latest),
+                "portable": is_portable(self.app_dir) or bool(os.environ.get("DESK_UPDATE_JSON")),
+                "checked_at": self.checked_at, "error": self.error}
+
+    def loop(self):
+        if self.stop_event.wait(FIRST_CHECK):
+            return
+        while True:
+            self.check()
+            if self.stop_event.wait(self.interval):
+                return
+
+    def start(self):
+        if not self.state()["portable"]:   # 개발용 폴더는 알아볼 필요 없음
+            return
+        self.thread = threading.Thread(target=self.loop, name="update-check", daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
 
 
 def _q(s):

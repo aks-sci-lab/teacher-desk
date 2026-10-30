@@ -4,6 +4,7 @@ import { el, clear, toast, guarded, download } from '../ui.js';
 import { registerView, openTab, findTab, on, toggleLayoutMode } from '../shell.js';
 import { store, loadState, saveSettings } from '../store.js';
 import { openAI } from './ai.js';
+import { checkUpdate, startUpdate } from '../update.js';
 
 function textField(key, label, hint, attrs = {}) {
     const input = el('input', { type: 'text', value: store.settings[key] ?? '', ...attrs });
@@ -140,6 +141,26 @@ function autoSave(pane) {
         toast(`${label} 저장됨`, 'info', 1800);
     }));
     pane.addEventListener('input', () => { pane.dataset.dirty = '1'; });
+}
+
+// 업데이트: 지금 버전·배포된 최신 버전·[새 버전 확인]·[지금 업데이트] (프로그램을 따로 끌 필요 없음)
+function updateBox(st) {
+    const box = el('div');
+    const draw = u => {
+        clear(box,
+            el('p.small', `지금 버전: ${st.version || ''}` + (u?.latest ? ` · 배포된 최신: ${u.latest}` : '')
+                + (u?.checked_at ? ` · 확인 ${u.checked_at}` : '')),
+            u?.error && el('p.small', { style: 'color: var(--danger)' }, u.error),
+            u?.available
+                ? el('p.small', { style: 'color: var(--ok); font-weight: 700' }, `새 버전 ${u.latest} 이 있습니다.`)
+                : (u?.checked_at && !u.error && el('p.small', { style: 'color: var(--ok)' }, '최신 버전입니다.')),
+            u && !u.portable && el('p.small.muted', '개발용 폴더라 화면에서 업데이트할 수 없습니다 (git 으로 받으세요).'),
+            el('div.row',
+                el('button.btn.small', { onclick: guarded(async () => draw(await checkUpdate())) }, '새 버전 확인'),
+                u?.available && u.portable && el('button.btn.small.primary', { onclick: startUpdate }, '지금 업데이트')));
+    };
+    draw(store.state?.update);
+    return box;
 }
 
 function renderSettings(pane, tab) {
@@ -329,7 +350,8 @@ function renderSettings(pane, tab) {
         section('업데이트',
             checkField('auto_update', '켤 때 새 버전 확인',
                 '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
-            el('p.small.muted', `지금 버전: ${st.version || ''}`)),
+            updateBox(st),
+            ),
         section('프로그램 실행',
             el('p.small.muted', '브라우저를 닫아도 수집·텔레그램은 백그라운드에서 계속 동작합니다. 완전히 끄려면 아래 단추를 누르세요.'),
             el('button.btn', { onclick: guarded(async () => {

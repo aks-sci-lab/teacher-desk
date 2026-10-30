@@ -964,3 +964,10 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .ai-item-sum.bad { background: var(--danger-soft); color: var(--danger); }
 .ai-item-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .ai-item-text { white-space: pre-wrap; line-height: 1.6; }
+
+/* 화면에서 업데이트 (0.5.38) */
+.sb:empty { display: none; }
+#statusbar .sb[title^="새 버전"] { color: var(--accent); font-weight: 700; }
+.update-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(17, 24, 39, .6); display: grid; place-items: center; padding: 24px; }
+.update-box { width: min(460px, 100%); padding: 22px 24px; border-radius: 12px; background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.update-box h2 { margin: 0 0 10px; }
