@@ -17,6 +17,7 @@
 | 경로 | 내용 |
 |---|---|
 | `desk.py`, `desk/` | 로컬 서버(Python 표준 라이브러리). `server.py` API, `extract.py` 날짜·마감, `docs.py`·`cfb.py` hwp/hwpx/pdf, `collect.py` 수집, `coolmsg.py` 쿨메신저 .udb, `schoolcal.py`·`xlsx.py`·`neis.py` 학사일정, `scheduler.py` 9·12·15시, `watcher.py` 실시간 감시, `ai.py` LM Studio 1주일 요약, `updater.py` 켤 때 업데이트, `telegram.py`, `picker.py` 찾아보기 창 |
+| `browser-extension/`, `desk/capture.py` | 에듀파인 화면을 단축키로 보내는 크롬·엣지 확장 프로그램과 받는 쪽 (`/capture`, 설정에서 켠 연결 키 필요) |
 | `web/` | 화면 (순수 HTML/CSS/JS ES 모듈, VS Code 형태). `js/views/absence.js` 결석계 |
 | `pass/` | 학생 폰용 조퇴증·외출증 페이지 (공개, 내용은 주소 `#` 뒤에만). `pass/timetable/` 은 시간표 교체 도우미 (사용자가 준 파일 그대로, 브라우저 안에서만) |
 | `tests/` | Python 시험(`python -m unittest discover -s tests -t .`), `pass-codec.test.cjs`(`node --test`) |

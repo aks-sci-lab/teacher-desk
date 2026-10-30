@@ -163,6 +163,38 @@ function updateBox(st) {
     return box;
 }
 
+// 브라우저 단축키로 화면 보내기: 연결 켜기·연결 키·확장 프로그램 설치 안내
+function captureBox() {
+    const box = el('div');
+    const act = action => guarded(async () => { draw(await api.post('/api/capture', { action })); });
+    const draw = c => {
+        clear(box,
+            c.enabled
+                ? el('div',
+                    el('p', { style: 'color: var(--ok); font-weight: 700' }, '✅ 연결이 켜져 있습니다'),
+                    el('label.field', el('span', '연결 키 (확장 프로그램 옵션에 붙여 넣기)'),
+                        el('input', { type: 'text', readonly: true, value: c.key, onclick: ev => ev.target.select() }),
+                        el('span.hint', `업무 데스크 주소: ${c.url} — 이 키를 아는 프로그램만 화면을 보낼 수 있습니다. 다른 사람에게 알려 주지 마세요.`)),
+                    el('div.row',
+                        el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(c.key); toast('연결 키를 복사했습니다'); }) }, '키 복사'),
+                        el('button.btn.small', { onclick: act('renew') }, '키 새로 만들기'),
+                        el('button.btn.small.danger', { onclick: act('disable') }, '연결 끄기')),
+                    el('ol.small', { style: 'margin: 12px 0 0; padding-left: 1.2em' },
+                        el('li', '크롬 또는 엣지 주소창에  chrome://extensions  (엣지는 edge://extensions) 를 입력해 엽니다.'),
+                        el('li', '오른쪽 위 "개발자 모드"를 켭니다.'),
+                        el('li', ['"압축해제된 확장 프로그램을 로드합니다"(엣지: "압축 풀린 항목 로드")를 누르고 이 폴더를 고릅니다: ',
+                            el('code', c.folder)]),
+                        el('li', '확장 프로그램 "업무 데스크로 보내기"의 옵션(세부 정보 → 확장 프로그램 옵션)에 위 연결 키를 붙여 넣고 [저장하고 연결 확인]을 누릅니다.'),
+                        el('li', '에듀파인 화면에서 Alt+Shift+S 를 누르면 지금 보이는 글이 수신함(출처: 에듀파인)으로 들어옵니다. 글을 드래그로 고른 뒤 누르면 고른 글만 보냅니다.')),
+                    !c.folder_exists && el('p.small', { style: 'color: var(--danger)' }, '확장 프로그램 폴더를 찾지 못했습니다. 업데이트 뒤에 다시 확인하세요.'))
+                : el('div',
+                    el('p.small', '에듀파인(*.use.go.kr) 화면에서 단축키를 누르면 지금 보이는 글을 이 PC 의 업무 데스크로 보내 수신함에 넣고, 날짜·마감을 찾습니다. 읽은 글은 이 PC 밖으로 나가지 않습니다. 켜기 전에는 어떤 화면도 받지 않습니다.'),
+                    el('div.row', el('button.btn.small.primary', { onclick: act('enable') }, '연결 켜기'))));
+    };
+    guarded(async () => draw(await api.get('/api/capture')))();
+    return box;
+}
+
 function renderSettings(pane, tab) {
     const s = store.settings;
     const st = store.state || {};
@@ -300,6 +332,7 @@ function renderSettings(pane, tab) {
                 el('input', { type: 'text', value: (s.collect_times || []).join(', '), dataset: { key: 'collect_times' } }),
                 el('span.hint', '쉼표로 구분. 예: 09:00, 12:00, 15:00 — 업무 데스크가 켜져 있어야 합니다. 놓친 시각은 켜진 뒤 한 번 수집합니다.')),
             el('p.small.muted', `PDF 읽기: ${st.pdf_ready ? '준비됨' : '꺼짐 — 명령 프롬프트에서  pip install pypdf  실행 후 다시 시작'}`)),
+        section('브라우저 단축키로 화면 보내기 (에듀파인)', captureBox()),
         section('텔레그램',
             el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
                 el('li', '텔레그램에서 @BotFather 를 찾아 /newbot 으로 봇을 만들고 토큰을 받습니다.'),
