@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 from urllib.parse import quote
 
+from desk import printing
 from desk.server import App, make_handler, parse_roster
 from desk.telegram import Bot
 from http.server import ThreadingHTTPServer
@@ -200,7 +201,7 @@ class ServerTests(unittest.TestCase):
             "date": today, "time_out": "13:20",
         })
         self.assertEqual(status, 200, p)
-        self.env.db.set_meta("telegram_print_queue", [p["id"]])
+        printing.enqueue(self.env.db, p["id"])
         status, state = self.req("GET", "/api/state")
         self.assertEqual(status, 200)
         self.assertEqual(state["print_requests"][0]["id"], p["id"])
@@ -215,7 +216,7 @@ class ServerTests(unittest.TestCase):
         })
         self.assertEqual(status, 200, p)
         self.assertEqual(self.req("POST", f"/api/print-requests/{p['id']}/print", {})[0], 404)
-        self.env.db.set_meta("telegram_print_queue", [p["id"]])
+        printing.enqueue(self.env.db, p["id"])
         with patch("desk.server.printing.start_silent_pass", return_value=True) as start_print:
             status, result = self.req("POST", f"/api/print-requests/{p['id']}/print", {})
         self.assertEqual((status, result["started"]), (200, True))

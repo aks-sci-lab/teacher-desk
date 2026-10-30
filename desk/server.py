@@ -261,7 +261,7 @@ def get_state(app, q, body):
             "absences": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM absences")["last"],
         },
         "print_requests": [db.one("SELECT * FROM passes WHERE id = ?", (pid,))
-                           for pid in db.get_meta("telegram_print_queue", [])],
+                           for pid in printing.queue(db)],
         "telegram": {
             "status": app.bot.status if app.bot else "꺼짐",
             "linked": bool(app.bot and app.bot.chat_id),
@@ -372,20 +372,19 @@ def update_pass(app, q, body, pid):
 
 @api("POST", r"/api/print-requests/(\d+)/complete")
 def complete_print_request(app, q, body, pid):
-    with app.db.lock:
-        queue = [n for n in app.db.get_meta("telegram_print_queue", []) if n != int(pid)]
-        app.db.set_meta("telegram_print_queue", queue)
+    printing.dequeue(app.db, pid)
     return {"ok": True}
 
 
 @api("POST", r"/api/print-requests/(\d+)/print")
 def start_print_request(app, q, body, pid):
     pass_id = int(pid)
-    need(pass_id in app.db.get_meta("telegram_print_queue", []), "이미 처리했거나 없는 인쇄 요청입니다", 404)
+    need(pass_id in printing.queue(app.db), "이미 처리했거나 없는 인쇄 요청입니다", 404)
     need(app.db.one("SELECT id FROM passes WHERE id = ?", (pass_id,)), "없는 발급 기록입니다", 404)
     try:
         started = printing.start_silent_pass(app.config, pass_id)
     except printing.PrintError as e:
+        printing.dequeue(app.db, pass_id)   # 실패한 요청이 화면을 열 때마다 다시 시도되지 않게
         raise ApiError(503, str(e)) from e
     return {"ok": True, "started": started}
 
