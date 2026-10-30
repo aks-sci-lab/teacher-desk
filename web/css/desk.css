@@ -966,13 +966,15 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .ai-item-text { white-space: pre-wrap; line-height: 1.6; }
 
 /* 월별 출결 통계 표 (0.5.37): 큰 글자·가운데 정렬·0 은 흐리게·머리 고정 */
-.att-wrap { overflow: auto; max-height: calc(100vh - 220px); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+/* 스크롤은 작업 영역 하나만 (0.5.42): 표 안에 따로 스크롤을 두지 않고, 머리 두 줄과 합계 줄은 작업 영역 스크롤에 맞춰 붙어 있음 */
+.att-wrap { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .att-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 1rem; }
 .att-table th, .att-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .att-table thead th { position: sticky; background: var(--surface-2); color: var(--ink); font-size: 0.95rem; font-weight: 700; z-index: 1; }
 .att-table thead tr:first-child th { top: 0; text-align: center; }
+.att-table thead tr:first-child th.group, .att-table thead tr:nth-child(2) th { height: 40px; box-sizing: border-box; padding-top: 0; padding-bottom: 0; }
 .att-table thead tr:first-child th.col-no, .att-table thead tr:first-child th.col-name { text-align: left; }
-.att-table thead tr:nth-child(2) th { top: 38px; border-bottom: 2px solid var(--line); }
+.att-table thead tr:nth-child(2) th { top: 40px; border-bottom: 2px solid var(--line); }
 .att-table .num { text-align: center; min-width: 76px; font-variant-numeric: tabular-nums; }
 .att-table .col-no { width: 56px; color: var(--muted); }
 .att-table .col-name { font-weight: 600; }
@@ -991,3 +993,13 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .update-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(17, 24, 39, .6); display: grid; place-items: center; padding: 24px; }
 .update-box { width: min(460px, 100%); padding: 22px 24px; border-radius: 12px; background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
 .update-box h2 { margin: 0 0 10px; }
+.att-table thead tr:first-child th:first-child { border-top-left-radius: 9px; }
+.att-table thead tr:first-child th:last-child { border-top-right-radius: 9px; }
+.att-table tr.total th:first-child { border-bottom-left-radius: 9px; }
+.att-table tr.total th:last-child { border-bottom-right-radius: 9px; }
+
+/* 조퇴·외출, 결석계 목록을 월별로 (0.5.42): 날짜 묶음 제목 */
+.list li.day-head { display: flex; justify-content: space-between; align-items: baseline; cursor: default; position: sticky; top: 0; z-index: 1;
+    padding: 5px var(--pad); background: var(--surface-2); color: var(--muted); font-size: 0.85em; font-weight: 700; }
+.list li.day-head:hover { background: var(--surface-2); }
+.list li.day-head .cnt { font-weight: 400; }
