@@ -301,7 +301,7 @@ def rescan_events(db):
         if any(e["date"] not in found for e in old):
             continue  # 날짜를 손으로 고친 일정이 있음
         new = extract.analyze(body, ref=ref, title=it["title"])["events"]
-        shape = lambda es: sorted((e["date"], e.get("end_date"), e.get("time"), e["kind"], e["text"]) for e in es)
+        shape = lambda es: sorted((e["date"], e.get("end_date") or "", e.get("time") or "", e["kind"], e["text"]) for e in es)  # None 과 글자를 섞어 비교하면 오류
         if shape(new) != shape(old):
             db.replace_events(it["id"], new)
             changed += 1
