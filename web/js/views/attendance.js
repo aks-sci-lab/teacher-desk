@@ -1,6 +1,6 @@
 // 출결 메뉴에서 조퇴·외출, 결석계, 월별 통계를 함께 제공
 import { api } from '../api.js';
-import { el, clear, guarded, todayIso } from '../ui.js';
+import { el, clear, guarded, todayIso, modal } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on } from '../shell.js';
 import { renderPassesSide, openForm } from './passes.js';
 import { renderAbsenceSide, openAbsenceForm } from './absence.js';
@@ -139,19 +139,19 @@ function openDetails(month, students, metric, label, type) {
         .map(detail => ({ ...detail, number: student.student_number, name: student.student_name })))
         .sort((a, b) => a.date.localeCompare(b.date) || (a.number ?? 1000) - (b.number ?? 1000));
     const who = students.length === 1 ? students[0].student_name : '전체';
-    openTab({
-        id: 'attendance-details', title: `${who} ${label}`, refresh: true,
-        render(pane) {
-            pane.append(
-                el('h1', `${who} · ${label}`),
-                el('p.sub', `${month} · ${details.length}건`),
-                el('table.tbl',
+    // 탭이 아니라 팝업 (Esc·바깥을 누르면 닫힘)
+    modal({
+        title: `${who} · ${label}`, wide: true,
+        body: el('div',
+            el('p.sub', `${month} · ${details.length}건`),
+            details.length
+                ? el('table.tbl',
                     el('thead', el('tr', ['날짜', '번호', '이름', '종류', '사유'].map(text => el('th', text)))),
                     el('tbody', details.map(detail => el('tr',
                         el('td', `${detail.date}${detail.time ? ' ' + detail.time : ''}`),
                         el('td', detail.number ?? '—'), el('td', detail.name),
-                        el('td', detail.kind), el('td', detail.reason || '기록 없음'))))));
-        },
+                        el('td', detail.kind), el('td', detail.reason || '기록 없음')))))
+                : el('p.muted', '내역이 없습니다.')),
     });
 }
 
