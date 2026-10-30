@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, capture as capture_mod, updater, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
+from . import VERSION, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -101,6 +101,7 @@ class App:
     def __init__(self, db, config, collector, bot):
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
+        self.ui = window_mod.UiTracker()   # 지금 열려 있는 화면들 (전용 창 하나만 쓰게)
         self.watcher = None
         self.shutdown = None
         self.update_checker = None   # desk.py 가 켬 (시험에서는 없음)
@@ -214,6 +215,9 @@ def make_handler(app):
                 if url.path.startswith("/api/"):
                     if not secrets.compare_digest(self.headers.get("X-Desk-Token", ""), app.token):
                         raise ApiError(401, "화면을 새로 고침하세요 (서버가 다시 시작되었습니다)")
+                    cid = self.headers.get("X-Desk-Client", "")
+                    if window_mod.CLIENT_ID_RE.match(cid):
+                        app.ui.touch(cid)   # 이 화면이 아직 열려 있다는 신호
                     q = {k: v[-1] for k, v in parse_qs(url.query).items()}
                     body = self.read_json() if method in ("POST", "PUT", "PATCH") else {}
                     result = route(app, method, url.path, q, body)
@@ -314,6 +318,7 @@ def get_state(app, q, body):
             "linked": bool(app.bot and app.bot.chat_id),
             "pair_code": app.bot.pair_code() if app.bot else None,
         },
+        "ui": app.ui.state(),
         "update": app.update_checker.state() if app.update_checker else None,
         "pdf_ready": pypdf_ready(),
         "watch": {"enabled": bool(cfg["watch_enabled"]), "running": bool(app.watcher), "interval": cfg["watch_interval"]},
@@ -353,6 +358,32 @@ def set_capture(app, q, body):
         app.config.set_value("capture_key", capture_mod.new_key())
         app.db.log("브라우저 단축키 연결 키를 만들었습니다")
     return capture_state(app)
+
+
+def ui_id(body):
+    cid = body.get("id")
+    need(isinstance(cid, str) and window_mod.CLIENT_ID_RE.match(cid), "화면 번호가 잘못되었습니다")
+    return cid
+
+
+@api("GET", "/api/ui")
+def get_ui(app, q, body):
+    """지금 열려 있는 업무 데스크 화면 (이미 켜진 앱을 다시 켤 때 새 창을 열지 앞으로 가져올지 정함)."""
+    return app.ui.state()
+
+
+@api("POST", "/api/ui/claim")
+def ui_claim(app, q, body):
+    """이 화면을 '쓰는 화면'으로 (가장 나중에 연 화면이 이김, 다른 화면에는 안내가 덮임)."""
+    app.ui.claim(ui_id(body))
+    return app.ui.state()
+
+
+@api("POST", "/api/ui/bye")
+def ui_bye(app, q, body):
+    """화면이 닫힐 때 (바로 알려 줘야 다음에 켤 때 새 창을 엶)."""
+    app.ui.bye(ui_id(body))
+    return {"ok": True}
 
 
 @api("GET", "/api/logs")
@@ -1482,7 +1513,7 @@ def update_apply(app, q, body):
     need(not busy or body.get("force") is True,
          f"{' · '.join(busy)} 중입니다. 끝난 뒤 다시 누르거나, 중단해도 되면 다시 확인하세요", 409)
     try:
-        updater.start_update(APP_DIR)
+        updater.start_update(APP_DIR, open_browser=False)   # 열려 있는 화면이 다시 켜지면 스스로 새로 고침하므로 새 창을 열지 않음
     except OSError as e:
         raise ApiError(500, f"업데이트 창을 열지 못했습니다 ({e.strerror or type(e).__name__})") from e
     app.db.log(f"화면에서 업데이트 시작: {st['current']} → {st['latest']}")
@@ -1506,6 +1537,5 @@ def serve(app, open_browser=True):
     print(f"업무 데스크가 켜졌습니다: {url}")
     print("브라우저를 닫아도 계속 실행됩니다. 완전히 끄려면 설정의 '프로그램 종료'를 누르세요.")
     if open_browser:
-        import webbrowser
-        webbrowser.open(url)
+        window_mod.open_ui(port, app.config.data_dir, app.config["app_window"])
     return httpd

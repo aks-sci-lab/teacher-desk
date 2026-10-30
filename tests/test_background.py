@@ -14,15 +14,20 @@ from unittest.mock import patch
 from desk import background
 
 
+class _Cfg(dict):
+    data_dir = "data"
+
+
 class BackgroundTests(unittest.TestCase):
     def test_existing_app_is_reused_without_another_process(self):
         with patch.object(background.os, "name", "nt"), \
                 patch.object(background, "is_running", return_value=True), \
                 patch.object(background.subprocess, "Popen") as start, \
-                patch.object(background.webbrowser, "open") as browser:
-            self.assertEqual(background.launch({"port": 8770}, ["--background"]), 0)
-            start.assert_not_called()
-            browser.assert_called_once_with("http://127.0.0.1:8770/")
+                patch.object(background.window, "show_ui") as show:
+            config = _Cfg({"port": 8770, "app_window": True})
+            self.assertEqual(background.launch(config, ["--background"]), 0)
+            start.assert_not_called()   # 두 번째 프로세스를 만들지 않고, 열린 창을 앞으로(없으면 전용 창을 새로)
+            show.assert_called_once_with(8770, "data", True)
 
     @unittest.skipUnless(os.name == "nt", "Windows 실행 방식 검사")
     def test_new_process_has_no_console_and_startup_failure_is_reported(self):

@@ -108,11 +108,12 @@ def _q(s):
     return "'" + str(s).replace("'", "''") + "'"
 
 
-def build_script(app_dir, pid, zip_urls, relaunch=True):
+def build_script(app_dir, pid, zip_urls, relaunch=True, open_browser=True):
     """업데이트 창이 실행할 PowerShell (업무 데스크가 끝나길 기다렸다가 파일을 바꾸고 다시 켬)."""
     app = str(Path(app_dir))
     urls = ", ".join(_q(u) for u in zip_urls)
-    restart = ("Start-Process -FilePath (Join-Path $dir 'start-desk.bat') -ArgumentList '--no-update-check' "
+    args = "--no-update-check" + ("" if open_browser else " --no-browser")   # 화면에서 업데이트하면 열려 있던 화면이 스스로 새로 고침
+    restart = (f"Start-Process -FilePath (Join-Path $dir 'start-desk.bat') -ArgumentList '{args}' "
                "-WorkingDirectory $dir" if relaunch else "Write-Host ' (다시 켜기 생략)'")
     return f"""$ErrorActionPreference = 'Stop'
 $Host.UI.RawUI.WindowTitle = '업무 데스크 업데이트'
@@ -149,12 +150,12 @@ try {{
 """
 
 
-def start_update(app_dir, pid=None, zip_urls=None):
+def start_update(app_dir, pid=None, zip_urls=None, open_browser=True):
     """업데이트 창을 따로 띄움 (이 프로그램은 곧바로 끝나야 함)."""
     if os.environ.get("DESK_UPDATE_URL"):
         zip_urls = [os.environ["DESK_UPDATE_URL"]]
     script = build_script(app_dir, pid or os.getpid(), zip_urls or ZIP_URLS,
-                          relaunch=not os.environ.get("DESK_NO_RELAUNCH"))
+                          relaunch=not os.environ.get("DESK_NO_RELAUNCH"), open_browser=open_browser)
     fd, path = tempfile.mkstemp(prefix="desk-update-", suffix=".ps1")
     with os.fdopen(fd, "w", encoding="utf-8-sig") as f:  # BOM: 윈도우 PowerShell 5 가 한글을 바로 읽게
         f.write(script)
