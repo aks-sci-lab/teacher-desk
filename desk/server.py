@@ -118,7 +118,8 @@ class App:
         self.shutdown = None
         self.update_checker = None   # desk.py 가 켬 (시험에서는 없음)
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
-        self.item_ai = ai.ItemJob(db, config)   # 항목 하나의 AI 요약(눌렀을 때만)
+        # 항목별 AI 요약 대기열: 새 항목은 자동으로, 눌렀거나 연 항목은 맨 앞으로 (브리핑 요약이 도는 중이면 기다림)
+        self.item_ai = ai.ItemJob(db, config, busy=lambda: self.ai_job.running)
 
 
 def make_handler(app):
@@ -700,7 +701,7 @@ def create_item(app, q, body):
 
 
 ITEM_LIST_SQL = """
-SELECT i.id, i.source, i.title, i.received_at, i.category, i.status, i.registered,
+SELECT i.id, i.source, i.title, i.received_at, i.category, i.status, i.registered, i.ai_summary,
        (SELECT MIN(e.date) FROM events e WHERE e.item_id = i.id AND e.kind = 'deadline' AND e.done = 0
           AND e.date >= ?) AS next_deadline,
        (SELECT COUNT(*) FROM events e WHERE e.item_id = i.id) AS event_count
@@ -721,7 +722,11 @@ def list_items(app, q, body):
         sql += " AND i.status = ?"
         args.append(status)
     sql += " ORDER BY i.received_at DESC, i.id DESC LIMIT 300"
-    return app.db.query(sql, args)
+    rows = app.db.query(sql, args)
+    show_ai = bool(app.config["ai_enabled"])
+    for r in rows:   # 목록에는 AI 가 만든 '한 줄 요약'만 (전체 요약은 항목을 열면)
+        r["ai_line"] = ai.summary_line(r.pop("ai_summary")) if show_ai else ""
+    return rows
 
 
 @api("POST", "/api/items/mark-read")
