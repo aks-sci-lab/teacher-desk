@@ -964,3 +964,24 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .ai-item-sum.bad { background: var(--danger-soft); color: var(--danger); }
 .ai-item-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
 .ai-item-text { white-space: pre-wrap; line-height: 1.6; }
+
+/* 월별 출결 통계 표 (0.5.37): 큰 글자·가운데 정렬·0 은 흐리게·머리 고정 */
+.att-wrap { overflow: auto; max-height: calc(100vh - 220px); border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.att-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 1rem; }
+.att-table th, .att-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.att-table thead th { position: sticky; background: var(--surface-2); color: var(--ink); font-size: 0.95rem; font-weight: 700; z-index: 1; }
+.att-table thead tr:first-child th { top: 0; text-align: center; }
+.att-table thead tr:first-child th.col-no, .att-table thead tr:first-child th.col-name { text-align: left; }
+.att-table thead tr:nth-child(2) th { top: 38px; border-bottom: 2px solid var(--line); }
+.att-table .num { text-align: center; min-width: 76px; font-variant-numeric: tabular-nums; }
+.att-table .col-no { width: 56px; color: var(--muted); }
+.att-table .col-name { font-weight: 600; }
+.att-table .group-start { border-left: 1px solid var(--line); }
+.att-table .sum-col { background: color-mix(in srgb, var(--surface-2) 70%, transparent); font-weight: 700; }
+.att-table tbody tr:hover td { background: var(--surface-2); }
+.att-table .zero { color: var(--line); }
+.num-btn { min-width: 34px; padding: 2px 10px; border: 1px solid var(--accent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.num-btn:hover { background: var(--accent); color: var(--accent-ink); }
+.att-table tr.total th { position: sticky; bottom: 0; background: var(--surface-2); border-top: 2px solid var(--line); border-bottom: 0; font-weight: 800; }
+.att-table tr.total th.num { text-align: center; }
+.att-table tr.total th { font-size: 1rem; color: var(--ink); }
