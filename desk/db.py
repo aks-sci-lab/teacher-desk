@@ -112,6 +112,15 @@ CREATE TABLE IF NOT EXISTS todos (
     sort REAL                        -- 선생님이 끌어서 정한 순서 (0.5.20)
 );
 
+CREATE TABLE IF NOT EXISTS todo_notes (
+    id INTEGER PRIMARY KEY,
+    todo_id INTEGER NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT                  -- 고친 적이 있으면 그 시각 (0.5.34)
+);
+CREATE INDEX IF NOT EXISTS todo_notes_todo ON todo_notes(todo_id);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,

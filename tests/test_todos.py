@@ -84,6 +84,25 @@ class TodoApiTests(unittest.TestCase):
             self.assertEqual([t["text"] for t in queries.todos(db)], ["빠른 것", "늦은 것", "날짜 없음"])
             db.close()
 
+    def test_notes_on_todos(self):
+        st, t = self.req("POST", "/api/todos", {"text": "상담 일지 정리", "origin": "manual"})
+        self.assertEqual(st, 200, t)
+        st, n = self.req("POST", f"/api/todos/{t['id']}/notes", {"text": "  학부모 연락 먼저  "})
+        self.assertEqual((st, n["text"], n["updated_at"]), (200, "학부모 연락 먼저", None))
+        self.assertEqual(self.req("POST", f"/api/todos/{t['id']}/notes", {"text": " "})[0], 400)
+        self.assertEqual(self.req("POST", "/api/todos/99999/notes", {"text": "x"})[0], 404)
+        st, n2 = self.req("PATCH", f"/api/todo-notes/{n['id']}", {"text": "학부모 연락 후 진행"})
+        self.assertEqual((st, n2["text"]), (200, "학부모 연락 후 진행"))
+        self.assertTrue(n2["updated_at"])
+        mine = next(x for x in self.req("GET", "/api/todos")[1] if x["id"] == t["id"])
+        self.assertEqual([m["text"] for m in mine["notes"]], ["학부모 연락 후 진행"])
+        self.assertEqual(self.req("DELETE", f"/api/todo-notes/{n['id']}")[0], 200)
+        self.assertEqual(self.req("DELETE", f"/api/todo-notes/{n['id']}")[0], 404)
+        # 메모는 할 일과 함께 지워짐
+        self.req("POST", f"/api/todos/{t['id']}/notes", {"text": "하나 더"})
+        self.assertEqual(self.req("DELETE", f"/api/todos/{t['id']}")[0], 200)
+        self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM todo_notes")["n"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
