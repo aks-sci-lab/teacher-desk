@@ -88,8 +88,20 @@ def month_range(v):
     return start.isoformat(), (nxt - timedelta(days=1)).isoformat()
 
 
+P_PHONE = re.compile(r"0\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}")
+
+
+def clean_phone(value):
+    """전화번호 한 개를 010-1234-5678 꼴로. 아니면 None."""
+    text = str(value or "").strip()
+    if not P_PHONE.fullmatch(text):
+        return None
+    digits = re.sub(r"\D", "", text)
+    return f"{digits[:3]}-{digits[3:-4]}-{digits[-4:]}" if len(digits) >= 10 else None
+
+
 def parse_roster(text):
-    """엑셀에서 복사한 '번호  이름' 줄들 → [{number, name}]. 번호가 없으면 순서대로."""
+    """엑셀에서 복사한 '번호  이름  학부모 연락처' 줄들 → [{number, name, parent_phone}]. 번호가 없으면 순서대로."""
     rows, auto = [], 0
     for line in text.splitlines():
         cells = [c.strip() for c in re.split(r"[\t,]+|\s{2,}", line.strip()) if c.strip()]
@@ -97,13 +109,14 @@ def parse_roster(text):
             cells = cells[0].split()
         if not cells:
             continue
+        phone = next((clean_phone(c) for c in cells if clean_phone(c)), None)
         number = next((int(c) for c in cells if c.isdigit() and int(c) < 1000), None)
         name = next((c for c in cells if re.search(r"[가-힣A-Za-z]", c)
                      and c not in ("번호", "이름", "성명")), None)
         if not name:
             continue
         auto += 1
-        rows.append({"number": number if number is not None else auto, "name": name[:20]})
+        rows.append({"number": number if number is not None else auto, "name": name[:20], "parent_phone": phone})
     return rows
 
 
@@ -423,7 +436,11 @@ def put_students(app, q, body):
     clean = []
     for r in rows:
         need(isinstance(r, dict) and isinstance(r.get("number"), int), "번호가 잘못되었습니다")
-        clean.append({"number": r["number"], "name": text_field(r.get("name"), "이름", 20, True)})
+        row = {"number": r["number"], "name": text_field(r.get("name"), "이름", 20, True)}
+        if r.get("parent_phone") not in (None, ""):
+            row["parent_phone"] = clean_phone(r["parent_phone"])
+            need(row["parent_phone"], "학부모 연락처는 010-1234-5678 처럼 입력하세요")
+        clean.append(row)
     app.db.replace_students(clean)
     app.db.log(f"학생 명단 {len(clean)}명 저장")
     return app.db.students()
