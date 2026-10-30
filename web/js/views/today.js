@@ -91,6 +91,7 @@ function whenToDate(when) {
 
 // ---------------------------------------------------------------- 꼭 할 일 (다른 칸에서 끌어서 옮기기)
 const DRAG_TYPE = 'application/x-desk-todo';
+const openNotes = new Set();   // 메모 칸을 펼쳐 둔 할 일 번호 (다시 그려도 유지)
 const ORIGIN = { ai: 'AI 요약', event: '일정', item: '받은 자료', manual: '' };
 let todos = [];
 const rerender = () => findTab('today')?.rerender();
@@ -156,6 +157,32 @@ function todoBox(aiNodes = [], more = null) {
         [ids[i], ids[i + d]] = [ids[i + d], ids[i]];
         saveOrder(ids);
     };
+    const notesBox = t => {   // 할 일 메모: 쓴 시각 · 고치기 · 지우기 (이 PC 에만 저장)
+        const box = el('div.todo-notes');
+        const add = el('input', { type: 'text', placeholder: '+ 메모 (Enter)', maxLength: 1000, onkeydown: guarded(async e => {
+            if (e.key !== 'Enter' || !add.value.trim()) return;
+            await api.post(`/api/todos/${t.id}/notes`, { text: add.value.trim() });
+            rerender();
+        }) });
+        for (const n of t.notes || []) {
+            const txt = el('span.note-txt', n.text);
+            box.append(el('div.todo-note',
+                el('span.note-at', n.created_at.slice(5, 16) + (n.updated_at ? ' (고침)' : '')), txt,
+                el('button.ai-x', { title: '메모 고치기', onclick: guarded(async () => {
+                    const v = window.prompt('메모 고치기', n.text);
+                    if (v == null || !v.trim() || v.trim() === n.text) return;
+                    await api.patch(`/api/todo-notes/${n.id}`, { text: v.trim() });
+                    rerender();
+                }) }, '✎'),
+                el('button.ai-x', { title: '메모 지우기', onclick: guarded(async () => {
+                    if (!window.confirm('이 메모를 지울까요?')) return;
+                    await api.del(`/api/todo-notes/${n.id}`);
+                    rerender();
+                }) }, '✕')));
+        }
+        box.append(add);
+        return box;
+    };
     const li = t => {
         const dd = t.date && ddayInfo(t.date);
         const node = el('li', { className: `todo${t.done ? ' done' : ''}`, dataset: { todo: t.id } },
@@ -167,10 +194,15 @@ function todoBox(aiNodes = [], more = null) {
                 ? el('a', { href: '#', title: '자료 열기', onclick: e => { e.preventDefault(); openItem(t.item_id); } }, t.text)
                 : t.text),
             ORIGIN[t.origin] && el('span.todo-from', ORIGIN[t.origin]),
+            el('button.todo-memo', { title: '메모 (이 PC 에만 저장)', onclick: () => {
+                openNotes.has(t.id) ? openNotes.delete(t.id) : openNotes.add(t.id);
+                rerender();
+            } }, '메모', (t.notes || []).length ? ` ${t.notes.length}` : ''),
             !t.done && el('span.todo-move',
                 el('button', { title: '위로', onclick: () => step(t, -1) }, '▲'),
                 el('button', { title: '아래로', onclick: () => step(t, 1) }, '▼')),
-            el('button.ai-x', { title: t.hide_key ? '지우기 (AI 요약의 원래 칸으로 되돌림)' : '지우기', onclick: () => del(t) }, '✕'));
+            el('button.ai-x', { title: t.hide_key ? '지우기 (AI 요약의 원래 칸으로 되돌림)' : '지우기', onclick: () => del(t) }, '✕'),
+            (openNotes.has(t.id) || (t.notes || []).length) && !t.done ? notesBox(t) : null);
         if (!t.done) {
             node.draggable = true;
             node.addEventListener('dragstart', e => {

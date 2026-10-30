@@ -912,7 +912,7 @@ body.dragging-todo .drop-zone { outline: 2px dashed var(--accent); outline-offse
 .drop-zone.drop-on { background: var(--accent-soft); }
 .todo-box { margin-bottom: 6px; }
 ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
-.todo-list li { display: flex; gap: 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
+.todo-list li { flex-wrap: wrap; display: flex; gap: 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
 .todo-list li:first-child { border-top: 0; }
 .todo-list li input[type=checkbox] { flex: none; width: 16px; height: 16px; margin: 0; align-self: center; cursor: pointer; }
 .todo-list li.done .ai-txt { text-decoration: line-through; color: var(--muted); }
@@ -951,3 +951,11 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .lesson-note.off { background: var(--danger-soft); color: var(--danger); }
 .lesson-note.maybe { background: #fef3c7; color: #92400e; }
 :root[data-theme="dark"] .lesson-note.maybe { background: #3b2f12; color: #fcd34d; }
+
+.todo-memo { flex: none; border: 0; background: none; padding: 0 4px; font-size: 0.8em; color: var(--muted); cursor: pointer; }
+.todo-memo:hover { color: var(--ink); }
+.todo-notes { flex-basis: 100%; margin: 0 0 2px 24px; padding-left: 10px; border-left: 2px solid var(--line); display: grid; gap: 2px; }
+.todo-note { display: flex; gap: 8px; align-items: baseline; font-size: 0.88em; }
+.todo-note .note-at { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.todo-note .note-txt { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.todo-notes input { width: 100%; border: 0; border-bottom: 1px dashed var(--line); background: transparent; font: inherit; font-size: 0.88em; padding: 2px 0; }

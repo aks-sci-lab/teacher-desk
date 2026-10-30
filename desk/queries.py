@@ -51,8 +51,16 @@ def today_summary(db, today=None):
 def todos(db, today=None):
     """꼭 할 일: 끝내지 않은 것 + 오늘 끝낸 것 (선생님이 정한 순서, 끝낸 것은 아래)."""
     today = today or date.today()
-    return db.query("SELECT * FROM todos WHERE done = 0 OR substr(done_at, 1, 10) = ? "
+    rows = db.query("SELECT * FROM todos WHERE done = 0 OR substr(done_at, 1, 10) = ? "
                     "ORDER BY done, sort IS NULL, sort, id", (today.isoformat(),))
+    notes = {}   # 할 일에 붙인 메모 (AI 요약을 다시 만들어도 그대로)
+    if rows:
+        marks = ",".join("?" * len(rows))
+        for n in db.query(f"SELECT * FROM todo_notes WHERE todo_id IN ({marks}) ORDER BY id", [r["id"] for r in rows]):
+            notes.setdefault(n["todo_id"], []).append(n)
+    for r in rows:
+        r["notes"] = notes.get(r["id"], [])
+    return rows
 
 
 def school_day_events(db, start, end):

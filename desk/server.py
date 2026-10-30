@@ -982,6 +982,30 @@ def todo_delete(app, q, body, tid):
     return {"ok": True}
 
 
+# ---- 할 일 메모 (로컬에만, 시각·고침·지우기) ----
+@api("POST", r"/api/todos/(\d+)/notes")
+def todo_note_add(app, q, body, tid):
+    need(app.db.one("SELECT id FROM todos WHERE id = ?", (tid,)), "없는 할 일입니다", 404)
+    text = text_field(body.get("text"), "메모", 1000, True)
+    nid = app.db.execute("INSERT INTO todo_notes(todo_id, text, created_at) VALUES(?, ?, ?)", (tid, text, now_str()))
+    return app.db.one("SELECT * FROM todo_notes WHERE id = ?", (nid,))
+
+
+@api("PATCH", r"/api/todo-notes/(\d+)")
+def todo_note_edit(app, q, body, nid):
+    need(app.db.one("SELECT id FROM todo_notes WHERE id = ?", (nid,)), "없는 메모입니다", 404)
+    text = text_field(body.get("text"), "메모", 1000, True)
+    app.db.execute("UPDATE todo_notes SET text = ?, updated_at = ? WHERE id = ?", (text, now_str(), nid))
+    return app.db.one("SELECT * FROM todo_notes WHERE id = ?", (nid,))
+
+
+@api("DELETE", r"/api/todo-notes/(\d+)")
+def todo_note_delete(app, q, body, nid):
+    need(app.db.one("SELECT id FROM todo_notes WHERE id = ?", (nid,)), "없는 메모입니다", 404)
+    app.db.execute("DELETE FROM todo_notes WHERE id = ?", (nid,))
+    return {"ok": True}
+
+
 # ---- 내 시간표·수업 교체 ----
 def _tt(app):
     tt = app.db.get_meta("timetable")
