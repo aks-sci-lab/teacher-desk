@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, queries, schoolcal, timetable
+from . import VERSION, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -1198,6 +1198,17 @@ def ai_check(app, q, body):
         return ai.check(base)
     except ai.AIError as e:
         raise ApiError(400, str(e))
+
+
+@api("POST", "/api/ai/question")
+def ai_question(app, q, body):
+    provider = text_field(body.get("provider"), "AI 사용 방식", 20, True)
+    question = text_field(body.get("question"), "일반 질문", providers.MAX_QUESTION, True)
+    try:
+        text = providers.ask(app.db, app.config, question, provider=provider, confirmed=body.get("confirmed"))
+    except ai.AIError as e:
+        raise ApiError(400, str(e)) from e
+    return {"text": text, "provider": provider}
 
 
 @api("POST", "/api/ai/setup/spec")

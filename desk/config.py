@@ -5,6 +5,7 @@ config.json 은 이 PC 에만 있는 파일입니다(텔레그램 토큰 같은 
 """
 
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -41,6 +42,13 @@ DEFAULTS = {
     "ai_base": "http://127.0.0.1:1234/v1",
     "ai_model": "",
     "ai_input_size": "normal",     # normal: 14000자 / short: 6000자 (짧으면 빠름)
+    "ai_provider": "local",       # 일반 질문 전용. 업무자료 요약·검색은 항상 로컬
+    "ai_openai_model": "",
+    "ai_anthropic_model": "",
+    "ai_gemini_model": "",
+    "ai_openai_key": "",
+    "ai_anthropic_key": "",
+    "ai_gemini_key": "",
     # 텔레그램
     "telegram_token": "",
     "telegram_detail": "titles",  # counts: 개수만 / titles: 제목까지 / summary: 요약까지
@@ -50,13 +58,15 @@ DEFAULTS = {
 }
 
 # 화면에 그대로 돌려주면 안 되는 값
-SECRET_KEYS = {"telegram_token", "neis_key"}
+SECRET_KEYS = {"telegram_token", "neis_key", "ai_openai_key", "ai_anthropic_key", "ai_gemini_key"}
 # 화면에서 바꿀 수 있는 값 (port, data_dir, api_base 는 파일에서만)
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "ai_enabled", "ai_base", "ai_model", "ai_input_size",
+    "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
+    "ai_openai_key", "ai_anthropic_key", "ai_gemini_key",
 }
 BOOL_KEYS = {"watch_enabled", "auto_update", "ai_enabled"}
 
@@ -133,6 +143,18 @@ class Config:
                     check_local(v.strip())
                 except AIError as e:
                     raise ValueError(str(e))
+                clean[k] = v.strip()
+            elif k == "ai_provider":
+                if v not in ("local", "browser", "openai", "anthropic", "gemini"):
+                    raise ValueError("AI 사용 방식이 잘못되었습니다")
+                clean[k] = v
+            elif k in ("ai_openai_model", "ai_anthropic_model", "ai_gemini_model"):
+                if not isinstance(v, str) or (v.strip() and not re.fullmatch(r"[A-Za-z0-9._:-]{1,120}", v.strip())):
+                    raise ValueError("API 모델 이름은 영문·숫자·점·밑줄·하이픈·콜론 120자 이내로 입력하세요")
+                clean[k] = v.strip()
+            elif k in ("ai_openai_key", "ai_anthropic_key", "ai_gemini_key"):
+                if not isinstance(v, str) or len(v.strip()) > 512 or any(not 33 <= ord(c) <= 126 for c in v.strip()):
+                    raise ValueError("API 키 형식이 잘못되었습니다")
                 clean[k] = v.strip()
             elif k == "layout":
                 if not isinstance(v, dict):
