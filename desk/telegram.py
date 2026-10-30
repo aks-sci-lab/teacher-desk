@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import absence, ai, assist, passlink, printing, queries
+from . import absence, ai, assist, passlink, printing, providers, queries
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -39,6 +39,8 @@ HELP = (
     "\n메뉴 — 자주 쓰는 단추 · 취소 — 진행 중인 입력·발급 선택 취소"
     "\n조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다."
     "\n목록에 없는 말은 명령어 안내와 AI 검색 단추를 보여 줍니다. 선택하기 전에는 검색하지 않습니다."
+    "\n/ask 질문 — 일반 질문용 AI (앱의 AI 질문에서 선택). 업무자료는 붙이지 않습니다."
+    "\n외부 API는 전송·요금 안내 후 매번 동의를 받습니다. 개인정보·비공개 자료는 금지."
 )
 COMMANDS = {
     "오늘": "today", "/today": "today",
@@ -60,6 +62,7 @@ ARG_COMMANDS = {
     "조퇴": "early", "/early": "early", "조퇴증": "early",
     "외출": "out", "/out": "out", "외출증": "out",
     "결석계": "absence", "결석": "absence", "/absence": "absence",
+    "/ask": "general",
 }
 BOT_MENU = [
     {"command": "brief", "description": "브리핑 (오늘 + 1주일 요약)"},
@@ -76,6 +79,7 @@ BOT_MENU = [
     {"command": "cancel", "description": "진행 중인 입력·발급 선택 취소"},
     {"command": "status", "description": "AI·수집·시간표 준비 상태"},
     {"command": "lessons", "description": "오늘 내 수업"},
+    {"command": "ask", "description": "일반 질문 (업무자료 제외): /ask 질문"},
 ]
 # 화면(passes.js)의 사유 단추와 같음
 REASONS = {
@@ -472,6 +476,8 @@ class Bot:
         return rows or None
 
     def run_arg(self, cid, cmd, args):
+        if cmd == "general":
+            return self.offer_general(cid, " ".join(args))
         if cmd == "absence":
             if not args:
                 return self.begin_dialog(cid, "absence")
@@ -490,6 +496,54 @@ class Bot:
                 return self.reply(cid, f"{args[0]}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
             return self.send_original(cid, item_id) if cmd == "text" else self.send_item_file(cid, item_id)
         return self.start_pass(cid, cmd, args)
+
+    def offer_general(self, cid, question):
+        try:
+            question = providers.validate_question(question)
+        except ai.AIError as e:
+            return self.reply(cid, str(e))
+        provider = self.config["ai_provider"]
+        if provider == "browser":
+            return self.reply(cid, "브라우저 내장 AI는 앱의 'AI 질문'에서만 실행할 수 있습니다. 텔레그램 일반 질문은 로컬 또는 외부 API를 선택하세요.")
+        if provider not in providers.PROVIDERS:
+            return self.reply(cid, "앱의 AI 질문 화면에서 사용 방식을 다시 저장하세요.")
+        if provider == "local":
+            return self.general_ask(cid, question, provider)
+        request_id = secrets.token_hex(6)
+        self.choice_requests[request_id] = {"chat_id": cid, "text": question, "provider": provider,
+                                            "expires": time.monotonic() + DIALOG_TTL}
+        while len(self.choice_requests) > 10:
+            del self.choice_requests[next(iter(self.choice_requests))]
+        self.send(f"일반 질문을 {providers.PROVIDERS[provider]} API로 전송할까요?\n"
+                  "수신함 자료는 붙이지 않습니다. 학생 정보·비공개 자료를 입력하지 마세요.\n"
+                  "입력 내용이 외부 회사로 전송되고 API 요금·보관 정책이 적용됩니다. 보조 검사는 모든 민감정보를 찾지 못합니다.",
+                  cid, [[{"text": "공개 질문 · 전송 동의", "callback_data": f"general:{request_id}:send"},
+                         {"text": "취소", "callback_data": f"general:{request_id}:cancel"}]])
+
+    def general_ask(self, cid, question, provider):
+        if self.asking:
+            return self.reply(cid, "앞 질문에 답하는 중입니다. 끝나면 다시 보내 주세요.")
+        self.asking = question
+        if self.sync:
+            return self._general_ask(cid, question, provider)
+        self.send("일반 질문에 답하는 중… 업무자료는 찾아 붙이지 않습니다.", cid)
+        threading.Thread(target=self._general_ask, args=(cid, question, provider),
+                         name="telegram-general", daemon=True).start()
+
+    def _general_ask(self, cid, question, provider):
+        try:
+            answer = providers.ask(self.db, self.config, question, provider=provider, confirmed=True)
+            answer = ai.mask_names(answer, [s["name"] for s in self.db.students()])
+            for part in chunks("일반 질문 답변 (업무자료 검색 아님)\n" + answer):
+                self.send(part, cid)
+            return answer
+        except ai.AIError as e:
+            return self.reply(cid, str(e))
+        except Exception as e:
+            self.db.log(f"텔레그램 일반 질문 오류: {type(e).__name__}", "error")
+            return self.reply(cid, "일반 질문 처리 중 오류가 났습니다. 다시 시도하기 전에 서비스 이용 내역을 확인하세요.")
+        finally:
+            self.asking = None
 
     def create_absence(self, cid, text):
         try:
@@ -541,6 +595,23 @@ class Bot:
             pass
         data = cq.get("data") or ""
         kind, _, rest = data.partition(":")
+        if kind == "general":
+            request_id, _, action = rest.partition(":")
+            request = self.choice_requests.get(request_id)
+            if not request or request["chat_id"] != cid or "provider" not in request:
+                return self.reply(cid, "이미 처리했거나 오래된 질문입니다. /ask 질문을 다시 보내세요.")
+            if action not in ("send", "cancel"):
+                return self.reply(cid, "알 수 없는 선택입니다.")
+            if action == "send" and self.asking:
+                return self.reply(cid, "앞 질문에 답하는 중입니다. 끝나면 다시 눌러 주세요.")
+            del self.choice_requests[request_id]
+            if action == "cancel":
+                return self.reply(cid, "외부 전송을 취소했습니다.")
+            if time.monotonic() > request["expires"]:
+                return self.reply(cid, "확인 시간이 10분을 넘었습니다. 질문을 다시 보내세요.")
+            if self.config["ai_provider"] != request["provider"]:
+                return self.reply(cid, "AI 사용 방식이 바뀌었습니다. 새 설정을 확인하고 질문을 다시 보내세요.")
+            return self.general_ask(cid, request["text"], request["provider"])
         if kind == "dlg":
             dialog_id, _, action = rest.partition(":")
             dialog = self.dialog
@@ -863,10 +934,12 @@ class Bot:
             except ai.AIError as e:
                 ai_status = f"AI 연결 오류: {e}"
             return ("⚙ 업무 데스크 상태\n"
-                    + ai_status
+                    + "업무자료 요약·검색 (로컬): " + ai_status
+                    + "\n일반 질문: " + providers.PROVIDERS.get(self.config["ai_provider"], "설정 확인 필요")
+                    + (" · 텔레그램 실행 불가" if self.config["ai_provider"] == "browser" else " · /ask 질문")
                     + ("\nAI가 앞 질문에 답하는 중입니다." if self.asking else "")
                     + ("\n시간표 준비됨" if queries.my_lessons(self.db, self.config, today) is not None else "\n시간표 미등록")
-                    + "\n연결 문제는 PC의 설정 → AI 요약 → 연결 확인에서 해결할 수 있습니다.")
+                    + "\n업무자료 AI 연결은 설정 → 업무자료 AI 요약, 일반 질문 설정은 AI 질문에서 확인하세요.")
         if cmd == "today":
             s = queries.today_summary(self.db, today)
             lines = [f"📅 {fmt_day(today.isoformat(), today)} 업무"]

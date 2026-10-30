@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { el, clear, toast, guarded, download } from '../ui.js';
 import { registerView, openTab, findTab, on, toggleLayoutMode } from '../shell.js';
 import { store, loadState, saveSettings } from '../store.js';
+import { openAI } from './ai.js';
 
 function textField(key, label, hint, attrs = {}) {
     const input = el('input', { type: 'text', value: store.settings[key] ?? '', ...attrs });
@@ -300,7 +301,10 @@ function renderSettings(pane, tab) {
             el('p.small', '달력 → 📥 학사일정 → 🏫 나이스 에서 학교를 골라 학사일정을 가져올 때 씁니다. 인증키는 교육정보 개방 포털(open.neis.go.kr)에 가입하면 무료로 받습니다.'),
             el('label.field', el('span', '나이스 인증키'), neisKey),
             s.neis_school && s.neis_school.name ? el('p.small', `고른 학교: ${s.neis_school.name}`) : null),
-        section('AI 요약 (이 PC 의 LM Studio)',
+        section('AI 사용 방식',
+            el('p.small', '일반 질문은 로컬·브라우저 내장·외부 API(Claude·GPT·Gemini)를 선택할 수 있습니다. 비공개 업무자료 요약·검색은 언제나 로컬 AI로만 처리합니다.'),
+            el('button.btn', { onclick: openAI }, 'AI 선택·일반 질문 열기')),
+        section('업무자료 AI 요약 (이 PC 의 LM Studio)',
             aiSetup(pane),
             el('p.small', '브리핑에서 지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문을 AI 로 요약합니다. AI 는 이 PC 의 LM Studio 에서 돌기 때문에 쪽지·공문이 PC 밖으로 나가지 않습니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).'),
             el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
