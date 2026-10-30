@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 
@@ -14,6 +15,37 @@ class PrintError(RuntimeError):
 
 _lock = threading.Lock()
 _jobs = {}
+
+QUEUE_KEY, AT_KEY = "telegram_print_queue", "telegram_print_at"
+QUEUE_TTL = 600   # 인쇄 요청이 유효한 시간(초). 실패한 요청이 다음 날 다시 나오지 않게
+
+
+def queue(db, now=None):
+    """인쇄 대기 중인 발급 번호. 시각이 없거나 10분이 지난 요청은 버립니다."""
+    now = time.time() if now is None else now
+    ids, at = db.get_meta(QUEUE_KEY, []), db.get_meta(AT_KEY, {})
+    keep = [i for i in ids if now - at.get(str(i), 0) <= QUEUE_TTL]
+    if keep != ids:
+        db.set_meta(QUEUE_KEY, keep)
+        db.set_meta(AT_KEY, {str(i): at[str(i)] for i in keep})
+    return keep
+
+
+def enqueue(db, pid, now=None):
+    with db.lock:
+        keep = [i for i in queue(db, now) if i != int(pid)] + [int(pid)]
+        at = db.get_meta(AT_KEY, {})
+        at[str(int(pid))] = time.time() if now is None else now
+        db.set_meta(QUEUE_KEY, keep[-20:])
+        db.set_meta(AT_KEY, {str(i): at[str(i)] for i in keep[-20:]})
+
+
+def dequeue(db, pid):
+    with db.lock:
+        keep = [i for i in db.get_meta(QUEUE_KEY, []) if i != int(pid)]
+        at = db.get_meta(AT_KEY, {})
+        db.set_meta(QUEUE_KEY, keep)
+        db.set_meta(AT_KEY, {str(i): at[str(i)] for i in keep if str(i) in at})
 
 
 def _is_windows():

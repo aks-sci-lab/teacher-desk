@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import absence, ai, assist, printing, queries
+from . import absence, ai, assist, passlink, printing, queries
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -30,7 +30,7 @@ HELP = (
     "내일 수업 · 금요일 시간표 — 내 수업 (시간표를 불러왔을 때)\n"
     "조퇴 7 [13:30] — 7번 조퇴증 발급 (사유는 단추로)\n"
     "외출 7 [13:30] [14:30] — 7번 외출증 발급\n"
-    "발급 뒤 기본 프린터로 바로 출력할 수 있습니다.\n"
+    "발급 뒤 기본 프린터 인쇄·학생용 웹 링크(이름 포함) 중에서 고를 수 있습니다.\n"
     "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
     "종류: 병결·인정결·기타결·미인정결. 주말·학사일정 공휴일·휴업일 제외, 앱에 저장만 합니다.\n"
     "새로고침 — 지금 바로 수집\n"
@@ -597,28 +597,26 @@ class Bot:
             return self.send_item_file(cid, int(rest))
         if kind == "pp":
             pid, _, choice = rest.partition(":")
-            p = self.db.one("SELECT id, kind, student_number, date, time_out, time_return, serial FROM passes WHERE id = ?", (pid,))
-            if not p or choice not in ("0", "1"):
+            p = self.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
+            if not p or choice not in ("0", "1", "2", "3"):
                 return self.reply(cid, "이미 처리했거나 없는 발급 기록입니다.")
-            if choice == "1":
-                with self.db.lock:
-                    queue = self.db.get_meta("telegram_print_queue", [])
-                    if int(pid) not in queue:
-                        queue.append(int(pid))
-                    self.db.set_meta("telegram_print_queue", queue[-20:])
-                try:
-                    started = printing.start_silent_pass(self.config, int(pid))
-                except printing.PrintError as e:
-                    text = f"⚠️ 자동 인쇄를 시작하지 못했습니다: {e}\n업무 데스크가 켜져 있는지 확인하세요."
-                else:
-                    text = (f"🖨️ {p['student_number']}번 {KIND[p['kind']]}증을 기본 프린터로 "
-                            f"{'보냈습니다.' if started else '보내는 중입니다.'}")
-            else:
-                text = f"✅ {p['student_number']}번 {KIND[p['kind']]}증 발급 완료 · 인쇄하지 않음"
+            who = f"{p['student_number']}번 {KIND[p['kind']]}증"
+            lines, link = [], None
+            if choice in ("1", "3"):
+                lines.append(self.queue_print(p, who))
+            if choice in ("2", "3"):
+                link = passlink.share_url(self.config["pass_page_url"], p, self.config.values)
+                lines.append(f"🔗 {who} 학생용 링크를 아래에 보냈습니다." if link else
+                             f"⚠️ {who} 링크를 만들지 못했습니다. 업무 데스크 설정의 공유 페이지 주소를 확인하세요.")
+            if choice == "0":
+                lines.append(f"✅ {who} 발급 완료 · 인쇄·링크 보내기 없음")
+            text = "\n".join(lines)
             try:
                 self.api("editMessageText", {"chat_id": cid, "message_id": msg.get("message_id"), "text": text}, timeout=15)
             except (urllib.error.URLError, OSError, RuntimeError):
                 self.send(text, cid)
+            if link:   # 이름이 들어 있는 링크 (사용자 결정 2026-10-30: 사유는 뺌) — 학생에게만 전달
+                self.send(f"🔗 {who} 학생용 링크 (이름 포함, 사유 없음)\n{link}\n학생에게만 전달하세요.", cid)
             return text
         if kind in ("pr", "px"):
             pid, _, choice = rest.partition(":")
@@ -626,10 +624,13 @@ class Bot:
             text = self.finish_pass(pid, choice if kind == "pr" else None)
             markup = None
             if self.last_issued_pass_id:
-                markup = {"inline_keyboard": [[
-                    {"text": "기본 프린터로 바로 출력", "callback_data": f"pp:{self.last_issued_pass_id}:1"},
-                    {"text": "인쇄 안 함", "callback_data": f"pp:{self.last_issued_pass_id}:0"},
-                ]]}
+                pid = self.last_issued_pass_id
+                markup = {"inline_keyboard": [
+                    [{"text": "🖨 기본 프린터로 인쇄", "callback_data": f"pp:{pid}:1"},
+                     {"text": "🔗 웹 링크 받기", "callback_data": f"pp:{pid}:2"}],
+                    [{"text": "인쇄 + 웹 링크", "callback_data": f"pp:{pid}:3"},
+                     {"text": "아무것도 안 함", "callback_data": f"pp:{pid}:0"}],
+                ]}
             try:
                 params = {"chat_id": cid, "message_id": msg.get("message_id"), "text": text}
                 if markup:
@@ -696,7 +697,17 @@ class Bot:
         when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
         # 이름·사유는 답장에 쓰지 않음
         return (f"✅ {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 발급 · {when}\n"
-                f"발급 번호 {saved['serial']}\n기본 프린터로 바로 출력할지 선택하세요.")
+                f"발급 번호 {saved['serial']}\n인쇄할지, 학생에게 줄 웹 링크를 받을지 고르세요.")
+
+    def queue_print(self, p, who):
+        """기본 프린터로 인쇄를 요청하고 알릴 글을 돌려줌. 시작하지 못하면 대기열에서 빼서 나중에 되살아나지 않게 함."""
+        printing.enqueue(self.db, int(p["id"]))
+        try:
+            started = printing.start_silent_pass(self.config, int(p["id"]))
+        except printing.PrintError as e:
+            printing.dequeue(self.db, int(p["id"]))
+            return f"⚠️ {who} 자동 인쇄를 시작하지 못했습니다: {e}\n업무 데스크가 켜져 있는지 확인하세요."
+        return f"🖨️ {who}을 기본 프린터로 {'보냈습니다.' if started else '보내는 중입니다.'}"
 
     # ---- 브리핑 ----
     def brief_text(self, today=None):
