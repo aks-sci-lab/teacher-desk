@@ -20,7 +20,7 @@ import base64
 import binascii
 
 from . import VERSION, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
-from .collect import SOURCES, add_text_item, diagnose, item_file
+from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
 from .ics import to_ics
@@ -1279,7 +1279,8 @@ def post_cool_check(app, q, body):
     name = text_field(body.get("name"), "쿨메신저 이름", 60)
     path = text_field(body.get("path"), "쿨메신저 파일 경로", 400)
     try:
-        return coolmsg.check(coolmsg.resolve(name, path))
+        target = coolmsg.resolve(name, path)
+        return coolmsg.check(target, me=cool_me(name, target))
     except coolmsg.CoolError as e:
         raise ApiError(400, str(e))
 

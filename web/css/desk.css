@@ -398,6 +398,7 @@ dl.kvs dd { margin: 0; }
 .cat-경조사 { --cc: var(--c-family); }
 .cat-참고 { --cc: var(--c-ref); }
 .src-cool { background: transparent; color: #0b6aa2; box-shadow: inset 0 0 0 1px #b9dcf0; }
+.src-cool_sent { background: var(--surface-2); color: #0b6aa2; box-shadow: inset 0 0 0 1px #b9dcf0; }
 .src-edufine { background: transparent; color: #5b3fa8; box-shadow: inset 0 0 0 1px #d6ccf2; }
 .src-paste { background: var(--surface-2); color: var(--muted); }
 .src-school { background: #ccfbf1; color: #0f766e; }
