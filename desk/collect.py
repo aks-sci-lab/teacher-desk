@@ -19,7 +19,7 @@ from .db import now_str
 from .docs import SUPPORTED, DocError, fix_surrogates, read_document
 
 SOURCES = {"edufine": "edufine_folder", "cool": "coolmessenger_folder"}
-SOURCE_NAMES = {"edufine": "에듀파인", "cool": "쿨메신저", "paste": "직접 입력", "school": "학사일정"}
+SOURCE_NAMES = {"edufine": "에듀파인", "cool": "쿨메신저", "cool_sent": "쿨메신저(보냄)", "paste": "직접 입력", "school": "학사일정"}
 MAX_FILES_PER_RUN = 500
 
 
@@ -28,7 +28,8 @@ def content_hash(text):
 
 
 def add_text_item(db, source, text, title=None, received_at=None, file_path=None, ref=None, images=None):
-    """글 하나를 분석해 수신함에 저장. 같은 내용이 이미 있으면 None."""
+    """글 하나를 분석해 수신함에 저장. 같은 내용이 이미 있으면 None.
+    source 가 'cool_sent'(내가 보낸 쪽지)이면 일정 후보·알림·AI 요약에 쓰지 않고 읽은 것으로 저장."""
     text = fix_surrogates(text).strip()
     title = fix_surrogates(title) if title else title
     if not text:
@@ -39,8 +40,12 @@ def add_text_item(db, source, text, title=None, received_at=None, file_path=None
     received_at = received_at or now_str()
     ref = ref or datetime.strptime(received_at[:10], "%Y-%m-%d").date()
     analysis = extract.analyze(text, ref=ref, title=title)
+    if source == "cool_sent":
+        analysis = {**analysis, "events": []}   # 내가 쓴 글의 날짜는 일정이 아님
     item_id = db.add_item(source, analysis["title"], text, received_at, analysis,
                           content_hash=h, file_path=file_path, images=images)
+    if source == "cool_sent":
+        db.execute("UPDATE items SET status = 'read' WHERE id = ?", (item_id,))
     return {"id": item_id, "events": len(analysis["events"]),
             "deadlines": sum(1 for e in analysis["events"] if e["kind"] == "deadline")}
 
@@ -342,6 +347,11 @@ def reclean_cool_items(db, path):
         db.log(f"쿨메신저: 받은 쪽지 {changed}건을 읽기 쉽게 다시 정리했습니다")
 
 
+def cool_me(name, path):
+    """'나'의 쿨메신저 이름: 설정의 이름, 없으면 .udb 파일 이름."""
+    return (name or "").strip() or Path(path).stem
+
+
 def scan_cool_memo(db, name, stats, path=""):
     """쿨메신저 쪽지 기록에서 지난번 이후 새 쪽지만 가져옴 (경로를 직접 지정했으면 그 파일)."""
     try:
@@ -355,16 +365,17 @@ def scan_cool_memo(db, name, stats, path=""):
             raise
         except Exception as e:  # 다시 정리하다 실패해도 새 쪽지 받기는 계속 (다음 수집 때 다시 시도)
             stats["errors"].append(f"쿨메신저: 받은 쪽지 다시 정리 실패 ({type(e).__name__}: {e})")
-        _, memos, top = coolmsg.read_new(path, last)
+        _, memos, top = coolmsg.read_new(path, last, me=cool_me(name, path))
     except coolmsg.CoolError as e:
         stats["errors"].append(f"쿨메신저: {e}")
         return
     for m in memos:
         text = cool_text(m)
         received = (m["when"] or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
-        res = add_text_item(db, "cool", text, title=cool_title(m["title"], m["body"]), received_at=received,
+        sent = m.get("mine")
+        res = add_text_item(db, "cool_sent" if sent else "cool", text, title=cool_title(m["title"], m["body"]), received_at=received,
                             file_path=f"{path}#{m['rowid']}", images=m.get("images") or [])
-        if res:
+        if res and not sent:   # 내가 보낸 쪽지는 새 자료 수·알림에 세지 않음
             stats["items"] += 1
             stats["events"] += res["events"]
             stats["deadlines"] += res["deadlines"]

@@ -43,7 +43,7 @@ function renderSide(body, actions) {
     }, label);
     body.append(
         el('div.filters', chip('status', 'active', '진행 중'), chip('status', 'done', '완료'), chip('status', 'archived', '보관'), chip('status', 'all', '전체')),
-        el('div.filters', chip('source', '', '모든 출처'), chip('source', 'cool', '쿨메신저'), chip('source', 'edufine', '에듀파인'), chip('source', 'paste', '직접 입력')));
+        el('div.filters', chip('source', '', '모든 출처'), chip('source', 'cool', '쿨메신저 받음'), chip('source', 'cool_sent', '쿨메신저 보냄'), chip('source', 'edufine', '에듀파인'), chip('source', 'paste', '직접 입력')));
     const list = el('ul.list');
     if (!items.length) {
         list.append(el('li.empty', filter.status === 'active'

@@ -34,6 +34,8 @@ BODY_HINTS = ("content", "contents", "body", "memo", "msg", "message", "text", "
 TITLE_HINTS = ("title", "subject", "제목")
 DATE_HINTS = ("date", "time", "reg", "send", "recv", "write", "created", "dt", "일시", "날짜")
 SENDER_HINTS = ("sender", "from", "send_name", "sendname", "username", "user_name", "writer", "name", "보낸")
+# 받는 사람 열 (cclist·referencelist 는 참조 목록이라 제외). 열 이름은 실제 파일로 확인되기 전까지 추측
+RECEIVER_HINTS = ("receiver", "recipient", "recver", "target", "to_", "받는")
 SKIP_TABLE_HINTS = ("sqlite_", "config", "setting", "option", "version", "meta", "attach", "file", "group", "buddy")
 
 
@@ -301,10 +303,13 @@ def detect(conn):
         date_cands = [c for c in cols if c != body and date_ok[c] >= 0.8]
         date = max(date_cands, key=lambda c: (_hint(c, DATE_HINTS), date_ok[c]), default=None)
         title = next((c for c in cols if c not in (body, date) and _hint(c, TITLE_HINTS)), None)
-        sender = next((c for c in cols if c not in (body, date, title) and _hint(c, SENDER_HINTS)
-                       and text_len[c] > 0), None)
+        sender_cols = [c for c in cols if c not in (body, date, title) and _hint(c, SENDER_HINTS) and text_len[c] > 0]
+        # 사람 이름이 든 열(…name)을 번호·식별값(…key·…id)보다 먼저 (내가 보낸 쪽지를 이름으로 알아보려고)
+        sender = min(sender_cols, key=lambda c: (not c.lower().endswith("name"), cols.index(c)), default=None)
+        receiver = next((c for c in cols if c not in (body, date, title, sender) and _hint(c, RECEIVER_HINTS)
+                         and not _hint(c, ("cc", "reference")) and text_len[c] > 0), None)
         score = text_len[body] * (2 if _hint(t, BODY_HINTS) else 1) + (50 if date else 0) + min(rows, 1000) / 100
-        cand = {"table": t, "body": body, "title": title, "date": date, "sender": sender, "rows": rows,
+        cand = {"table": t, "body": body, "title": title, "date": date, "sender": sender, "receiver": receiver, "rows": rows,
                 "score": score}
         if best is None or cand["score"] > best["score"]:
             best = cand
@@ -355,7 +360,16 @@ class Snapshot:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
-def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN):
+def _same(a, b):
+    return bool(a and b) and "".join(a.split()).lower() == "".join(b.split()).lower()
+
+
+def is_mine(sender, me):
+    """보낸 사람이 '나'(쿨메신저 로그인 이름)인지. 이름이 같을 때만 (추측으로 나누지 않음)."""
+    return _same(sender, me)
+
+
+def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN, me=""):
     q = _q(info["table"])
     cols = [c for c in (info["body"], info["title"], info["date"], info["sender"]) if c]
     sel = ", ".join(["rowid"] + [_q(c) for c in cols])
@@ -368,6 +382,7 @@ def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN):
             "images": body_images(rec[info["body"]]),
             "title": clean_body(rec[info["title"]]) if info["title"] else "",
             "sender": clean_body(rec[info["sender"]]) if info["sender"] else "",
+            "mine": is_mine(clean_body(rec[info["sender"]]), me) if info["sender"] else False,
             "when": parse_when(rec[info["date"]]) if info["date"] else None,
         })
     return out
@@ -381,7 +396,7 @@ def _detect_or_fail(conn):
     return info
 
 
-def read_new(path, last_rowid=None, now=None):
+def read_new(path, last_rowid=None, now=None, me=""):
     """마지막으로 읽은 뒤 새로 온 쪽지들과 새 마지막 rowid.
 
     처음(last_rowid 없음)에는 최근 FIRST_IMPORT_DAYS 일 (날짜 열이 없으면 최근 FIRST_IMPORT_ROWS 개)만.
@@ -393,7 +408,7 @@ def read_new(path, last_rowid=None, now=None):
         if last_rowid is not None and last_rowid > top_now:
             last_rowid = None  # 쿨메신저를 다시 설치하는 등으로 파일이 새로 만들어짐
         if last_rowid is None:
-            memos = _rows(conn, info, order="DESC")[::-1]
+            memos = _rows(conn, info, order="DESC", me=me)[::-1]
             if info["date"]:
                 since = now - timedelta(days=FIRST_IMPORT_DAYS)
                 memos = [m for m in memos if m["when"] and m["when"] >= since]
@@ -401,7 +416,7 @@ def read_new(path, last_rowid=None, now=None):
                 memos = memos[-FIRST_IMPORT_ROWS:]
             top = top_now
         else:
-            memos = _rows(conn, info, "WHERE rowid > ?", (last_rowid,))
+            memos = _rows(conn, info, "WHERE rowid > ?", (last_rowid,), me=me)
             top = max([last_rowid] + [m["rowid"] for m in memos])
         return info, [m for m in memos if m["body"]], top
 
@@ -434,7 +449,7 @@ def images_for_rowids(path, rowids):
     return out
 
 
-def check(path):
+def check(path, me=""):
     """설정 화면의 '연결 확인': 찾은 표·열과 최근 쪽지 제목 3개 (이 PC 화면에만 표시)."""
     with Snapshot(path) as conn:
         tables = []
@@ -445,7 +460,13 @@ def check(path):
         info = detect(conn)
         out = {"path": str(path), "tables": tables, "detected": None, "recent": []}
         if info:
-            out["detected"] = {k: info[k] for k in ("table", "body", "title", "date", "sender", "rows")}
+            out["detected"] = {k: info.get(k) for k in ("table", "body", "title", "date", "sender", "receiver", "rows")}
+            if info["sender"]:   # 보낸 사람이 '나'인 쪽지가 있는지 (이름 칸에 내 이름이 있어야 구분됨)
+                names = [clean_body(v) for (v,) in conn.execute(
+                    f"SELECT {_q(info['sender'])} FROM {_q(info['table'])} ORDER BY rowid DESC LIMIT 500")]
+                out["sender_check"] = {"column": info["sender"], "checked": len(names),
+                                       "mine": sum(1 for n in names if is_mine(n, me)), "me": bool(me),
+                                       "kinds": len({n for n in names if n})}
             # 최근 쪽지 200개의 사진이 어떤 모양으로 들어 있는지 (개수만, 내용·주소 없음)
             kinds, hosts = {}, set()
             q = f"SELECT {_q(info['body'])} FROM {_q(info['table'])} ORDER BY rowid DESC LIMIT 200"

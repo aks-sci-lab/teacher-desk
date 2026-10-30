@@ -181,6 +181,40 @@ class CollectorCoolTests(unittest.TestCase):
         finally:
             env.close()
 
+    def test_my_sent_memos_are_kept_apart(self):
+        """보낸 사람이 '나'(쿨메신저 이름)인 쪽지는 'cool_sent' 로: 일정 후보·새 자료 수·AI 요약에 쓰지 않음."""
+        env = Env()
+        local = Path(env.tmp.name) / "local"
+        memo = local / "CoolMessenger" / "Memo"
+        memo.mkdir(parents=True)
+        recent = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        make_udb(memo / "홍길동.udb", "a", [
+            ("교무부", "성적관리위원회", "협의록을 11월 3일(화)까지 제출해 주세요", recent),
+            (" 홍길동 ", "회신", "네 11월 5일까지 내겠습니다", recent)])
+        env.config.values.update(coolmessenger_name="홍길동", coolmessenger_folder="", edufine_folder="")
+        try:
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+                s = Collector(env.db, env.config).run("manual")
+                self.assertEqual((s["items"], s["errors"], len(s["new_ids"])), (1, [], 1))   # 보낸 것은 새 자료로 세지 않음
+                rows = {r["source"]: r for r in env.db.query("SELECT * FROM items")}
+                self.assertEqual(set(rows), {"cool", "cool_sent"})
+                self.assertEqual(rows["cool_sent"]["status"], "read")
+                self.assertEqual(env.db.one("SELECT COUNT(*) AS n FROM events WHERE item_id = ?", (rows["cool_sent"]["id"],))["n"], 0)
+                self.assertGreater(env.db.one("SELECT COUNT(*) AS n FROM events WHERE item_id = ?", (rows["cool"]["id"],))["n"], 0)
+                r = coolmsg.check(memo / "홍길동.udb", me="홍길동")
+                self.assertEqual((r["sender_check"]["mine"], r["sender_check"]["checked"]), (1, 2))
+                self.assertEqual(coolmsg.check(memo / "홍길동.udb", me="")["sender_check"]["me"], False)
+        finally:
+            env.close()
+
+    def test_sender_prefers_name_column_over_key(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE memo (memoid INTEGER, senderkey TEXT, sendername TEXT, receiver TEXT, cclist TEXT,"
+                     " messagebody TEXT, reg_date TEXT)")
+        conn.execute("INSERT INTO memo VALUES (1, 'u123', '교무부', '홍길동', '', '협의록을 제출해 주세요 안내입니다', '2026-10-29 09:00:00')")
+        info = coolmsg.detect(conn)
+        self.assertEqual((info["sender"], info["receiver"], info["body"]), ("sendername", "receiver", "messagebody"))
+
     def test_emoji_memo_does_not_stop_collecting(self):
         env = Env()
         local = Path(env.tmp.name) / "local"
