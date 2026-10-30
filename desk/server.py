@@ -599,6 +599,19 @@ def list_items(app, q, body):
     return app.db.query(sql, args)
 
 
+@api("POST", "/api/items/mark-read")
+def mark_items_read(app, q, body):
+    """화면에 보이던 안 읽은 항목만 읽음으로 (그 사이 새로 도착한 자료·일정 등록·업무 완료는 그대로)."""
+    ids = body.get("ids")
+    need(isinstance(ids, list) and 0 < len(ids) <= 300 and all(isinstance(i, int) and not isinstance(i, bool) for i in ids),
+         "읽음으로 바꿀 항목이 잘못되었습니다")
+    with app.db.lock:
+        marks = ",".join("?" * len(ids))
+        n = app.db.one(f"SELECT COUNT(*) AS n FROM items WHERE status = 'new' AND id IN ({marks})", ids)["n"]
+        app.db.execute(f"UPDATE items SET status = 'read' WHERE status = 'new' AND id IN ({marks})", ids)
+    return {"marked": n}
+
+
 @api("GET", r"/api/items/(\d+)")
 def get_item(app, q, body, item_id):
     it = app.db.item(int(item_id))

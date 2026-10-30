@@ -946,6 +946,9 @@ class Bot:
             if s["overdue"]:
                 lines.append(f"\n⚠ 지난 마감 {len(s['overdue'])}건")
                 lines += [fmt_event(e, today, detail) for e in s["overdue"][:5]]
+            if s["due_today"]:
+                lines.append(f"\n⏰ 오늘 마감 {len(s['due_today'])}건")
+                lines += [fmt_event(e, today, detail) for e in s["due_today"][:10]]
             lines.append(f"\n오늘 일정 {len(s['today'])}건")
             lines += [fmt_event(e, today, detail) for e in s["today"][:10]]
             lines.append(f"\n7일 안 마감 {len(s['week_deadlines'])}건")
@@ -959,7 +962,7 @@ class Bot:
             return "\n".join(lines)
         if cmd == "deadlines":
             evs = [e for e in queries.events_between(self.db, today, today + timedelta(days=7), include_done=False)
-                   if e["kind"] == "deadline"]
+                   if e["kind"] == "deadline" and (e["end_date"] or e["date"]) <= (today + timedelta(days=7)).isoformat()]
             if not evs:
                 return "7일 안의 마감이 없습니다 👍"
             return "⏰ 7일 안의 마감\n" + "\n".join(fmt_event(e, today, detail) for e in evs[:20])
