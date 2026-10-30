@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "업무 데스크로 보내기",
+  "version": "0.1.0",
+  "description": "에듀파인 화면에서 단축키를 누르면 지금 보이는 글을 이 PC 의 업무 데스크로만 보냅니다.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://*.use.go.kr/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "업무 데스크로 보내기", "default_popup": "popup.html" },
+  "options_page": "options.html",
+  "commands": {
+    "send-page": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "지금 화면을 업무 데스크로 보내기"
+    }
+  }
+}

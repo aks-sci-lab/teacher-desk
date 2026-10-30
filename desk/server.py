@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, updater, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
+from . import VERSION, capture as capture_mod, updater, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -120,13 +120,14 @@ def make_handler(app):
             pass
 
         # ---- 공통 ----
-        def guard(self):
+        def guard(self, capture=False):
             host = self.headers.get("Host", "")
             if host not in allowed_hosts:
                 raise ApiError(403, "허용되지 않은 주소입니다")
             origin = self.headers.get("Origin")
             if origin and origin not in allowed_origins:
-                raise ApiError(403, "다른 사이트의 요청은 받지 않습니다")
+                if not (capture and capture_mod.is_extension_origin(origin)):
+                    raise ApiError(403, "다른 사이트의 요청은 받지 않습니다")
 
         def send_json(self, status, obj):
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -134,8 +135,16 @@ def make_handler(app):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
+            self.send_cors()
             self.end_headers()
             self.wfile.write(body)
+
+        def send_cors(self):
+            """/capture 는 브라우저 확장 프로그램의 요청만 (그 확장의 origin 하나만 돌려 줌)."""
+            origin = self.headers.get("Origin")
+            if self.path.startswith("/capture") and capture_mod.is_extension_origin(origin):
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
 
         def send_bytes(self, status, body, ctype, extra=None):
             self.send_response(status)
@@ -162,10 +171,46 @@ def make_handler(app):
             need(isinstance(data, dict), "JSON 객체여야 합니다")
             return data
 
+        def capture(self, method, path):
+            """브라우저 확장 프로그램이 단축키로 보낸 화면 (연결 키 필요, 설정에서 켠 경우만)."""
+            key = app.config["capture_key"]
+            if not key:
+                raise ApiError(403, "업무 데스크 ⚙ 설정에서 '브라우저 단축키 연결'을 먼저 켜세요")
+            if not secrets.compare_digest(self.headers.get("X-Desk-Capture-Key", "").encode("utf-8"), key.encode("utf-8")):
+                raise ApiError(401, "연결 키가 맞지 않습니다 (설정에서 키를 다시 복사하세요)")
+            if path == "/capture/ping" and method == "GET":
+                return self.send_json(200, {"ok": True, "version": VERSION})
+            if path == "/capture" and method == "POST":
+                return self.send_json(200, capture_mod.receive(app, self.read_json()))
+            raise ApiError(405, "허용되지 않은 요청")
+
+        def do_OPTIONS(self):
+            """확장 프로그램의 사전 확인 (그 외 요청은 모두 거절)."""
+            try:
+                path = urlparse(self.path).path
+                self.guard(capture=path.startswith("/capture"))
+                origin = self.headers.get("Origin")
+                if not (path.startswith("/capture") and capture_mod.is_extension_origin(origin)):
+                    raise ApiError(403, "허용되지 않은 요청")
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST")
+                self.send_header("Access-Control-Allow-Headers", "content-type, x-desk-capture-key")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.send_header("Access-Control-Max-Age", "600")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            except ApiError as e:
+                self.send_json(e.status, {"error": e.message})
+
         def dispatch(self, method):
             try:
-                self.guard()
                 url = urlparse(self.path)
+                is_capture = url.path in ("/capture", "/capture/ping")
+                self.guard(capture=is_capture)
+                if is_capture:
+                    return self.capture(method, url.path)
                 if url.path.startswith("/api/"):
                     if not secrets.compare_digest(self.headers.get("X-Desk-Token", ""), app.token):
                         raise ApiError(401, "화면을 새로 고침하세요 (서버가 다시 시작되었습니다)")
@@ -282,6 +327,32 @@ def put_settings(app, q, body):
     except ValueError as e:
         raise ApiError(400, str(e))
     return {"ok": True, "settings": app.config.public()}
+
+
+def capture_state(app):
+    key = app.config["capture_key"]
+    folder = str(APP_DIR / "browser-extension")
+    return {"enabled": bool(key), "key": key, "folder": folder, "url": f"http://127.0.0.1:{app.config['port']}",
+            "folder_exists": (APP_DIR / "browser-extension" / "manifest.json").is_file()}
+
+
+@api("GET", "/api/capture")
+def get_capture(app, q, body):
+    return capture_state(app)
+
+
+@api("POST", "/api/capture")
+def set_capture(app, q, body):
+    """브라우저 단축키 연결: enable(켜기·이미 켜져 있으면 그대로), renew(키 새로 만들기), disable(끄기)."""
+    action = body.get("action")
+    need(action in ("enable", "renew", "disable"), "동작이 잘못되었습니다")
+    if action == "disable":
+        app.config.set_value("capture_key", "")
+        app.db.log("브라우저 단축키 연결을 껐습니다")
+    elif action == "renew" or not app.config["capture_key"]:
+        app.config.set_value("capture_key", capture_mod.new_key())
+        app.db.log("브라우저 단축키 연결 키를 만들었습니다")
+    return capture_state(app)
 
 
 @api("GET", "/api/logs")
