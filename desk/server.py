@@ -104,6 +104,7 @@ class App:
         self.watcher = None
         self.shutdown = None
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
+        self.item_ai = ai.ItemJob(db, config)   # 항목 하나의 AI 요약(눌렀을 때만)
 
 
 def make_handler(app):
@@ -629,11 +630,27 @@ def get_item(app, q, body, item_id):
         ref = date.today()
     for e in it.get("events") or []:
         e["context"] = extract.event_context(it.get("body") or "", e["date"], ref)
+    it["ai"] = ai.item_ai(app.db, it, app.item_ai)
+    for k in ("ai_summary", "ai_summary_hash", "ai_summary_at", "ai_summary_model"):
+        it.pop(k, None)
     p = _item_file(app, it)
     it["file"] = {"name": p.name, "ext": p.suffix.lower(), "pdf": p.suffix.lower() == ".pdf",
                   "preview": p.suffix.lower() == ".pdf" or (os.name == "nt" and p.suffix.lower() in preview.EXTENSIONS),
                   "can_open": hasattr(os, "startfile")} if p else None
     return it
+
+
+@api("POST", r"/api/items/(\d+)/ai-summary")
+def item_ai_summary(app, q, body, item_id):
+    """이 항목만 AI 로 요약 (뒤에서 만들고 화면은 상태를 다시 물어봄). 원문이 안 바뀌었으면 저장해 둔 것을 씀."""
+    need(app.db.one("SELECT id FROM items WHERE id = ?", (item_id,)), "없는 항목입니다", 404)
+    need(app.config["ai_enabled"], "⚙ 설정에서 AI 요약을 먼저 켜세요")
+    try:
+        ai.check_local(app.config["ai_base"])
+        started = app.item_ai.start(int(item_id), force=body.get("force") is True)
+    except ai.AIError as e:
+        raise ApiError(400, str(e))
+    return {"started": started}
 
 
 def _item_file(app, it):
