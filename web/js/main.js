@@ -10,13 +10,14 @@ import { initInbox, collectNow } from './views/inbox.js';
 import { initCalendar } from './views/calendar.js';
 import { initTimetable } from './views/timetable.js';
 import './views/today.js';
+import './views/week.js';
 import './views/search.js';
 import './views/ai.js';
 import { openSettings } from './views/settings.js';
 import { api } from './api.js';
 import { startUpdate } from './update.js';
 
-orderViews(['today', 'inbox', 'calendar', 'timetable', 'attendance', 'search', 'ai', 'settings']);
+orderViews(['today', 'week', 'inbox', 'calendar', 'timetable', 'attendance', 'search', 'ai', 'settings']);
 
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
