@@ -2,6 +2,7 @@
 import { guarded, toast } from './ui.js';
 import { showView, statusItem, setStatus, setBadge, applyLayout, setLayout, getLayout, pollLogs, toggleLayoutMode, orderViews, on, emit } from './shell.js';
 import { loadState, loadStudents } from './store.js';
+import { stillActive, claim, watchWindow } from './singleton.js';
 import { initPasses, printPass } from './views/passes.js';
 import { initAbsences } from './views/absence.js';
 import './views/attendance.js';
@@ -60,6 +61,7 @@ function showPrintRequests(s) {
 const tick = async () => {
     try {
         const s = await loadState();
+        if (!silentPrintId && !stillActive(s.ui)) return;   // 다른 창이 쓰는 중이면 이 창은 멈춤
         if (!silentPrintId) showPrintRequests(s);
         // 예약 수집·텔레그램 수집이 끝났거나 텔레그램으로 증을 발급했으면 목록을 새로 고침
         const passChanged = lastPass !== null && s.counts.passes !== lastPass;
@@ -76,6 +78,7 @@ const tick = async () => {
 };
 
 guarded(async () => {
+    if (!silentPrintId) { watchWindow(); await claim(); }   // 나중에 연 창이 이김
     const s = await loadState();
     const saved = s.settings.layout || {};
     // 0.5.13: 아래 기록 패널은 기본으로 숨김 (예전 설정도 한 번 숨김, 다시 켜면 그대로)
@@ -102,6 +105,9 @@ guarded(async () => {
         setInterval(tick, 15000);
     }
 })();
+
+// 안내가 덮였던 창에서 [이 창에서 쓰기]를 누르면 그동안 바뀐 자료를 다시 불러옴
+window.addEventListener('desk-reclaimed', () => { emit('data-changed'); emit('passes-changed'); emit('absences-changed'); });
 
 window.addEventListener('keydown', e => {
     // Ctrl+K: 검색

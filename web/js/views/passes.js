@@ -1,6 +1,6 @@
 // 🎫 조퇴증·외출증: 명단 → 작성 → 미리보기 → 인쇄 → 기록 → 학생 공유(QR)
 import { api } from '../api.js';
-import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad } from '../ui.js';
+import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad, monthNav, monthKey, dayHead } from '../ui.js';
 import { openTab, refreshSide, findTab, emit, on, showView } from '../shell.js';
 import { openSettings } from './settings.js';
 import { store, loadStudents } from '../store.js';
@@ -99,23 +99,20 @@ export async function printPass(p, copies = 2) {
 
 // ---------------------------------------------------------------- 목록 패널
 async function loadDay() {
-    dayPasses = await api.get(`/api/passes?date=${sideDate}`);
+    dayPasses = await api.get(`/api/passes?month=${monthKey(sideDate)}`);
 }
 
 export function renderPassesSide(body, actions) {
     actions.append(
         el('button.icon-btn', { title: '학생 명단', onclick: openRoster }, '👥'),
         el('button.icon-btn', { title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }) }, '⟳'));
-    const date = el('input', { type: 'date', value: sideDate, onchange: guarded(async e => {
-        sideDate = e.target.value || todayIso();
-        await loadDay();
-        refreshSide();
-    }) });
-    const move = n => guarded(async () => { sideDate = addDays(sideDate, n); await loadDay(); refreshSide(); });
+    const pick = guarded(async iso => { sideDate = iso; await loadDay(); refreshSide(); });
+    const alive = dayPasses.filter(p => p.status !== 'cancelled');
+    const early = alive.filter(p => p.kind === 'early').length, out = alive.filter(p => p.kind === 'out').length;
     body.append(
-        el('div.filters', el('button.icon-btn', { onclick: move(-1), title: '전날' }, '◀'), date,
-            el('button.icon-btn', { onclick: move(1), title: '다음날' }, '▶'),
-            sideDate !== todayIso() && el('button.chip', { onclick: guarded(async () => { sideDate = todayIso(); await loadDay(); refreshSide(); }) }, '오늘')),
+        monthNav(sideDate, pick),
+        el('p.small.muted', { style: 'padding: 6px 12px 0; margin: 0' },
+            `${Number(monthKey(sideDate).slice(5))}월 · 조퇴 ${early}건 · 외출 ${out}건 (취소 제외)`),
         el('div.row', { style: 'padding: 10px 12px' },
             el('button.btn.primary', { onclick: () => openForm({ kind: 'early' }) }, '+ 조퇴증'),
             el('button.btn.primary', { onclick: () => openForm({ kind: 'out' }) }, '+ 외출증')));
@@ -123,8 +120,13 @@ export function renderPassesSide(body, actions) {
         body.append(el('div.empty', '학생 명단이 없습니다. ', el('a', { href: '#', onclick: e => { e.preventDefault(); openRoster(); } }, '명단 붙여넣기')));
     }
     const list = el('ul.list');
-    if (!dayPasses.length) list.append(el('li.empty', `${dayLabel(sideDate)} 발급 기록이 없습니다`));
+    if (!dayPasses.length) list.append(el('li.empty', `${Number(monthKey(sideDate).slice(5))}월 발급 기록이 없습니다`));
+    let lastDay = null;
     for (const p of dayPasses) {
+        if (p.date !== lastDay) {
+            lastDay = p.date;
+            list.append(dayHead(dayLabel(p.date, false), dayPasses.filter(x => x.date === p.date).length));
+        }
         const st = { issued: '발급', returned: '복귀', cancelled: '취소' }[p.status];
         list.append(el('li', { onclick: () => openPass(p), className: findTab(`pass-${p.id}`) ? 'on' : '' },
             el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),

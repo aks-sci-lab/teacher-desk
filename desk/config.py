@@ -27,6 +27,8 @@ DEFAULTS = {
     # 실시간 감시 (쿨메신저 쪽지 파일·폴더가 바뀌면 바로 수집), 몇 초마다 살펴볼지
     "watch_enabled": True,
     "watch_interval": 20,
+    # 업무 데스크를 주소창 없는 전용 창으로 열기 (끄면 기본 브라우저의 새 탭)
+    "app_window": True,
     # 켤 때 새 버전 확인·자동 업데이트 (윈도우용 ZIP 설치본만)
     "auto_update": True,
     # 하루 수집 시각
@@ -67,11 +69,11 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
-    "watch_enabled", "auto_update", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
+    "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key",
 }
-BOOL_KEYS = {"watch_enabled", "auto_update", "ai_enabled", "ai_auto_item"}
+BOOL_KEYS = {"watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)

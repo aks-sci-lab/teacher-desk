@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, capture as capture_mod, updater, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
+from . import VERSION, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -76,6 +76,18 @@ def text_field(v, name, limit, required=False):
     return v
 
 
+def month_range(v):
+    """'2026-10' → ('2026-10-01', '2026-10-31') (목록을 월별로 볼 때)."""
+    need(isinstance(v, str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", v), "월 형식이 잘못되었습니다 (예: 2026-10)")
+    year, number = map(int, v.split("-"))
+    try:
+        start = date(year, number, 1)
+        nxt = date(year + 1, 1, 1) if number == 12 else date(year, number + 1, 1)
+    except ValueError:
+        raise ApiError(400, "월 형식이 잘못되었습니다 (예: 2026-10)")
+    return start.isoformat(), (nxt - timedelta(days=1)).isoformat()
+
+
 def parse_roster(text):
     """엑셀에서 복사한 '번호  이름' 줄들 → [{number, name}]. 번호가 없으면 순서대로."""
     rows, auto = [], 0
@@ -101,6 +113,7 @@ class App:
     def __init__(self, db, config, collector, bot):
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
+        self.ui = window_mod.UiTracker()   # 지금 열려 있는 화면들 (전용 창 하나만 쓰게)
         self.watcher = None
         self.shutdown = None
         self.update_checker = None   # desk.py 가 켬 (시험에서는 없음)
@@ -215,6 +228,9 @@ def make_handler(app):
                 if url.path.startswith("/api/"):
                     if not secrets.compare_digest(self.headers.get("X-Desk-Token", ""), app.token):
                         raise ApiError(401, "화면을 새로 고침하세요 (서버가 다시 시작되었습니다)")
+                    cid = self.headers.get("X-Desk-Client", "")
+                    if window_mod.CLIENT_ID_RE.match(cid):
+                        app.ui.touch(cid)   # 이 화면이 아직 열려 있다는 신호
                     q = {k: v[-1] for k, v in parse_qs(url.query).items()}
                     body = self.read_json() if method in ("POST", "PUT", "PATCH") else {}
                     result = route(app, method, url.path, q, body)
@@ -315,6 +331,7 @@ def get_state(app, q, body):
             "linked": bool(app.bot and app.bot.chat_id),
             "pair_code": app.bot.pair_code() if app.bot else None,
         },
+        "ui": app.ui.state(),
         "update": app.update_checker.state() if app.update_checker else None,
         "pdf_ready": pypdf_ready(),
         "watch": {"enabled": bool(cfg["watch_enabled"]), "running": bool(app.watcher), "interval": cfg["watch_interval"]},
@@ -354,6 +371,32 @@ def set_capture(app, q, body):
         app.config.set_value("capture_key", capture_mod.new_key())
         app.db.log("브라우저 단축키 연결 키를 만들었습니다")
     return capture_state(app)
+
+
+def ui_id(body):
+    cid = body.get("id")
+    need(isinstance(cid, str) and window_mod.CLIENT_ID_RE.match(cid), "화면 번호가 잘못되었습니다")
+    return cid
+
+
+@api("GET", "/api/ui")
+def get_ui(app, q, body):
+    """지금 열려 있는 업무 데스크 화면 (이미 켜진 앱을 다시 켤 때 새 창을 열지 앞으로 가져올지 정함)."""
+    return app.ui.state()
+
+
+@api("POST", "/api/ui/claim")
+def ui_claim(app, q, body):
+    """이 화면을 '쓰는 화면'으로 (가장 나중에 연 화면이 이김, 다른 화면에는 안내가 덮임)."""
+    app.ui.claim(ui_id(body))
+    return app.ui.state()
+
+
+@api("POST", "/api/ui/bye")
+def ui_bye(app, q, body):
+    """화면이 닫힐 때 (바로 알려 줘야 다음에 켤 때 새 창을 엶)."""
+    app.ui.bye(ui_id(body))
+    return {"ok": True}
 
 
 @api("GET", "/api/logs")
@@ -417,6 +460,10 @@ def pass_fields(body, partial=False):
 def list_passes(app, q, body):
     if q.get("date"):
         return app.db.query("SELECT * FROM passes WHERE date = ? ORDER BY time_out, id", (check_date(q["date"]),))
+    if q.get("month"):   # 그 달 전체, 최근 날짜가 위로 (날짜 안에서는 시각 순)
+        first, last = month_range(q["month"])
+        return app.db.query("SELECT * FROM passes WHERE date >= ? AND date <= ? ORDER BY date DESC, time_out, id",
+                            (first, last))
     return app.db.query("SELECT * FROM passes ORDER BY date DESC, id DESC LIMIT 200")
 
 
@@ -501,6 +548,10 @@ def list_absences(app, q, body):
         day = check_date(q["date"], "결석 날짜")
         rows = app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? ORDER BY id DESC",
                             (day, day))
+    elif q.get("month"):   # 그 달에 하루라도 걸치는 결석계 (전달에서 이어진 것 포함)
+        first, last = month_range(q["month"])
+        rows = app.db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ? "
+                            "ORDER BY start_date DESC, id DESC", (last, first))
     else:
         rows = app.db.query("SELECT * FROM absences ORDER BY start_date DESC, id DESC LIMIT 200")
     return [absence.record(app.db, row, app.config["grade"]) for row in rows]
@@ -1487,7 +1538,7 @@ def update_apply(app, q, body):
     need(not busy or body.get("force") is True,
          f"{' · '.join(busy)} 중입니다. 끝난 뒤 다시 누르거나, 중단해도 되면 다시 확인하세요", 409)
     try:
-        updater.start_update(APP_DIR)
+        updater.start_update(APP_DIR, open_browser=False)   # 열려 있는 화면이 다시 켜지면 스스로 새로 고침하므로 새 창을 열지 않음
     except OSError as e:
         raise ApiError(500, f"업데이트 창을 열지 못했습니다 ({e.strerror or type(e).__name__})") from e
     app.db.log(f"화면에서 업데이트 시작: {st['current']} → {st['latest']}")
@@ -1511,6 +1562,5 @@ def serve(app, open_browser=True):
     print(f"업무 데스크가 켜졌습니다: {url}")
     print("브라우저를 닫아도 계속 실행됩니다. 완전히 끄려면 설정의 '프로그램 종료'를 누르세요.")
     if open_browser:
-        import webbrowser
-        webbrowser.open(url)
+        window_mod.open_ui(port, app.config.data_dir, app.config["app_window"])
     return httpd

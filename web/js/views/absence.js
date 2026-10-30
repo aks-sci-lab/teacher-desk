@@ -1,6 +1,6 @@
 // 결석계: 작성 → 미리보기 → 인쇄 → 기록
 import { api } from '../api.js';
-import { el, clear, toast, guarded, todayIso, dayLabel, longDate } from '../ui.js';
+import { el, clear, toast, guarded, todayIso, dayLabel, longDate, monthNav, monthKey, dayHead } from '../ui.js';
 import { openTab, refreshSide, findTab, on, emit } from '../shell.js';
 import { store } from '../store.js';
 
@@ -9,7 +9,7 @@ let absences = [];
 let selectedDate = todayIso();
 
 async function loadDay() {
-    absences = await api.get(`/api/absences?date=${selectedDate}`);
+    absences = await api.get(`/api/absences?month=${monthKey(selectedDate)}`);
 }
 
 function absenceNode(a) {
@@ -50,20 +50,25 @@ export function renderAbsenceSide(body, actions) {
     actions.append(el('button.icon-btn', {
         title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }),
     }, '⟳'));
-    const date = el('input', { type: 'date', value: selectedDate, onchange: guarded(async e => {
-        selectedDate = e.target.value || todayIso();
-        await loadDay();
-        refreshSide();
-    }) });
+    const pick = guarded(async iso => { selectedDate = iso; await loadDay(); refreshSide(); });
+    const first = `${monthKey(selectedDate)}-01`;
+    const monthNo = Number(monthKey(selectedDate).slice(5));
     body.append(
-        el('div.filters', date, selectedDate !== todayIso() && el('button.chip', {
-            onclick: guarded(async () => { selectedDate = todayIso(); await loadDay(); refreshSide(); }),
-        }, '오늘')),
+        monthNav(selectedDate, pick),
+        el('p.small.muted', { style: 'padding: 6px 12px 0; margin: 0' }, `${monthNo}월 · 결석계 ${absences.length}건`),
         el('div.row', { style: 'padding: 10px 12px' },
             el('button.btn.primary', { onclick: () => openAbsenceForm() }, '+ 결석계')));
     const list = el('ul.list');
-    if (!absences.length) list.append(el('li.empty', `${dayLabel(selectedDate)} 결석계가 없습니다`));
+    if (!absences.length) list.append(el('li.empty', `${monthNo}월 결석계가 없습니다`));
+    // 시작 날짜별로 묶음 (전달에서 이어진 결석은 '전달부터' 묶음)
+    const groupOf = a => (a.start_date < first ? 'prev' : a.start_date);
+    let lastGroup = null;
     for (const a of absences) {
+        const g = groupOf(a);
+        if (g !== lastGroup) {
+            lastGroup = g;
+            list.append(dayHead(g === 'prev' ? '전달부터 이어짐' : dayLabel(g, false), absences.filter(x => groupOf(x) === g).length));
+        }
         list.append(el('li', {
             className: findTab(`absence-${a.id}`) ? 'on' : '',
             onclick: () => openAbsence(a),
