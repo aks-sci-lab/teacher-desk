@@ -173,7 +173,8 @@ class TimetableApiTests(unittest.TestCase):
         self.assertIsNone(self.env.db.one("SELECT * FROM events WHERE id = ?", (sw["event_ids"][0],)))
         # 오늘 내 수업 (브리핑)
         lessons = self.req("GET", "/api/today")[1]["lessons"]
-        self.assertEqual(lessons, T.lessons_on(T.parse_file(sample_xlsx())[0], 0, today))
+        expected = [{**l, "start": None, "end": None} for l in T.lessons_on(T.parse_file(sample_xlsx())[0], 0, today)]   # 교시 시간은 아직 안 정함
+        self.assertEqual(lessons, expected)
         self.assertEqual(self.req("PUT", "/api/timetable/me", {"teacher": 9})[0], 404)
         self.assertEqual(self.req("PUT", "/api/timetable/me", {"teacher": 1})[0], 200)
         self.assertEqual(self.req("DELETE", "/api/timetable")[0], 200)

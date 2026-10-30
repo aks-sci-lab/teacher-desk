@@ -1,8 +1,10 @@
+import base64
+import json
 import unittest
 from datetime import date, datetime
 from unittest.mock import patch
 
-from desk import assist, schoolcal
+from desk import assist, printing, schoolcal
 from desk.collect import add_text_item
 from desk.telegram import Bot, masked
 from tests.fake_telegram import FakeTelegram
@@ -56,7 +58,7 @@ class TelegramMoreTests(unittest.TestCase):
         self.assertNotIn("김민준", self.sent_text())
         self.assertNotIn("병원 진료", self.fake.edited[-1]["text"])
         print_choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-        self.assertIn("기본 프린터로 바로 출력", self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["text"])
+        self.assertIn("기본 프린터로 인쇄", self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["text"])
         with patch("desk.telegram.printing.start_silent_pass", return_value=True) as start_print:
             requested = self.bot.handle_update(press(print_choice))
         self.assertIn("기본 프린터", requested)
@@ -83,10 +85,66 @@ class TelegramMoreTests(unittest.TestCase):
         buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
         issued = self.bot.handle_update(press(buttons[-1][0]["callback_data"]))
         self.assertIn("발급 번호", issued)
-        choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][1]["callback_data"]
+        choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][1][1]["callback_data"]
+        self.assertTrue(choice.endswith(":0"))
         result = self.bot.handle_update(press(choice))
-        self.assertIn("인쇄하지 않음", result)
+        self.assertIn("발급 완료", result)
         self.assertEqual(self.env.db.get_meta("telegram_print_queue", []), [])
+
+    def issue_and_buttons(self):
+        self.bot.start_pass(CHAT, "early", ["7", "13:30"], now=datetime(2026, 10, 30, 9, 2))
+        first = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        self.bot.handle_update(press(first))
+        return {b["text"]: b["callback_data"] for row in self.fake.edited[-1]["reply_markup"]["inline_keyboard"] for b in row}
+
+    def test_pass_web_link_choice(self):
+        """웹 링크 받기 (사용자 결정 2026-10-30): 이름은 들어가고 사유는 빠짐. 인쇄는 요청하지 않음."""
+        buttons = self.issue_and_buttons()
+        self.assertEqual(set(buttons), {"🖨 기본 프린터로 인쇄", "🔗 웹 링크 받기", "인쇄 + 웹 링크", "아무것도 안 함"})
+        with patch("desk.telegram.printing.start_silent_pass") as start_print:
+            self.bot.handle_update(press(buttons["🔗 웹 링크 받기"]))
+            start_print.assert_not_called()
+        self.assertEqual(printing.queue(self.env.db), [])
+        link = self.fake.sent[-1]["text"]
+        self.assertIn("https://aks-sci-lab.github.io/teacher-desk/#", link)
+        self.assertIn("학생에게만 전달", link)
+        data = json.loads(base64.urlsafe_b64decode(link.split("#")[1].split()[0] + "==").decode("utf-8"))
+        self.assertEqual((data["nm"], data["no"], data["d"], data["t"], data["k"]), ("김민준", 7, "2026-10-30", "13:30", "e"))
+        self.assertNotIn("why", data)   # 사유는 링크에 넣지 않음
+        self.assertNotIn("병원", link)
+        self.assertNotIn("김민준", self.fake.edited[-1]["text"])   # 이름은 링크 안에만
+
+    def test_pass_print_and_link_both_and_failure(self):
+        buttons = self.issue_and_buttons()
+        with patch("desk.telegram.printing.start_silent_pass", return_value=True) as start_print:
+            result = self.bot.handle_update(press(buttons["인쇄 + 웹 링크"]))
+        start_print.assert_called_once()
+        self.assertIn("기본 프린터", result)
+        self.assertIn("링크", result)
+        self.assertIn("#", self.fake.sent[-1]["text"])
+        # 인쇄를 시작하지 못하면 대기열에서 빠져 나중에 되살아나지 않음
+        buttons = self.issue_and_buttons()
+        with patch("desk.telegram.printing.start_silent_pass", side_effect=printing.PrintError("에지 없음")):
+            result = self.bot.handle_update(press(buttons["🖨 기본 프린터로 인쇄"]))
+        self.assertIn("시작하지 못했습니다", result)
+        self.assertEqual(printing.queue(self.env.db), [1])   # 첫 증의 요청만 (둘째는 실패해서 빠짐)
+
+    def test_pass_link_needs_share_page(self):
+        self.env.config.values["pass_page_url"] = ""
+        buttons = self.issue_and_buttons()
+        before = len(self.fake.sent)
+        result = self.bot.handle_update(press(buttons["🔗 웹 링크 받기"]))
+        self.assertIn("링크를 만들지 못했습니다", result)
+        self.assertEqual(len(self.fake.sent), before)
+
+    def test_print_requests_expire(self):
+        """인쇄 요청은 10분 안에 처리되지 않으면 버림 (실패한 요청이 다음 날 다시 나오던 것)."""
+        printing.enqueue(self.env.db, 5, now=1000)
+        self.assertEqual(printing.queue(self.env.db, now=1000 + 599), [5])
+        self.assertEqual(printing.queue(self.env.db, now=1000 + 601), [])
+        self.assertEqual(self.env.db.get_meta("telegram_print_queue"), [])
+        self.env.db.set_meta("telegram_print_queue", [9])   # 시각 없는 예전 요청
+        self.assertEqual(printing.queue(self.env.db), [])
 
     def test_absence_from_telegram_is_saved_without_printing_or_echoing_personal_details(self):
         command = "결석계 김민준 7 미인정결 2026-10-01~2026-10-09"
