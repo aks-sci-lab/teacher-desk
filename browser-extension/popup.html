@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 340px; margin: 0; padding: 12px; font: 13px/1.5 sans-serif; color: #222; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  button { padding: 6px 10px; margin: 2px 4px 2px 0; cursor: pointer; }
+  .ok { color: #1b7f3b; font-weight: 600; } .bad { color: #b3261e; font-weight: 600; }
+  .muted { color: #666; font-size: 12px; }
+  ul { margin: 6px 0; padding-left: 18px; } li { word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>업무 데스크로 보내기</h1>
+<div id="status" class="muted">화면을 읽는 중…</div>
+<ul id="frames"></ul>
+<div>
+  <button id="send">이 화면 보내기</button>
+  <button id="copy">구조 복사 (내용 없음)</button>
+  <button id="opts">옵션</button>
+</div>
+<p class="muted">단축키 Alt+Shift+S 로도 보냅니다. 글을 드래그로 고른 뒤 누르면 고른 글만 보냅니다. 단축키는 chrome://extensions/shortcuts (엣지: edge://extensions/shortcuts) 에서 바꿀 수 있습니다.</p>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

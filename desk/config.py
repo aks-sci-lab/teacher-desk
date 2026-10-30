@@ -49,6 +49,8 @@ DEFAULTS = {
     "ai_openai_key": "",
     "ai_anthropic_key": "",
     "ai_gemini_key": "",
+    # 브라우저 단축키로 화면 보내기 (설정에서 켜면 만들어지는 연결 키, 비어 있으면 꺼짐)
+    "capture_key": "",
     # 텔레그램
     "telegram_token": "",
     "telegram_detail": "titles",  # counts: 개수만 / titles: 제목까지 / summary: 요약까지
@@ -58,7 +60,7 @@ DEFAULTS = {
 }
 
 # 화면에 그대로 돌려주면 안 되는 값
-SECRET_KEYS = {"telegram_token", "neis_key", "ai_openai_key", "ai_anthropic_key", "ai_gemini_key"}
+SECRET_KEYS = {"capture_key", "telegram_token", "neis_key", "ai_openai_key", "ai_anthropic_key", "ai_gemini_key"}
 # 화면에서 바꿀 수 있는 값 (port, data_dir, api_base 는 파일에서만)
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
@@ -166,11 +168,20 @@ class Config:
                 clean[k] = v.strip()
         with self._lock:
             self.values.update(clean)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(self.values, f, ensure_ascii=False, indent=2)
-            tmp.replace(self.path)
+            self._write()
+
+    def set_value(self, key, value):
+        """화면에서 직접 고치지 않는 값(연결 키 등)을 서버가 저장."""
+        with self._lock:
+            self.values[key] = value
+            self._write()
+
+    def _write(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.values, f, ensure_ascii=False, indent=2)
+        tmp.replace(self.path)
 
 
 def normalize_times(value):
