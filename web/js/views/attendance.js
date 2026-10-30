@@ -106,31 +106,36 @@ function downloadCsv(report) {
 
 function renderReportRows(report) {
     const types = Object.keys(report.totals.absence_days);
-    const numberCell = (tag, count, students, metric, label, type = null) =>
-        el(tag, count ? el('button.btn.small', {
+    // 0 은 흐린 '–', 0 이 아니면 눌러서 날짜·사유를 보는 작은 단추 (숫자는 가운데 정렬)
+    const numberCell = (tag, count, students, metric, label, type = null, cls = '') =>
+        el(tag, { className: `num${cls ? ' ' + cls : ''}` }, count ? el('button.num-btn', {
             title: `${label} 날짜·사유 보기`,
             onclick: () => openDetails(report.month, students, metric, label, type),
-        }, count) : '0');
+        }, count) : el('span.zero', '–'));
     const cells = (tag, row, students) => [
         ...types.map(type => numberCell(tag, row.absence_days[type], students, 'absence_days', `${type} 결석`, type)),
-        numberCell(tag, row.total_absence_days, students, 'absence_days', '결석 합계'),
-        numberCell(tag, row.absence_forms, students, 'absence_forms', '결석계'),
-        numberCell(tag, row.early_count, students, 'early_count', '조퇴'),
+        numberCell(tag, row.total_absence_days, students, 'absence_days', '결석 합계', null, 'sum-col'),
+        numberCell(tag, row.absence_forms, students, 'absence_forms', '결석계', null, 'group-start'),
+        numberCell(tag, row.early_count, students, 'early_count', '조퇴', null, 'group-start'),
         numberCell(tag, row.out_count, students, 'out_count', '외출'),
     ];
-    const table = el('table.tbl',
-        el('thead', el('tr',
-            el('th', '번호'), el('th', '이름'),
-            types.map(type => el('th', `${type} 결석일`)),
-            el('th', '결석 합계'), el('th', '결석계'), el('th', '조퇴'), el('th', '외출'))),
+    return el('div.att-wrap', el('table.tbl.att-table',
+        el('thead',
+            el('tr',
+                el('th', { rowSpan: 2, className: 'col-no' }, '번호'), el('th', { rowSpan: 2, className: 'col-name' }, '이름'),
+                el('th', { colSpan: types.length + 1, className: 'group' }, '결석일 (일)'),
+                el('th', { colSpan: 3, className: 'group group-start' }, '건수')),
+            el('tr',
+                types.map(type => el('th.num', type)),
+                el('th.num.sum-col', '합계'),
+                el('th.num.group-start', '결석계'), el('th.num.group-start', '조퇴'), el('th.num', '외출'))),
         el('tbody',
             report.rows.map(row => el('tr',
-                el('td', row.student_number ?? '—'), el('td', row.student_name),
+                el('td.col-no', row.student_number ?? '—'), el('td.col-name', row.student_name),
                 cells('td', row, [row]))),
-            el('tr',
-                el('th', '합계'), el('th', ''),
-                cells('th', report.totals, report.rows))));
-    return table;
+            el('tr.total',
+                el('th.col-no', ''), el('th.col-name', '합계'),
+                cells('th', report.totals, report.rows)))));
 }
 
 function openDetails(month, students, metric, label, type) {
