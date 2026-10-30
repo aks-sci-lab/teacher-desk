@@ -1003,3 +1003,12 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
     padding: 5px var(--pad); background: var(--surface-2); color: var(--muted); font-size: 0.85em; font-weight: 700; }
 .list li.day-head:hover { background: var(--surface-2); }
 .list li.day-head .cnt { font-weight: 400; }
+
+/* 업무 데스크가 다른 창에서 열렸을 때 이 창을 덮는 안내 (0.5.43) */
+.single-overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(3px); }
+.single-box { max-width: 460px; padding: 28px 32px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .25); text-align: center; }
+.single-box h2 { margin: 0 0 8px; }
+.single-box .row { justify-content: center; margin: 16px 0 8px; }
+

@@ -7,9 +7,9 @@ import sys
 import time
 import urllib.error
 import urllib.request
-import webbrowser
 from contextlib import contextmanager
 
+from . import window
 from .config import APP_DIR
 from .updater import EXIT_UPDATING
 
@@ -56,8 +56,8 @@ def launch(config, argv):
     port = config["port"]
     open_browser = "--no-browser" not in argv
     if is_running(port):
-        if open_browser:
-            webbrowser.open(f"http://127.0.0.1:{port}/")
+        if open_browser:   # 열려 있는 창이 있으면 그 창을 앞으로, 없으면 전용 창을 새로
+            window.show_ui(port, config.data_dir, config["app_window"])
         return 0
     command = [sys.executable, str(APP_DIR / "desk.py"),
                *(arg for arg in argv if arg != "--background")]
