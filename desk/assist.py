@@ -112,7 +112,10 @@ def intent(text):
     if m and len(text) <= 20:
         n = m.group(1) or m.group(4)
         return ("text" if (m.group(2) or m.group(3)) == "원문" else "file"), [n]
-    if re.search(r"브리핑|오늘\s*(할\s*일|업무|뭐)", text):
+    polite = {"보여줘", "알려줘", "보내줘", "해줘", "줘", "좀", "주세요", "보여주세요", "알려주세요", "부탁", "부탁해", "부탁해요", "요"}
+    rest = [w for w in text.split() if w.strip("?!.~") not in polite]
+    # '브리핑 보여줘' 는 명령, '브리핑 자료 어디 있어' 는 검색·질문
+    if rest == ["브리핑"] or (re.search(r"오늘\s*(할\s*일|업무|뭐)", text) and len(text) <= 20):
         return "brief", []
     if P_LESSON.search(text) and len(text) <= 25 and not re.search(r"교체|바꾸|바꿀|변경", text):
         return "lessons", [text]
