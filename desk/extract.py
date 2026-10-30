@@ -205,6 +205,14 @@ P_ADMIN_LINE = re.compile(r"^\s*(?:시행|접수|기안|결재|생산|등록)(?:
 P_ADMIN_BEFORE = re.compile(r"(?:시행|접수|기안|결재|생산|등록)(?:일자?)?(?![가-힣])[^가-힣]{0,30}$")
 
 
+# '2027. 3. 1.자 개방형 교장공모제', '10월 30일자 공문' 처럼 날짜 바로 뒤의 '자' = 시행·기준일이지 일정이 아님 (0.5.39)
+P_JA = re.compile(r"자(?![가-힣])")
+
+
+def is_ja_date(line, end):
+    return bool(P_JA.match(line, end))
+
+
 def is_admin_date(line, start):
     """이 날짜가 시행·접수·기안 같은 문서 처리 날짜인지."""
     return bool(P_ADMIN_LINE.match(line) or P_ADMIN_BEFORE.search(line, max(0, start - 40), start))
@@ -297,8 +305,8 @@ def extract_events(text, ref, name=None):
         for i, (start, end, d, end_d) in enumerate(dates):
             if P_REF_BEFORE.search(line, max(0, start - 40), start):
                 continue  # 문서번호(날짜): 관련 공문의 날짜 (바로 앞 몇 글자만 봄)
-            if is_admin_date(line, start):
-                continue  # 시행·접수 날짜
+            if is_admin_date(line, start) or is_ja_date(line, end):
+                continue  # 시행·접수 날짜, '…일자' 기준일
             nxt = dates[i + 1][0] if i + 1 < len(dates) else len(line)
             after = line[end:min(nxt, end + 25)]
             near = line[end:min(len(line), end + 20)]
@@ -394,9 +402,9 @@ def event_context(text, iso, ref):
     for i, line in enumerate(lines):
         if is_reference_line(line):
             continue
-        for start, _, d, _ in find_dates(line, ref):
+        for start, _end, d, _ in find_dates(line, ref):
             if d.isoformat() == iso and not P_REF_BEFORE.search(line, max(0, start - 40), start) \
-                    and not is_admin_date(line, start):
+                    and not is_admin_date(line, start) and not is_ja_date(line, _end):
                 return {"index": i, "line": line,
                         "before": lines[i - 1] if i > 0 else "",
                         "after": lines[i + 1] if i + 1 < len(lines) else ""}

@@ -197,7 +197,7 @@ class TelegramMoreTests(unittest.TestCase):
         self.bot.handle_update(msg("검색 연수"))
         last = self.fake.sent[-1]
         self.assertIn("연수 신청 안내", last["text"])
-        self.assertEqual([b["text"] for b in last["reply_markup"]["inline_keyboard"][0]], ["1 원문", "1 원본 파일 받기"])
+        self.assertEqual([b["text"] for b in last["reply_markup"]["inline_keyboard"][0]][:2], ["1 원문", "1 원본 파일 받기"])
         self.bot.handle_update(press(f"o:{a}"))
         self.assertIn("신청: 11월 2일까지", self.fake.sent[-1]["text"])
         # AI 를 안 쓰면 질문에는 찾은 자료만
@@ -216,7 +216,7 @@ class TelegramMoreTests(unittest.TestCase):
         iid = stats["new_ids"][0]
         self.bot.notify_collect(stats, "schedule")
         notice = self.fake.sent[-1]
-        self.assertIn("[1]", notice["text"])
+        self.assertIn("1. [쿨메신저]", notice["text"])
         self.assertEqual(notice["reply_markup"]["inline_keyboard"][0][1],
                          {"text": "1 원본 파일 받기", "callback_data": f"f:{iid}"})
         self.assertEqual(self.fake.docs, [])

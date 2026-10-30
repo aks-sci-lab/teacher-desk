@@ -17,30 +17,26 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import absence, ai, assist, passlink, printing, providers, queries
+from . import VERSION, absence, ai, assist, passlink, printing, providers, queries
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
     "📋 업무 데스크 명령\n"
-    "브리핑 — 오늘 일정·마감 + 지난 1주일 AI 요약\n"
-    "오늘 — 오늘 일정·마감·외출 인원\n"
+    "\n■ 일정·마감\n"
+    "오늘 — 오늘 일정·오늘 마감·외출 인원\n"
     "마감 — 7일 안의 마감\n"
-    "검색 낱말 — 메시지·공문 찾기 (그냥 낱말만 보내도 됨)\n"
-    "원문 2 · 파일 2 — 브리핑·검색의 2번 자료 원문·원본 파일\n"
-    "내일 수업 · 금요일 시간표 — 내 수업 (시간표를 불러왔을 때)\n"
-    "조퇴 7 [13:30] — 7번 조퇴증 발급 (사유는 단추로)\n"
-    "외출 7 [13:30] [14:30] — 7번 외출증 발급\n"
-    "발급 뒤 기본 프린터 인쇄·학생용 웹 링크(이름 포함) 중에서 고를 수 있습니다.\n"
+    "브리핑 — 오늘 + 지난 1주일 AI 요약\n"
+    "내일 수업 · 금요일 시간표 — 내 수업\n"
+    "\n■ 학생\n"
+    "조퇴 7 [13:30] · 외출 7 [13:30] [14:30] — 사유는 단추로, 발급 뒤 인쇄·웹 링크 선택\n"
     "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
-    "종류: 병결·인정결·기타결·미인정결. 주말·학사일정 공휴일·휴업일 제외, 앱에 저장만 합니다.\n"
-    "새로고침 — 지금 바로 수집\n"
-    "요약 — 최근 받은 공문·메시지\n"
-    "도움말 — 이 안내"
-    "\n메뉴 — 자주 쓰는 단추 · 취소 — 진행 중인 입력·발급 선택 취소"
-    "\n조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다."
-    "\n목록에 없는 말은 명령어 안내와 AI 검색 단추를 보여 줍니다. 선택하기 전에는 검색하지 않습니다."
-    "\n/ask 질문 — 일반 질문용 AI (앱의 AI 질문에서 선택). 업무자료는 붙이지 않습니다."
-    "\n외부 API는 전송·요금 안내 후 매번 동의를 받습니다. 개인정보·비공개 자료는 금지."
+    "종류: 병결·인정결·기타결·미인정결 (주말·학사일정 공휴일·휴업일 제외, 앱에 저장만)\n"
+    "\n■ 자료\n"
+    "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
+    "요약 — 최근 받은 자료 · 새로고침 — 지금 수집\n"
+    "\n■ 기타\n"
+    "도움말 · 메뉴 · 취소 · 상태 · /ask 질문(일반 질문 AI, 업무자료는 붙이지 않음)\n"
+    "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
 COMMANDS = {
     "오늘": "today", "/today": "today",
@@ -93,8 +89,36 @@ TEXT_AS_FILE = 3 * TEXT_LIMIT
 FILE_LIMIT = 45 * 1024 * 1024   # 봇이 보낼 수 있는 파일은 50MB 까지
 WD = "월화수목금토일"
 DIALOG_TTL = 10 * 60
-KEYBOARD = [["브리핑", "오늘", "마감"], ["조퇴증", "외출증", "결석계"],
-            ["자료 검색", "내 수업", "요약"], ["메뉴", "상태", "취소"]]
+# 화면을 덜 가리게 2줄 (요약·상태·취소·자료 검색·새로고침은 '메뉴' 의 단추로)
+KEYBOARD = [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외출증", "결석계", "메뉴"]]
+MENU_MORE = ("자료 검색", "요약", "새로고침", "상태", "취소")
+
+
+BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
+
+
+def cut(text, n=40):
+    """n 글자 안으로 줄바꿈 없이, 단어 중간이 아니라 띄어쓰기에서 끊고 …"""
+    text = " ".join((text or "").split())
+    if len(text) <= n:
+        return text
+    head = text[:n]
+    if " " in head and len(head) - head.rfind(" ") < 12:
+        head = head[:head.rfind(" ")]
+    return head.rstrip(" ,.·-:~") + "…"
+
+
+P_SENDER = re.compile(r"\(보낸 사람:\s*(.+?)\)\s*$")
+
+
+def sender_of(body):
+    """쿨메신저 쪽지 끝의 '(보낸 사람: 이름)' → 이름 ('이창헌(이창헌)' 은 한 번만)."""
+    m = P_SENDER.search(body or "")
+    if not m:
+        return ""
+    name = m.group(1).strip()
+    same = re.fullmatch(r"(.+?)\s*\(\s*\1\s*\)", name)
+    return (same.group(1) if same else name)[:20]
 
 
 def fmt_day(iso, today):
@@ -171,6 +195,8 @@ class Bot:
         self.stop_event = threading.Event()
         self.thread = None
         self.status = "꺼짐"
+        self.conflicts = 0      # 같은 봇을 다른 곳에서도 쓰는 중이라 받은 409 횟수
+        self.last_poll = None   # 마지막으로 텔레그램에서 새 글을 확인한 시각
         self.asking = None      # 지금 답을 만드는 질문 (한 번에 하나)
         self.sync = False       # 시험: 질문의 답을 기다렸다가 돌려줌
         self.choice_requests = {}
@@ -322,10 +348,12 @@ class Bot:
 
     def send_menu(self, cid, full=False):
         text = (HELP if full else
-                "📋 업무 데스크\n아래 메뉴를 누르세요. 조퇴증·외출증·결석계는 차례대로 입력할 수 있습니다.\n"
-                "자료 검색은 AI 없이 빠르게 찾고, 목록에 없는 질문은 AI 검색 여부를 먼저 묻습니다.\n"
-                "작성 중에는 '취소'로 빠져나올 수 있습니다.")
+                "📋 업무 데스크\n아래 단추나 명령을 쓰세요. 조퇴증·외출증·결석계는 차례대로 입력할 수 있습니다.\n"
+                "자료 검색은 AI 없이 빠르게 찾고, 목록에 없는 질문은 AI 검색 여부를 먼저 묻습니다.")
         self.send(text, cid, keyboard=True)
+        if not full:   # 아래 단추 판에 없는 것은 여기 단추로
+            self.send("그 밖의 명령", cid, [[{"text": name, "callback_data": f"mn:{name}"} for name in MENU_MORE[:3]],
+                                          [{"text": name, "callback_data": f"mn:{name}"} for name in MENU_MORE[3:]]])
         return text
 
     def begin_dialog(self, cid, kind):
@@ -472,8 +500,23 @@ class Bot:
             fp = self.db.one("SELECT file_path FROM items WHERE id = ?", (iid,))
             if fp and item_file(self.config, fp["file_path"]):
                 row.append({"text": f"{n} 원본 파일 받기", "callback_data": f"f:{iid}"})
+            st = self.db.one("SELECT registered, (SELECT COUNT(*) FROM events e WHERE e.item_id = items.id AND e.done = 0) AS n "
+                             "FROM items WHERE id = ?", (iid,))
+            if st and not st["registered"] and st["n"]:   # 일정 후보가 있고 아직 달력에 안 넣은 것
+                row.append({"text": f"📅 {n} 일정 등록", "callback_data": f"rg:{iid}"})
             rows.append(row)
         return rows or None
+
+    def register_item(self, cid, item_id):
+        """수신함에서 체크하는 것과 같음: 이 자료의 일정을 달력·브리핑에 넣음."""
+        it = self.db.one("SELECT id, title, registered FROM items WHERE id = ?", (item_id,))
+        if not it:
+            return self.reply(cid, "없는 자료입니다.")
+        if it["registered"]:
+            return self.reply(cid, "이미 달력에 들어 있습니다.")
+        self.db.execute("UPDATE items SET registered = 1 WHERE id = ?", (item_id,))
+        n = self.db.one("SELECT COUNT(*) AS n FROM events WHERE item_id = ?", (item_id,))["n"]
+        return self.reply(cid, f"📅 '{cut(self.mask(it['title']), 30)}' 일정 {n}건을 달력에 넣었습니다. (취소는 업무 데스크 수신함에서 체크를 푸세요)")
 
     def run_arg(self, cid, cmd, args):
         if cmd == "general":
@@ -662,6 +705,10 @@ class Bot:
             if action == "absence":
                 return self.begin_dialog(cid, "absence")
             return self.run_arg(cid, action, [])
+        if kind == "mn" and rest in MENU_MORE:   # '메뉴' 의 단추: 같은 이름의 글을 보낸 것처럼 처리
+            return self.handle_update({"message": {"chat": {"id": cid, "type": "private"}, "text": rest}})
+        if kind == "rg" and rest.isdigit():
+            return self.register_item(cid, int(rest))
         if kind == "o" and rest.isdigit():
             return self.send_original(cid, int(rest))
         if kind == "f" and rest.isdigit():
@@ -933,7 +980,8 @@ class Bot:
                              "AI 켜짐 · 모델을 불러오세요" if self.config["ai_enabled"] else "AI 꺼짐 · 자료 검색은 가능")
             except ai.AIError as e:
                 ai_status = f"AI 연결 오류: {e}"
-            return ("⚙ 업무 데스크 상태\n"
+            return (f"⚙ 업무 데스크 상태 · 버전 {VERSION}\n"
+                    + f"텔레그램: {self.status}" + (f" · 마지막 확인 {self.last_poll}" if self.last_poll else "") + "\n"
                     + "업무자료 요약·검색 (로컬): " + ai_status
                     + "\n일반 질문: " + providers.PROVIDERS.get(self.config["ai_provider"], "설정 확인 필요")
                     + (" · 텔레그램 실행 불가" if self.config["ai_provider"] == "browser" else " · /ask 질문")
@@ -992,29 +1040,66 @@ class Bot:
             return "📥 최근 받은 자료\n\n" + "\n\n".join(parts)
         return HELP
 
+    def mask(self, text):
+        """텔레그램으로 나가는 글에서 학생 이름은 가림."""
+        return ai.mask_names(text or "", [s["name"] for s in self.db.students()])
+
     def collect_message(self, stats, today=None):
-        """수집 결과 알림. 새 자료가 없으면 None (알림 안 보냄)."""
+        """수집 결과 알림 (0.5.39). 새 자료가 없으면 None.
+        적을 때는 마감이 있는 것·에듀파인 공문을 위에 두고 보낸 사람·무엇을 언제까지인지를 함께,
+        많을 때(처음 연결 등)는 한 줄 요약과 가까운 마감만."""
         if not stats.get("items"):
             return None
         today = today or date.today()
         detail = self.config["telegram_detail"]
-        lines = [f"📥 새 자료 {stats['items']}건 · 일정 후보 {stats['events']}건 (마감 {stats['deadlines']}건)"]
-        ids = stats.get("new_ids") or []
-        if ids and detail != "counts":
-            marks = ",".join("?" * len(ids))
-            rows = self.db.query(f"SELECT id, source, title FROM items WHERE id IN ({marks}) "
-                                 "ORDER BY received_at DESC, id DESC LIMIT 5", ids)
-            self.set_refs([r["id"] for r in rows])
-            for n, r in enumerate(rows, 1):
-                lines.append(f"[{n}] [{SOURCE_NAMES.get(r['source'], r['source'])}] {r['title'][:50]}")
-            evs = self.db.query(
-                f"SELECT e.*, CASE WHEN i.source = 'school' THEN NULL ELSE i.title END AS item_title "
-                f"FROM events e JOIN items i ON i.id = e.item_id "
-                f"WHERE e.item_id IN ({marks}) AND e.kind = 'deadline' AND e.date >= ? ORDER BY e.date LIMIT 3",
-                ids + [today.isoformat()])
-            if evs:
-                lines.append("\n가까운 마감 후보 (수신함에서 체크하면 달력에 들어갑니다)")
-                lines += [fmt_event(e, today, detail) for e in evs]
+        n_all = stats["items"]
+        ids = list(stats.get("new_ids") or [])
+        head = f"📥 새 자료 {n_all}건"
+        if detail == "counts" or not ids:
+            return head + (f" · ⏰ 마감 후보 {stats['deadlines']}건" if stats.get("deadlines") else "")
+        marks = ",".join("?" * len(ids))
+        rows = self.db.query(f"SELECT id, source, title, body, received_at, summary FROM items WHERE id IN ({marks})", ids)
+        by_src = {}
+        for r in rows:
+            by_src[r["source"]] = by_src.get(r["source"], 0) + 1
+        if len(by_src) > 1 or n_all > BATCH_LIMIT:
+            head += " (" + " · ".join(f"{SOURCE_NAMES.get(s, s)} {c}" for s, c in by_src.items()) + ")"
+        soon = {}   # 자료별 가장 가까운 마감 (90일 안)
+        for e in self.db.query(
+                f"SELECT item_id, date, end_date, time, text FROM events WHERE item_id IN ({marks}) AND kind = 'deadline' "
+                "AND done = 0 AND COALESCE(end_date, date) >= ? AND COALESCE(end_date, date) <= ? "
+                "ORDER BY COALESCE(end_date, date), COALESCE(time, '99')",
+                ids + [today.isoformat(), (today + timedelta(days=90)).isoformat()]):
+            soon.setdefault(e["item_id"], e)
+        rows.sort(key=lambda r: r["received_at"], reverse=True)
+        rows.sort(key=lambda r: ((0, soon[r["id"]]["end_date"] or soon[r["id"]]["date"]) if r["id"] in soon
+                                 else (1 if r["source"] == "edufine" else 2, "")))
+        big = n_all > BATCH_LIMIT
+        shown = [r for r in rows if r["id"] in soon][:3] if big else rows[:5]
+        lines = [head]
+        if big:
+            lines.append("한꺼번에 많이 들어와 목록은 줄였습니다. 전부는 업무 데스크 수신함에서 보세요.")
+            if shown:
+                lines.append("\n⏰ 가까운 마감")
+        for n, r in enumerate(shown, 1):
+            sender = sender_of(r["body"])
+            lines.append(f"{n}. [{SOURCE_NAMES.get(r['source'], r['source'])}] {cut(self.mask(r['title']), 40)}"
+                         + (f" · {self.mask(sender)}" if sender else ""))
+            e = soon.get(r["id"])
+            if e:
+                end = e["end_date"] or e["date"]
+                days = (date.fromisoformat(end) - today).days
+                what = cut(self.mask(e["text"]), 40)
+                same = what.rstrip("…") in r["title"] or r["title"][:30] in what
+                lines.append(f"   ⏰ {fmt_day(end, today)}{' ' + e['time'] if e['time'] else ''}"
+                             + (f" (D-{days})" if days > 2 else "") + ("" if same else f" · {what}"))
+            elif detail == "summary":
+                summary = json.loads(r["summary"] or "[]")
+                if summary:
+                    lines.append("   " + cut(self.mask(summary[0]), 60))
+        if len(rows) > len(shown) and not big:
+            lines.append(f"그 외 {len(rows) - len(shown)}건")
+        self.set_refs([r["id"] for r in shown])
         return "\n".join(lines)
 
     def notify_collect(self, stats, reason):
@@ -1043,17 +1128,42 @@ class Bot:
                 updates = self.api("getUpdates", {"timeout": 25, "offset": offset,
                                                   "allowed_updates": ["message", "callback_query"]}, timeout=35)
                 self.status = "연결됨" if self.chat_id else "연결 대기 (코드를 보내세요)"
-                backoff = 5
+                backoff, self.conflicts = 5, 0
+                self.last_poll = datetime.now().strftime("%H:%M:%S")
                 for u in updates:
                     offset = u["update_id"] + 1
                     try:
                         self.handle_update(u)
                     except Exception as e:
-                        self.db.log(f"텔레그램 명령 처리 오류: {e}", "error")
+                        self.db.log(f"텔레그램 명령 처리 오류: {type(e).__name__}: {e}", "error")
+                        self.tell_error(u)
+            except urllib.error.HTTPError as e:
+                if e.code == 409:   # 같은 봇을 다른 곳(다른 폴더·PC)에서도 켜 둠: 오래 쉬면 명령에 답이 없으므로 짧게만
+                    self.conflicts += 1
+                    self.status = "오류: 같은 봇을 다른 곳에서도 쓰는 중 (409 Conflict)"
+                    if self.conflicts in (1, 30):
+                        self.db.log("텔레그램 409 Conflict: 같은 봇 토큰을 쓰는 업무 데스크가 다른 곳에서도 켜져 있습니다. "
+                                    "한 곳만 남기세요 (개발 폴더에는 토큰을 넣지 않습니다)", "warn")
+                    self.stop_event.wait(8)
+                    continue
+                self.status = f"오류: HTTP {e.code} {e.reason}"
+                self.stop_event.wait(backoff)
+                backoff = min(backoff * 2, 300)
             except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
                 self.status = f"오류: {getattr(e, 'reason', e)}"
                 self.stop_event.wait(backoff)
                 backoff = min(backoff * 2, 300)
+
+    def tell_error(self, update):
+        """명령을 처리하다 오류가 나면 조용히 넘기지 않고 알림 (원인은 업무 데스크의 '기록')."""
+        msg = update.get("message") or (update.get("callback_query") or {}).get("message") or {}
+        cid = (msg.get("chat") or {}).get("id")
+        if cid is None or cid != self.chat_id:
+            return
+        try:
+            self.send("⚠️ 처리 중 오류가 났습니다. 잠시 뒤 다시 시도하세요. 계속되면 업무 데스크 아래의 '기록'에서 원인을 볼 수 있습니다.", cid)
+        except Exception:
+            pass
 
     def start(self):
         self.thread = threading.Thread(target=self.loop, name="telegram", daemon=True)

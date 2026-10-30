@@ -40,10 +40,17 @@ class TelegramGuidedTests(unittest.TestCase):
         self.assertIsNone(self.bot.handle_update(msg("메뉴", chat=6)))
         self.assertEqual(self.fake.sent, [])
         self.bot.handle_update(msg("/menu"))
-        markup = self.fake.sent[-1]["reply_markup"]
+        markup = next(m["reply_markup"] for m in reversed(self.fake.sent) if "keyboard" in m["reply_markup"])
         self.assertTrue(markup["is_persistent"])
         self.assertTrue(markup["resize_keyboard"])
-        self.assertIn(["브리핑", "오늘", "마감"], markup["keyboard"])
+        self.assertEqual(markup["keyboard"], [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외출증", "결석계", "메뉴"]])   # 화면을 덜 가리게 2줄
+        # 아래 판에 없는 명령은 '메뉴' 아래의 단추로 (누르면 같은 이름의 글을 보낸 것처럼 처리)
+        more = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
+        self.assertEqual([b["text"] for row in more for b in row], ["자료 검색", "요약", "새로고침", "상태", "취소"])
+        before = len(self.fake.sent)
+        self.bot.handle_update(press(more[1][0]["callback_data"]))      # 상태
+        self.assertGreater(len(self.fake.sent), before)
+        self.assertIsNone(self.bot.handle_update(press("mn:위험한명령")))
         self.bot.handle_update(msg("/help"))
         self.assertIn("단계별", self.texts())
         self.assertIn("취소", self.texts())

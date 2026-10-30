@@ -273,7 +273,7 @@ def cool_text(m):
     return m["body"] + (f"\n\n(보낸 사람: {m['sender']})" if m["sender"] else "")
 
 
-EVENT_RULES = 1   # 일정 찾기 규칙이 바뀌면 올림 (0.5.21: 시각이 끼인 기간 하나로, 이름표 줄은 행사명으로)
+EVENT_RULES = 2   # 일정 찾기 규칙이 바뀌면 올림 (0.5.21: 시각이 끼인 기간 하나로, 이름표 줄은 행사명으로 / 0.5.39: '…일자' 기준일은 일정 아님)
 
 
 def rescan_events(db):
@@ -302,7 +302,7 @@ def rescan_events(db):
             continue  # 날짜를 손으로 고친 일정이 있음
         new = extract.analyze(body, ref=ref, title=it["title"])["events"]
         shape = lambda es: sorted((e["date"], e.get("end_date"), e.get("time"), e["kind"], e["text"]) for e in es)
-        if new and shape(new) != shape(old):
+        if shape(new) != shape(old):
             db.replace_events(it["id"], new)
             changed += 1
     db.set_meta("event_rules", EVENT_RULES)
