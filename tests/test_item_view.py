@@ -139,6 +139,16 @@ class CleanupTests(unittest.TestCase):
             self.assertIsNone(db.one("SELECT end_date FROM events WHERE item_id = ? LIMIT 1", (iid,))["end_date"])
         self.assertEqual(rescan_events(db), 0)   # 한 번만
 
+    def test_rescan_events_end_date_blank_vs_set(self):
+        """같은 날짜 일정이 끝 날짜 있는 것·없는 것으로 섞여도 줄 세우다 터지지 않음 (0.5.40)"""
+        db = self.env.db
+        iid = add_text_item(db, "cool", LECTURE, title="특강", received_at="2026-10-28 09:00:00")["id"]
+        db.execute("DELETE FROM events WHERE item_id = ?", (iid,))
+        db.execute("INSERT INTO events(item_id, date, kind, category, text) VALUES(?, '2026-11-02', 'deadline', '제출·마감', '기간')", (iid,))
+        db.execute("INSERT INTO events(item_id, date, end_date, kind, category, text) VALUES(?, '2026-11-02', '2026-11-13', 'deadline', '제출·마감', '기간')", (iid,))
+        db.set_meta("event_rules", 0)
+        rescan_events(db)   # 예전에는 TypeError ('<' not supported between NoneType and str)
+
 
 class ItemApiTests(unittest.TestCase):
     setUpClass = classmethod(test_server.ServerTests.setUpClass.__func__)
