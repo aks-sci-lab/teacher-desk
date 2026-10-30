@@ -20,16 +20,8 @@ class AbsenceError(ValueError):
     pass
 
 
-def school_dates(db, start, end, grade="", require_calendar=False):
-    if end < start:
-        raise AbsenceError("끝 날짜가 시작 날짜보다 빠릅니다.")
-    if require_calendar:
-        years = {d.year - (d.month < 3) for d in (start, end)}
-        for year in years:
-            if not db.one("SELECT id FROM items WHERE source = 'school' AND title LIKE ?",
-                          (f"{year}학년도 학사일정%",)):
-                raise AbsenceError(
-                    f"{year}학년도 학사일정을 앱의 달력에서 먼저 가져오세요. 공휴일·휴업일을 확인해야 저장할 수 있습니다.")
+def closed_days(db, start, end, grade=""):
+    """학사일정의 휴업일·공휴일 (주말은 따로 셈). start~end 안의 날짜 집합."""
     rows = db.query(
         "SELECT e.date, COALESCE(e.end_date, e.date) AS end_date, e.text "
         "FROM events e JOIN items i ON i.id = e.item_id "
@@ -48,6 +40,20 @@ def school_dates(db, start, end, grade="", require_calendar=False):
         while first <= last:
             closed.add(first)
             first += timedelta(days=1)
+    return closed
+
+
+def school_dates(db, start, end, grade="", require_calendar=False):
+    if end < start:
+        raise AbsenceError("끝 날짜가 시작 날짜보다 빠릅니다.")
+    if require_calendar:
+        years = {d.year - (d.month < 3) for d in (start, end)}
+        for year in years:
+            if not db.one("SELECT id FROM items WHERE source = 'school' AND title LIKE ?",
+                          (f"{year}학년도 학사일정%",)):
+                raise AbsenceError(
+                    f"{year}학년도 학사일정을 앱의 달력에서 먼저 가져오세요. 공휴일·휴업일을 확인해야 저장할 수 있습니다.")
+    closed = closed_days(db, start, end, grade)
     return [(start + timedelta(days=n)).isoformat() for n in range((end - start).days + 1)
             if (start + timedelta(days=n)).weekday() < 5 and start + timedelta(days=n) not in closed]
 
