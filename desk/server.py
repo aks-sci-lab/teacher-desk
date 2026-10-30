@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
+from . import VERSION, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -1045,6 +1045,14 @@ def get_today(app, q, body):
     s = queries.today_summary(app.db)
     s["lessons"] = queries.day_lessons(app.db, app.config, date.today())
     return s
+
+
+@api("GET", "/api/week")
+def get_week(app, q, body):
+    """주간 계획(읽기 전용): start 가 든 주의 월요일부터 days(7|14)일."""
+    start = date.fromisoformat(check_date(q.get("start") or date.today().isoformat(), "시작 날짜"))
+    need(q.get("days", "7") in ("7", "14"), "기간은 7일 또는 14일이어야 합니다")
+    return weekplan.week_plan(app.db, start, int(q.get("days", "7")))
 
 
 # ---- 꼭 할 일 (브리핑) ----
