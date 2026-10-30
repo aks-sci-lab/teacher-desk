@@ -109,6 +109,8 @@ def run(args, config, db):
         print(f"{config['port']}번 포트를 쓸 수 없습니다. 업무 데스크가 이미 켜져 있는지 확인하세요.")
         return 1
     app.shutdown = httpd.shutdown
+    app.update_checker = updater.Checker(VERSION, APP_DIR)
+    app.update_checker.start()
     scheduler = Scheduler(db, config, collector)
     scheduler.start()
     watcher = Watcher(db, config, collector)
@@ -127,6 +129,7 @@ def run(args, config, db):
         watcher.stop()
         bot.stop()
         bell.stop()
+        app.update_checker.stop()
         httpd.server_close()
         db.log("업무 데스크 종료")
     return 0

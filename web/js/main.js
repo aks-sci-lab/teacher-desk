@@ -13,24 +13,33 @@ import './views/search.js';
 import './views/ai.js';
 import { openSettings } from './views/settings.js';
 import { api } from './api.js';
+import { startUpdate } from './update.js';
 
 orderViews(['today', 'inbox', 'calendar', 'timetable', 'attendance', 'search', 'ai', 'settings']);
 
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
 statusItem('telegram', { title: '텔레그램 설정', onclick: () => { showView('settings'); openSettings(); } });
+statusItem('update', { title: '새 버전이 있습니다. 누르면 업데이트합니다', onclick: startUpdate });
 statusItem('new', { title: '새로 받은 자료', onclick: () => showView('inbox') });
 statusItem('log', { right: true, title: '수집·오류 기록 보기/숨기기', onclick: () => setLayout({ bottomVisible: !getLayout().bottomVisible }) });
 setStatus('log', '기록');
 statusItem('layout', { title: '화면 배치 바꾸기 (영역 번호 보기)', onclick: toggleLayoutMode });
 setStatus('layout', '화면 배치');
 
+let notifiedVersion = null;
 function updateStatus(s) {
     setStatus('conn', '● 연결됨');
     const last = s.last_run ? s.last_run.finished_at.slice(11, 16) : '없음';
     const watch = s.watch && s.watch.enabled && s.watch.running ? '실시간 감시 · ' : '';
     setStatus('collect', `${watch}마지막 수집 ${last} · 다음 ${s.next_collect || '-'}`);
     setStatus('telegram', `텔레그램 ${s.telegram.linked ? '연결됨' : s.settings.telegram_token_set ? '연결 대기' : '꺼짐'}`, s.telegram.status);
+    const up = s.update;   // 새 배포가 있으면 아래 막대에 알림 (누르면 업데이트)
+    setStatus('update', up && up.available ? `⬆ 새 버전 ${up.latest} · 업데이트` : '');
+    if (up && up.available && up.latest !== notifiedVersion) {
+        notifiedVersion = up.latest;
+        toast(`새 버전 ${up.latest} 이 나왔습니다. 아래 막대의 ⬆ 를 누르면 업데이트합니다.`, 'info', 9000);
+    }
     setStatus('new', `새 자료 ${s.counts.new_items}`);
     setBadge('inbox', s.counts.new_items);
 }

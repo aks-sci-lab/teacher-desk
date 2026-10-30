@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
+from . import VERSION, updater, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -103,6 +103,7 @@ class App:
         self.token = secrets.token_urlsafe(24)
         self.watcher = None
         self.shutdown = None
+        self.update_checker = None   # desk.py 가 켬 (시험에서는 없음)
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
         self.item_ai = ai.ItemJob(db, config)   # 항목 하나의 AI 요약(눌렀을 때만)
 
@@ -268,6 +269,7 @@ def get_state(app, q, body):
             "linked": bool(app.bot and app.bot.chat_id),
             "pair_code": app.bot.pair_code() if app.bot else None,
         },
+        "update": app.update_checker.state() if app.update_checker else None,
         "pdf_ready": pypdf_ready(),
         "watch": {"enabled": bool(cfg["watch_enabled"]), "running": bool(app.watcher), "interval": cfg["watch_interval"]},
     }
@@ -1377,6 +1379,45 @@ def post_telegram(app, q, body):
     else:
         raise ApiError(400, "알 수 없는 동작")
     return {"ok": True, "pair_code": app.bot.pair_code(), "linked": bool(app.bot.chat_id)}
+
+
+@api("GET", "/api/update")
+def update_state(app, q, body):
+    need(app.update_checker, "업데이트 기능을 사용할 수 없습니다", 503)
+    return app.update_checker.state()
+
+
+@api("POST", "/api/update/check")
+def update_check(app, q, body):
+    """지금 새 배포가 있는지 확인 (실패하면 error 에 이유)."""
+    need(app.update_checker, "업데이트 기능을 사용할 수 없습니다", 503)
+    return app.update_checker.check()
+
+
+@api("POST", "/api/update/apply")
+def update_apply(app, q, body):
+    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬)."""
+    need(app.update_checker and app.shutdown is not None, "업데이트 기능을 사용할 수 없습니다", 503)
+    st = app.update_checker.state()
+    need(st["portable"], "윈도우용 설치본에서만 업데이트할 수 있습니다 (개발용 폴더는 git 으로 받으세요)", 400)
+    need(st["available"], "새 버전이 없습니다. 먼저 [새 버전 확인] 을 누르세요", 400)
+    busy = []
+    if not app.collector.lock.acquire(blocking=False):
+        busy.append("자료 수집")
+    else:
+        app.collector.lock.release()
+    if app.ai_job.running:
+        busy.append("AI 요약")
+    need(not busy or body.get("force") is True,
+         f"{' · '.join(busy)} 중입니다. 끝난 뒤 다시 누르거나, 중단해도 되면 다시 확인하세요", 409)
+    try:
+        updater.start_update(APP_DIR)
+    except OSError as e:
+        raise ApiError(500, f"업데이트 창을 열지 못했습니다 ({e.strerror or type(e).__name__})") from e
+    app.db.log(f"화면에서 업데이트 시작: {st['current']} → {st['latest']}")
+    import threading
+    threading.Thread(target=app.shutdown, daemon=True).start()
+    return {"ok": True, "from": st["current"], "to": st["latest"]}
 
 
 @api("POST", "/api/shutdown")

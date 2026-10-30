@@ -985,3 +985,9 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .att-table tr.total th { position: sticky; bottom: 0; background: var(--surface-2); border-top: 2px solid var(--line); border-bottom: 0; font-weight: 800; }
 .att-table tr.total th.num { text-align: center; }
 .att-table tr.total th { font-size: 1rem; color: var(--ink); }
+/* 화면에서 업데이트 (0.5.38) */
+.sb:empty { display: none; }
+#statusbar .sb[title^="새 버전"] { color: var(--accent); font-weight: 700; }
+.update-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(17, 24, 39, .6); display: grid; place-items: center; padding: 24px; }
+.update-box { width: min(460px, 100%); padding: 22px 24px; border-radius: 12px; background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.update-box h2 { margin: 0 0 10px; }
