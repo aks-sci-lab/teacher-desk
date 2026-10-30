@@ -71,6 +71,29 @@ def school_day_events(db, start, end):
     return out
 
 
+def day_lessons(db, config, day):
+    """내 수업 + 그날 학사일정 판정(note). 시간표가 없으면 None. 화면·텔레그램·AI 답이 함께 씀."""
+    ls = my_lessons(db, config, day)
+    return None if ls is None else lesson_notes(db, day, ls)
+
+
+def note_text(l):
+    """수업 한 줄에 덧붙일 학사일정 안내 (없으면 빈 글)."""
+    n = l.get("note")
+    if not n:
+        return ""
+    return (f" ⛔ 수업 없음({n['text'][:30]})" if n["level"] == "off" else f" ⚠ 학사일정 확인({n['text'][:30]})")
+
+
+def lesson_notes(db, day, lessons):
+    """그날 내 수업마다 학사일정 판정(`note`: off/maybe)을 붙임 (제자리에서 바꾸고 돌려줌)."""
+    from . import timetable
+    evs = school_day_events(db, day, day) if lessons else {}
+    for l in lessons or []:
+        l["note"] = timetable.day_note(evs, day, timetable.grade_of(l.get("cls")))
+    return lessons
+
+
 def my_lessons(db, config, day):
     """내 시간표에서 그날 수업 (불러온 시간표가 없거나 내 이름을 모르면 None)."""
     from . import timetable

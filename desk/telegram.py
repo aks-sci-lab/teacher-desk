@@ -153,7 +153,7 @@ def lesson_line(lessons):
     if not lessons:
         return "📚 내 수업 없음"
     return f"📚 내 수업 {len(lessons)}시간: " + " · ".join(
-        f"{l['p']}교시 {l['cls'] or l['subj']}" + ("(교체)" if l.get("moved") else "") for l in lessons)
+        f"{l['p']}교시 {l['cls'] or l['subj']}" + ("(교체)" if l.get("moved") else "") + queries.note_text(l) for l in lessons)
 
 
 def fmt_event(e, today, detail):
@@ -577,10 +577,10 @@ class Bot:
             return "불러온 시간표가 없습니다. 업무 데스크 → 시간표에서 학교 시간표 엑셀을 불러오세요."
         lines = []
         for d in assist.lesson_days(text, today) or [today]:
-            ls = queries.my_lessons(self.db, self.config, d)
+            ls = queries.day_lessons(self.db, self.config, d)
             lines.append(f"📚 {fmt_day(d.isoformat(), today)} 내 수업 {len(ls)}시간")
             lines += [f"  {l['p']}교시{' ' + l['start'] if l.get('start') else ''} {l['cls']} {l['subj']}"
-                      + (" (교체)" if l["moved"] else "") for l in ls] or ["  없음"]
+                      + (" (교체)" if l["moved"] else "") + queries.note_text(l) for l in ls] or ["  없음"]
         return "\n".join(lines)
 
     # ---- 단추 ----
@@ -953,7 +953,7 @@ class Bot:
             lines += [fmt_event(e, today, detail) for e in s["today"][:10]]
             lines.append(f"\n7일 안 마감 {len(s['week_deadlines'])}건")
             lines += [fmt_event(e, today, detail) for e in s["week_deadlines"][:5]]
-            lessons = queries.my_lessons(self.db, self.config, today)
+            lessons = queries.day_lessons(self.db, self.config, today)
             if lessons is not None:
                 lines.insert(1, lesson_line(lessons))
             out = sum(1 for p in s["passes"] if p["kind"] == "out")

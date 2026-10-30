@@ -947,3 +947,7 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .todo-move { display: none; flex: none; gap: 2px; }
 .todo-move button { border: 1px solid var(--line); background: var(--surface); border-radius: 4px; font-size: 0.7em; line-height: 1.4; padding: 0 5px; cursor: pointer; color: var(--muted); }
 @media (hover: none) { .todo-move { display: inline-flex; } .todo-grip { display: none; } }
+
+.lesson-note.off { background: var(--danger-soft); color: var(--danger); }
+.lesson-note.maybe { background: #fef3c7; color: #92400e; }
+:root[data-theme="dark"] .lesson-note.maybe { background: #3b2f12; color: #fcd34d; }

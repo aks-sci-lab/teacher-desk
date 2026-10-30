@@ -145,7 +145,7 @@ def gather(db, question, today=None):
     lessons = {}
     if re.search(r"수업|시간표|교시|빈\s*시간|공강", question):
         for d in lesson_days(question, today) if (end - start).days <= 6 else [today + timedelta(days=i) for i in range(7)]:
-            ls = queries.my_lessons(db, None, d)
+            ls = queries.day_lessons(db, None, d)
             if ls is None:
                 break
             if d.weekday() < 5:
@@ -183,7 +183,7 @@ def build_prompt(question, found, names, today):
                  + "\n\n자료:\n" + ("\n\n".join(parts) or "(맞는 자료 없음)"))
     if found.get("lessons"):
         materials = "내 수업 (시간표):\n" + "\n".join(
-            f"- {fmt_day(d)} " + (", ".join(f"{l['p']}교시 {l['cls']} {l['subj']}" for l in ls) or "수업 없음")
+            f"- {fmt_day(d)} " + (", ".join(f"{l['p']}교시 {l['cls']} {l['subj']}{queries.note_text(l)}" for l in ls) or "수업 없음")
             for d, ls in found["lessons"].items()) + "\n\n" + materials
     prompt = QA_RULES.format(today=f"{today.isoformat()} ({'월화수목금토일'[today.weekday()]})", question=question,
                              materials=materials)
