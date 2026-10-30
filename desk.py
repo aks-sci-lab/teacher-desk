@@ -111,6 +111,7 @@ def run(args, config, db):
     app.shutdown = httpd.shutdown
     app.update_checker = updater.Checker(VERSION, APP_DIR)
     app.update_checker.start()
+    app.item_ai.start_auto()   # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약
     scheduler = Scheduler(db, config, collector)
     scheduler.start()
     watcher = Watcher(db, config, collector)
@@ -125,6 +126,7 @@ def run(args, config, db):
     except KeyboardInterrupt:
         pass
     finally:
+        app.item_ai.stop()
         scheduler.stop()
         watcher.stop()
         bot.stop()

@@ -371,6 +371,8 @@ function renderSettings(pane, tab) {
                 el('li', 'LM Studio 왼쪽 Developer(개발자) 화면에서 "Start Server" 를 켭니다.'),
                 el('li', '아래 🔌 연결 확인 → AI 요약 켜기 → 설정 저장.')),
             checkField('ai_enabled', '브리핑에서 AI 요약 쓰기'),
+            checkField('ai_auto_item', '새 수신 항목을 자동으로 AI 요약 (권장)',
+                'AI 가 켜져 있으면 최근 7일 안에 받은 쪽지·공문을 뒤에서 한 건씩 요약해 수신함에 보여 줍니다 (한 건에 20~30초, 이 PC 의 LM Studio 로만). 연 항목은 먼저 요약하고, LM Studio 가 꺼져 있으면 조용히 쉬었다가 5분 뒤 다시 시도합니다. 끄면 항목 화면의 [AI 로 요약하기]를 눌렀을 때만 요약합니다.'),
             textField('ai_base', 'LM Studio 서버 주소', '기본 http://127.0.0.1:1234/v1'),
             textField('ai_model', '(선택) 모델 이름', '비워 두면 LM Studio 에 불러온 첫 모델'),
             el('label.field', el('span', '보내는 양'),

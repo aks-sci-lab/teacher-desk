@@ -80,7 +80,7 @@ class ItemAiApiTests(unittest.TestCase):
         self.assertEqual(self.req("POST", f"/api/items/{it}/ai-summary", {})[0], 400)
         st, body = self.req("GET", f"/api/items/{it}")
         self.assertEqual(st, 200)
-        self.assertEqual(body["ai"], {"text": "", "at": None, "model": None, "stale": False, "running": False, "error": None})
+        self.assertEqual(body["ai"], {"text": "", "at": None, "model": None, "stale": False, "running": False, "queued": 0, "error": None})
         self.assertNotIn("ai_summary_hash", body)
         self.assertEqual(self.req("POST", "/api/items/99999/ai-summary", {})[0], 404)
 

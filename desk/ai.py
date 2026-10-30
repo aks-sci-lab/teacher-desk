@@ -9,6 +9,7 @@
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import hashlib
@@ -403,60 +404,210 @@ def body_hash(body):
 
 
 def item_ai(db, it, job=None):
-    """항목 화면에 줄 AI 요약 상태: 글(원문은 그대로 두고 따로)·만든 때·원문이 바뀌었는지·진행 중·실패."""
+    """항목 화면에 줄 AI 요약 상태: 글(원문은 그대로 두고 따로)·만든 때·원문이 바뀌었는지·진행 중·대기 순번·실패."""
     fresh = bool(it.get("ai_summary")) and it.get("ai_summary_hash") == body_hash(it.get("body"))
     st = job.status(it["id"]) if job else {}
     return {"text": it.get("ai_summary") or "", "at": it.get("ai_summary_at"), "model": it.get("ai_summary_model"),
             "stale": bool(it.get("ai_summary")) and not fresh, "running": bool(st.get("running")),
-            "error": st.get("error")}
+            "queued": st.get("queued", 0), "error": st.get("error")}
+
+
+def summary_line(text):
+    """목록에 보일 한 줄: '한 줄 요약:' 뒤의 글, 없으면 첫 줄."""
+    for line in (text or "").splitlines():
+        line = line.strip().lstrip("-*•· ").strip()
+        if not line:
+            continue
+        m = re.match(r"한\s*줄\s*요약\s*[:：]\s*(.*)", line)
+        if m:
+            return m.group(1).strip()[:80]
+        return line[:80]
+    return ""
+
+
+AUTO_SOURCES = ("cool", "edufine", "paste")   # 내가 보낸 쪽지·학사일정은 요약하지 않음
+AUTO_DAYS = 7              # 자동 요약은 최근 이만큼 받은 항목만 (처음 켰을 때 옛 자료가 몰려 PC 가 오래 바쁘지 않게)
+AUTO_BATCH = 30            # 한 번에 줄 세우는 최대 건수 (모자라면 다음 확인 때 이어서)
+AUTO_MIN_CHARS = 40        # 이보다 짧은 글은 요약할 것이 없음
+SCAN_SECONDS = 30          # 새 항목을 찾는 간격
+FIRST_SCAN_SECONDS = 20    # 켠 직후 한 번
+BUSY_WAIT = 3              # 브리핑 요약이 도는 중일 때 다시 확인하는 간격(초)
+PAUSE_SECONDS = 300        # LM Studio 가 꺼져 있으면 이 시간 쉬었다가 다시 (오류를 쌓지 않음)
+RETRY_FAILED_SECONDS = 3600
+# 이 PC 의 LM Studio 자체가 준비되지 않은 오류 (항목 탓이 아님)
+NOT_READY = ("LM Studio 에 연결할 수 없습니다", "LM Studio 의 답이 너무 늦습니다", "LM Studio 에 불러온 모델이 없습니다")
 
 
 class ItemJob:
-    """항목 하나의 요약을 뒤에서 만들어 저장 (한 번에 하나, 원문이 바뀐 때만 다시, 실패는 화면에 그대로)."""
+    """항목별 AI 요약을 뒤에서 한 건씩 만들어 저장하는 대기열 (0.5.44).
 
-    def __init__(self, db, config):
+    - 눌렀거나 연 항목(start)은 맨 앞으로, 새로 들어온 항목(scan)은 자동으로 최신 순으로 줄을 섬.
+    - 한 번에 한 건만 (브리핑 요약이 도는 중이면 그것이 끝날 때까지 기다림). 원문이 안 바뀌었으면 다시 만들지 않음.
+    - LM Studio 가 꺼져 있으면 자동 요약은 조용히 쉬었다가 5분 뒤 다시 (눌러서 시킨 것만 오류를 보여 줌).
+    """
+
+    def __init__(self, db, config, busy=None, clock=time.monotonic):
         self.db, self.config = db, config
+        self.busy = busy or (lambda: False)
+        self.clock = clock
         self.lock = threading.Lock()
+        self.queue = []            # 앞이 먼저
+        self.forced = set()        # 눌러서 시킨 항목 (자동 요약이 쉬는 중에도 만듦)
         self.current = None
         self.thread = None
+        self.worker_alive = False
         self.errors = {}
+        self.failed = {}           # 자동 요약이 실패한 때 (한동안 다시 시키지 않음)
+        self.paused_until = 0
+        self.stop_event = threading.Event()
+        self.auto_thread = None
 
+    # ---- 상태
     def status(self, item_id):
-        return {"running": self.current == item_id and bool(self.thread and self.thread.is_alive()),
-                "error": self.errors.get(item_id)}
+        with self.lock:
+            return {"running": self.current == item_id,
+                    "queued": self.queue.index(item_id) + 1 if item_id in self.queue else 0,
+                    "error": self.errors.get(item_id)}
 
+    def summary(self):
+        with self.lock:
+            return {"running": self.current, "queued": len(self.queue),
+                    "paused": self.clock() < self.paused_until}
+
+    # ---- 시키기
     def start(self, item_id, force=False):
-        """True: 새로 시작, False: 이미 최신이거나 다른 요약이 진행 중."""
+        """눌렀거나 연 항목을 맨 앞에 세움. True: 새로 줄을 섬, False: 이미 최신이거나 만드는 중."""
         it = self.db.one("SELECT id, title, body, source, ai_summary, ai_summary_hash FROM items WHERE id = ?", (item_id,))
         if not it:
             raise AIError("없는 항목입니다")
         if not force and it["ai_summary"] and it["ai_summary_hash"] == body_hash(it["body"]):
             return False
         with self.lock:
-            if self.thread and self.thread.is_alive():
-                raise AIError("다른 항목을 요약하는 중입니다. 끝나면 다시 눌러 주세요.")
+            if self.current == item_id:
+                return False
             self.errors.pop(item_id, None)
-            self.current = item_id
-            self.thread = threading.Thread(target=self._run, args=(it,), name="ai-item", daemon=True)
-            self.thread.start()
+            self.failed.pop(item_id, None)
+            self.paused_until = 0
+            if item_id in self.queue:
+                self.queue.remove(item_id)
+            self.queue.insert(0, item_id)
+            self.forced.add(item_id)
+            self._ensure_worker()
             return True
 
-    def _run(self, it):
+    def scan(self):
+        """새로 들어온(또는 원문이 바뀐) 항목을 찾아 줄 세움. 새로 줄 선 건수."""
+        enabled = bool(self.config["ai_enabled"] and self.config["ai_auto_item"])
+        now = self.clock()
+        if not enabled or now < self.paused_until:
+            if not enabled:
+                with self.lock:
+                    self.queue = [i for i in self.queue if i in self.forced]
+            return 0
+        since = (date.today() - timedelta(days=AUTO_DAYS)).isoformat()
+        marks = ",".join("?" * len(AUTO_SOURCES))
+        rows = self.db.query(
+            f"SELECT id, body, ai_summary, ai_summary_hash FROM items WHERE source IN ({marks}) "
+            "AND status IN ('new', 'read') AND received_at >= ? ORDER BY received_at DESC, id DESC LIMIT 300",
+            (*AUTO_SOURCES, since))
+        with self.lock:
+            auto = [i for i in self.queue if i not in self.forced]
+            fresh = []
+            for r in rows:
+                if len(auto) + len(fresh) >= AUTO_BATCH:
+                    break
+                iid = r["id"]
+                if iid in self.queue or iid == self.current or iid in fresh:
+                    continue
+                if iid in self.failed and now - self.failed[iid] < RETRY_FAILED_SECONDS:
+                    continue
+                if len((r["body"] or "").strip()) < AUTO_MIN_CHARS:
+                    continue
+                if r["ai_summary"] and r["ai_summary_hash"] == body_hash(r["body"]):
+                    continue
+                fresh.append(iid)
+            if fresh:   # 새로 찾은 것을 눌러서 시킨 것 바로 뒤, 예전에 줄 선 자동 요약 앞에 (최신 순)
+                head = [i for i in self.queue if i in self.forced]
+                tail = [i for i in self.queue if i not in self.forced]
+                self.queue = head + fresh + tail
+                self._ensure_worker()
+            return len(fresh)
+
+    def start_auto(self):
+        """뒤에서 새 항목을 주기적으로 찾아 요약 (켜 둔 동안)."""
+        if self.auto_thread and self.auto_thread.is_alive():
+            return
+        self.auto_thread = threading.Thread(target=self._auto_loop, name="ai-item-auto", daemon=True)
+        self.auto_thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+
+    def _auto_loop(self):
+        wait = FIRST_SCAN_SECONDS
+        while not self.stop_event.wait(wait):
+            wait = SCAN_SECONDS
+            try:
+                self.scan()
+            except Exception as e:   # 뒤에서 도는 일이 조용히 죽지 않게
+                self.db.log(f"항목 AI 요약 찾기 오류: {type(e).__name__}: {e}", "error")
+
+    # ---- 만들기
+    def _ensure_worker(self):   # self.lock 을 잡고 부름
+        if self.worker_alive:
+            return
+        self.worker_alive = True
+        self.thread = threading.Thread(target=self._worker, name="ai-item", daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        while True:
+            with self.lock:
+                if self.stop_event.is_set() or not self.queue:
+                    self.current = None
+                    self.worker_alive = False
+                    return
+                wait = self.busy()   # 브리핑 요약이 도는 중이면 같은 LM Studio 를 쓰므로 끝나길 기다림
+                if not wait:
+                    item_id = self.queue.pop(0)
+                    self.current = item_id
+                    forced = item_id in self.forced
+                    self.forced.discard(item_id)
+            if wait:
+                self.stop_event.wait(BUSY_WAIT)
+                continue
+            self._run(item_id, forced)
+
+    def _run(self, item_id, forced):
+        it = self.db.one("SELECT id, title, body, source, ai_summary, ai_summary_hash FROM items WHERE id = ?", (item_id,))
+        if not it or (not forced and it["ai_summary"] and it["ai_summary_hash"] == body_hash(it["body"])):
+            return
         try:
-            check_local(self.config["ai_base"])
-            model = pick_model(self.config)
-            body = re.sub(r"[ \t]+", " ", it["body"]).strip()[:ITEM_CHARS]
-            prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}",
-                                [s["name"] for s in self.db.students()])
-            text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500),
-                              [s["name"] for s in self.db.students()])
-            self.db.execute("UPDATE items SET ai_summary = ?, ai_summary_hash = ?, ai_summary_at = ?, ai_summary_model = ? "
-                            "WHERE id = ?", (text, body_hash(it["body"]), datetime.now().strftime("%Y-%m-%d %H:%M"), model, it["id"]))
+            self._summarize(it)
         except AIError as e:
-            self.errors[it["id"]] = str(e)
+            msg = str(e)
+            if not forced and msg.startswith(NOT_READY):   # LM Studio 가 꺼져 있음: 오류를 쌓지 않고 쉬었다가 다시
+                with self.lock:
+                    self.queue = [i for i in self.queue if i in self.forced]
+                    self.paused_until = self.clock() + PAUSE_SECONDS
+                return
+            self.errors[item_id] = msg
+            if not forced:
+                self.failed[item_id] = self.clock()
         except Exception as e:
-            self.errors[it["id"]] = f"요약 중 오류: {type(e).__name__}"
+            self.errors[item_id] = f"요약 중 오류: {type(e).__name__}"
+            self.failed[item_id] = self.clock()
             self.db.log(f"항목 AI 요약 오류: {type(e).__name__}: {e}", "error")
+
+    def _summarize(self, it):
+        check_local(self.config["ai_base"])
+        model = pick_model(self.config)
+        names = [s["name"] for s in self.db.students()]
+        body = re.sub(r"[ \t]+", " ", it["body"]).strip()[:ITEM_CHARS]
+        prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}", names)
+        text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500), names)
+        self.db.execute("UPDATE items SET ai_summary = ?, ai_summary_hash = ?, ai_summary_at = ?, ai_summary_model = ? "
+                        "WHERE id = ?", (text, body_hash(it["body"]), datetime.now().strftime("%Y-%m-%d %H:%M"), model, it["id"]))
 
 
 MAX_HIDDEN = 300
