@@ -27,6 +27,8 @@ DEFAULTS = {
     # 실시간 감시 (쿨메신저 쪽지 파일·폴더가 바뀌면 바로 수집), 몇 초마다 살펴볼지
     "watch_enabled": True,
     "watch_interval": 20,
+    # 업무 데스크를 주소창 없는 전용 창으로 열기 (끄면 기본 브라우저의 새 탭)
+    "app_window": True,
     # 켤 때 새 버전 확인·자동 업데이트 (윈도우용 ZIP 설치본만)
     "auto_update": True,
     # 하루 수집 시각
@@ -39,6 +41,7 @@ DEFAULTS = {
     "neis_api_base": "https://open.neis.go.kr/hub",
     # 브리핑 '지난 1주일 AI 요약': 이 PC 의 LM Studio 로컬 서버 (모델 이름을 비우면 불러온 첫 모델)
     "ai_enabled": False,
+    "ai_auto_item": True,         # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약 (이 PC 의 LM Studio 로만)
     "ai_base": "http://127.0.0.1:1234/v1",
     "ai_model": "",
     "ai_input_size": "normal",     # normal: 14000자 / short: 6000자 (짧으면 빠름)
@@ -66,11 +69,11 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
-    "watch_enabled", "auto_update", "ai_enabled", "ai_base", "ai_model", "ai_input_size",
+    "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key",
 }
-BOOL_KEYS = {"watch_enabled", "auto_update", "ai_enabled"}
+BOOL_KEYS = {"watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)

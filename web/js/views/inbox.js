@@ -74,6 +74,7 @@ function renderSide(body, actions) {
             onchange: e => setRegistered(it.id, e.target.checked) }),
         el('div.body',
             el('span.ttl', it.title),
+            it.ai_line && el('span.ai-line', it.ai_line),
             el('span.meta', srcBadge(it.source), catBadge(it.category),
                 it.event_count ? el('span', it.registered ? `일정 ${it.event_count}` : `후보 ${it.event_count}`) : null,
                 it.next_deadline && el('span.dl', `마감 ${dayLabel(it.next_deadline)}`),
@@ -208,13 +209,17 @@ function renderItem(pane, tab, it) {
         !it.registered && open > 0 && el('p.small.muted', '맞으면 위의 [일정 등록] 또는 수신함 목록에서 체크. 틀린 것은 ✎ 고치기·지우기.'));
 
     // ---- 내용 요약
+    const rules = it.summary.length
+        ? el('ul.item-summary', it.summary.map(s => el('li', markDates(s))))
+        : el('p.muted', '요약할 줄을 찾지 못했습니다. 원문 보기로 확인하세요.');
+    const a = it.ai || {};
+    // AI 요약이 최신으로 있으면 그것을 먼저 보이고, 규칙으로 뽑은 줄은 접어 둠 (AI 가 없거나 실패·예전 것이면 그대로 펼침)
+    const aiFirst = store.settings.ai_enabled && a.text && !a.stale && !a.error && !a.running;
     const sumSec = el('section.item-sec',
         el('div.sec-head', el('h2', '내용 요약'), el('span.spacer'),
             el('button.btn.small', { onclick: () => openOriginal(it) }, icon('doc'), '원문 보기')),
         aiSummaryBox(it, tab),
-        it.summary.length
-            ? el('ul.item-summary', it.summary.map(s => el('li', markDates(s))))
-            : el('p.muted', '요약할 줄을 찾지 못했습니다. 원문 보기로 확인하세요.'));
+        aiFirst ? el('details.rule-sum', el('summary.small.muted', '기본 요약 (날짜·마감을 규칙으로 뽑은 줄) 보기'), rules) : rules);
 
     // ---- 오른쪽: 원문·파일·문서번호·관련 항목·사진
     const f = it.file;
@@ -236,17 +241,25 @@ function renderItem(pane, tab, it) {
     pane.append(el('div.item-view', head, el('div.item-grid', el('div.item-main', evSec, sumSec), side)));
 }
 
-// 이 항목만 AI 로 요약 (눌렀을 때만, 이 PC 의 LM Studio, 원문은 그대로 두고 따로 보여 줌)
+// 이 항목의 AI 요약 (이 PC 의 LM Studio, 원문은 그대로 두고 따로 보여 줌).
+// 자동 요약이 켜져 있으면 새 항목은 뒤에서 저절로 만들고, 연 항목은 맨 앞으로 끌어올림
+const askedAi = new Set();
 function aiSummaryBox(it, tab) {
     if (!store.settings.ai_enabled) return null;
     const a = it.ai || {};
+    const auto = store.settings.ai_auto_item !== false;
+    const again = () => { setTimeout(() => { if (tab.pane.isConnected) tab.rerender(); }, 3000); };   // 끝났는지 몇 초마다 확인
     const start = (force = false) => guarded(async () => {
         await api.post(`/api/items/${it.id}/ai-summary`, { force });
         tab.rerender();
     });
     if (a.running) {
-        setTimeout(() => { if (tab.pane.isConnected) tab.rerender(); }, 3000);   // 끝났는지 몇 초마다 확인
-        return el('div.ai-item-sum', el('span.spin'), ' AI 가 이 항목을 요약하는 중… (이 PC 에서 돌아 몇 분 걸릴 수 있습니다. 다른 화면을 써도 됩니다)');
+        again();
+        return el('div.ai-item-sum', el('span.spin'), ' AI 가 이 항목을 요약하는 중… (이 PC 에서 돌아 20~30초, 길면 몇 분 걸립니다. 다른 화면을 써도 됩니다)');
+    }
+    if (a.queued) {
+        again();
+        return el('div.ai-item-sum', el('span.spin'), a.queued > 1 ? ` AI 요약 차례를 기다리는 중 (앞에 ${a.queued - 1}건)…` : ' AI 요약을 곧 시작합니다…');
     }
     if (a.error) {
         return el('div.ai-item-sum.bad', el('p', `AI 요약 실패: ${a.error}`),
@@ -258,6 +271,11 @@ function aiSummaryBox(it, tab) {
                 el('span.spacer'), el('button.btn.small', { onclick: start(true) }, '다시 요약')),
             a.stale && el('p.small', { style: 'color: var(--warn)' }, '원문이 바뀐 뒤에 만든 요약이 아닙니다. 다시 요약을 눌러 갱신하세요.'),
             el('div.ai-item-text', a.text));
+    }
+    if (auto && !askedAi.has(it.id)) {   // 아직 없으면 이 항목을 맨 앞에 세우고 곧 결과를 보여 줌
+        askedAi.add(it.id);
+        api.post(`/api/items/${it.id}/ai-summary`, {}).then(r => { if (r.started && tab.pane.isConnected) tab.rerender(); }).catch(() => {});
+        return el('div.ai-item-sum', el('span.spin'), ' AI 요약을 준비하는 중…');
     }
     return el('div.ai-item-sum', el('button.btn.small', { onclick: start(false) }, icon('spark'), 'AI 로 요약하기'),
         el('span.muted.small', ' 이 항목 하나만, 이 PC 의 AI 로 요약합니다 (원문은 그대로).'));

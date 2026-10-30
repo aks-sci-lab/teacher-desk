@@ -57,9 +57,9 @@ def main(argv=None):
         lock = nullcontext(True) if args.collect or args.diagnose else background.single_instance(config["port"])
         with lock as first:
             if not first:
-                if not args.no_browser:
-                    import webbrowser
-                    webbrowser.open(f"http://127.0.0.1:{config['port']}/")
+                if not args.no_browser:   # 열려 있는 창이 있으면 그 창을 앞으로, 없으면 전용 창을 새로
+                    from desk import window
+                    window.show_ui(config["port"], config.data_dir, config["app_window"])
                 print("업무 데스크가 이미 실행 중입니다.")
                 return 0
             return run(args, config, db)
@@ -111,6 +111,7 @@ def run(args, config, db):
     app.shutdown = httpd.shutdown
     app.update_checker = updater.Checker(VERSION, APP_DIR)
     app.update_checker.start()
+    app.item_ai.start_auto()   # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약
     scheduler = Scheduler(db, config, collector)
     scheduler.start()
     watcher = Watcher(db, config, collector)
@@ -125,6 +126,7 @@ def run(args, config, db):
     except KeyboardInterrupt:
         pass
     finally:
+        app.item_ai.stop()
         scheduler.stop()
         watcher.stop()
         bot.stop()
