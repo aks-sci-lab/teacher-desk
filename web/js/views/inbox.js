@@ -44,6 +44,20 @@ function renderSide(body, actions) {
     body.append(
         el('div.filters', chip('status', 'active', '진행 중'), chip('status', 'done', '완료'), chip('status', 'archived', '보관'), chip('status', 'all', '전체')),
         el('div.filters', chip('source', '', '모든 출처'), chip('source', 'cool', '쿨메신저 받음'), chip('source', 'cool_sent', '쿨메신저 보냄'), chip('source', 'edufine', '에듀파인'), chip('source', 'paste', '직접 입력')));
+    const unread = items.filter(it => it.status === 'new');
+    if (unread.length) {
+        const label = [filter.source && (SOURCE_NAMES[filter.source] || filter.source), `안 읽은 ${unread.length}건`].filter(Boolean).join(' ');
+        body.append(el('div.row', { style: 'padding: 2px 4px 6px' },
+            el('button.btn.small', { title: '지금 목록에 보이는 안 읽은 항목만 읽음으로 바꿉니다. 일정 등록·완료 처리는 바뀌지 않습니다.',
+                onclick: guarded(async () => {
+                    if (!window.confirm(`${label}을 모두 읽음으로 바꿀까요?\n(일정 등록·업무 완료는 바뀌지 않고, 이후 새로 도착한 자료는 안 읽음으로 남습니다)`)) return;
+                    const r = await api.post('/api/items/mark-read', { ids: unread.map(it => it.id) });
+                    toast(`${r.marked}건을 읽음으로 바꿨습니다`);
+                    await loadItems();
+                    refreshSide();
+                    emit('data-changed');
+                }) }, `${unread.length}건 모두 읽음`)));
+    }
     const list = el('ul.list');
     if (!items.length) {
         list.append(el('li.empty', filter.status === 'active'

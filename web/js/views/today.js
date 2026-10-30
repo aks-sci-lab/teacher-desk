@@ -461,7 +461,7 @@ function renderToday(pane) {
         const movedEv = new Set(todos.filter(t => !t.done && t.event_id).map(t => t.event_id));
         const movedIt = new Set(todos.filter(t => !t.done && t.origin === 'item' && t.item_id).map(t => t.item_id));
         const keep = evs => evs.filter(e => !movedEv.has(e.id));
-        ['overdue', 'today', 'week_deadlines', 'week_events'].forEach(k => { s[k] = keep(s[k]); });
+        ['overdue', 'due_today', 'today', 'week_deadlines', 'week_events'].forEach(k => { s[k] = keep(s[k]); });
         s.new_items = s.new_items.filter(it => !movedIt.has(it.id));
         const evRow = e => movable(eventLine(e, openEv), { text: e.item_title || e.text, date: e.date, time: e.time || null,
             item_id: e.item_id ?? null, event_id: e.id, origin: 'event' });
@@ -474,7 +474,7 @@ function renderToday(pane) {
             el('div.brief-head',
                 el('h1', longDate(todayIso())),
                 el('div.brief-stats', [
-                    ['지난 마감', s.overdue.length, 'bad'], ['7일 안 마감', s.week_deadlines.length, ''], ['오늘 일정', s.today.length, ''],
+                    ['지난 마감', s.overdue.length, 'bad'], ['오늘 마감', s.due_today.length, 'bad'], ['7일 안 마감', s.week_deadlines.length, ''], ['오늘 일정', s.today.length, ''],
                     ['꼭 할 일', todos.filter(t => !t.done).length, ''], ['새 자료', s.new_items.length, ''], ['조퇴·외출', s.passes.length, ''],
                 ].filter(([, n]) => n > 0).map(([label, n, cls]) => el('span', { className: `stat${cls ? ' ' + cls : ''}` }, el('b', n), label))),   // 0 인 것은 아래 '없음' 줄에
                 el('span.spacer'),
@@ -487,6 +487,7 @@ function renderToday(pane) {
             el('div.brief', aiCard(todoCard), withEmptyStrip(el('div.cards',
                 todoCard,
                 s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
+                s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
                 s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
                     ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },
                         el('b', `${l.p}교시`), l.start && el('span.lesson-time', l.start), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'))))

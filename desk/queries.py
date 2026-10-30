@@ -26,19 +26,24 @@ def today_summary(db, today=None):
     week_end = today + timedelta(days=7)
     overdue = db.query(
         f"SELECT {EVENT_COLS} FROM events e LEFT JOIN items i ON i.id = e.item_id "
-        "WHERE e.kind = 'deadline' AND e.done = 0 AND e.date < ? AND e.date >= ? "
-        f"AND (i.status IS NULL OR i.status NOT IN ('archived', 'done')) AND {REGISTERED} ORDER BY e.date",
+        "WHERE e.kind = 'deadline' AND e.done = 0 AND COALESCE(e.end_date, e.date) < ? AND COALESCE(e.end_date, e.date) >= ? "
+        f"AND (i.status IS NULL OR i.status NOT IN ('archived', 'done')) AND {REGISTERED} ORDER BY COALESCE(e.end_date, e.date)",
         (today.isoformat(), (today - timedelta(days=14)).isoformat()))
-    todays = events_between(db, today, today)
+    # 마감은 기간이면 끝나는 날 기준 (11.2~11.13 마감은 13일에 '오늘 마감')
+    due_today = [e for e in events_between(db, today, today, include_done=False)
+                 if e["kind"] == "deadline" and (e["end_date"] or e["date"]) == today.isoformat()]
+    due_ids = {e["id"] for e in due_today}
+    todays = [e for e in events_between(db, today, today) if e["id"] not in due_ids]   # 오늘 일정과 중복 표시 안 함
     upcoming = events_between(db, today + timedelta(days=1), week_end, include_done=False)
-    week = [e for e in upcoming if e["kind"] == "deadline"]
+    week = [e for e in upcoming if e["kind"] == "deadline"
+            and today.isoformat() < (e["end_date"] or e["date"]) <= week_end.isoformat()]
     week_events = [e for e in upcoming if e["kind"] != "deadline"]
     passes = db.query("SELECT * FROM passes WHERE date = ? AND status != 'cancelled' ORDER BY time_out, id",
                       (today.isoformat(),))
     new_items = [decode_item(r) for r in db.query(
         "SELECT * FROM items WHERE status = 'new' ORDER BY received_at DESC LIMIT 10")]
     last_run = db.one("SELECT * FROM runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1")
-    return {"date": today.isoformat(), "overdue": overdue, "today": todays, "week_deadlines": week,
+    return {"date": today.isoformat(), "overdue": overdue, "due_today": due_today, "today": todays, "week_deadlines": week,
             "week_events": week_events,
             "passes": passes, "new_items": new_items, "last_run": last_run, "todos": todos(db, today)}
 
