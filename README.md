@@ -193,6 +193,10 @@
 
 참고: [Chrome Prompt API](https://developer.chrome.com/docs/ai/prompt-api), [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create), [Claude Messages API](https://platform.claude.com/docs/en/api/messages/create), [Gemini API](https://ai.google.dev/api/generate-content).
 
+**수집 알림 보는 법**: 새 쪽지·공문이 들어오면 `📥 새 자료 n건 (쿨메신저 · 에듀파인)` 아래에 마감이 있는 것부터 `번호. [출처] 제목 · 보낸 사람` 과 `⏰ 날짜 (D-n) · 무엇을` 이 나옵니다. 한꺼번에 많이 들어오면(10건 초과, 처음 연결 등) 한 줄 요약과 가까운 마감만 나옵니다. 항목 아래 **📅 n 일정 등록** 을 누르면 수신함에서 체크한 것처럼 달력에 들어갑니다.
+
+**봇이 답이 없을 때**: 같은 봇을 쓰는 업무 데스크가 두 곳 이상 켜져 있으면(개발용 폴더·다른 PC 등) 서로 방해해 답이 늦거나 없습니다. 텔레그램 `상태` 나 ⚙ 설정의 텔레그램 상태에 '같은 봇을 다른 곳에서도 쓰는 중 (409)' 가 보이면 한 곳만 남기세요 (개발용 폴더에는 토큰을 넣지 않습니다).
+
 ## 4-1. 내 시간표·수업 교체 (선택)
 
 **시간표** 메뉴에서 학교 시간표 엑셀(.xlsx, 교사마다 몇 줄 · 요일 아래 교시 번호)을 불러오면:
