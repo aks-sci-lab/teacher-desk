@@ -1263,6 +1263,17 @@ class Bot:
             buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
             self.send(msg, buttons=buttons)
 
+    def notify_update(self, info):
+        """새 버전이 나왔다고 텔레그램으로 한 번 알림 (같은 버전은 다시 보내지 않음). 바꾸는 것은 화면에서 직접 눌러야 함."""
+        version = str(info.get("version", ""))[:20]
+        if not version or not self.chat_id or self.db.get_meta("telegram_update_notified") == version:
+            return False
+        sent = self.send(f"⬆ 업무 데스크 새 버전 {version} 이 나왔습니다 (지금 {VERSION}).\n"
+                         "업무 데스크 화면 아래 막대의 [업데이트] 를 누르면 바뀝니다. 직접 누르기 전에는 바뀌지 않습니다.")
+        if sent:
+            self.db.set_meta("telegram_update_notified", version)
+        return sent
+
     # ---- 폴링 ----
     def loop(self):
         offset, backoff, menu_set, last_token = None, 5, False, None

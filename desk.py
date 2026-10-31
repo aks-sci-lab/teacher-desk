@@ -109,7 +109,7 @@ def run(args, config, db):
         print(f"{config['port']}번 포트를 쓸 수 없습니다. 업무 데스크가 이미 켜져 있는지 확인하세요.")
         return 1
     app.shutdown = httpd.shutdown
-    app.update_checker = updater.Checker(VERSION, APP_DIR)
+    app.update_checker = updater.Checker(VERSION, APP_DIR, on_new=bot.notify_update)
     app.update_checker.start()
     app.item_ai.start_auto()   # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약
     scheduler = Scheduler(db, config, collector)
