@@ -420,22 +420,30 @@ class Bot:
                            for n, word in enumerate(absence.TYPE_WORDS)]
                 self.send(f"{number}번 결석 종류를 고르세요. 이름은 명단에서 이 PC 안에서만 찾습니다.", cid, buttons)
                 return "결석 종류 선택"
-            dialog["step"] = "time"
-            prompt = (f"{number}번 {KIND[kind]} 시각을 보내세요. "
-                      + ("예: 13:30 14:30 (나감·복귀)" if kind == "out" else "예: 13:30"))
-            self.send(prompt, cid, [[{"text": "지금 시각으로", "callback_data": f"dlg:{dialog['id']}:now"}]])
-            return prompt
+            return self.pass_time_prompt(cid, dialog)
         if step == "time":
             args = text.split()
             count = 2 if kind == "out" else 1
             if len(args) != count or any(parse_time(word) is None for word in args):
                 return self.reply(cid, "시각을 " + ("13:30 14:30" if kind == "out" else "13:30") + "처럼 보내세요.")
-            return self.start_pass(cid, kind, [str(dialog["number"]), *args])
+            return self.start_pass(cid, kind, [str(dialog["number"]), *args], day=dialog.get("pass_day"))
+        if step == "pdate":
+            return self.reply(cid, "위 달력에서 날짜를 눌러 주세요. 그만하려면 '취소'.")
         if step == "type":
             return self.reply(cid, "위의 결석 종류 단추를 눌러 주세요. 그만하려면 '취소'.")
         if step == "date":
             return self.confirm_absence(cid, dialog, text)
         return self.reply(cid, "위의 [앱에 저장] 또는 [취소]를 눌러 주세요.")
+
+    def pass_time_prompt(self, cid, dialog, message_id=None):
+        """조퇴증·외출증 시각 묻기. 날짜는 기본 오늘, [📅 다른 날짜] 로 달력에서 고름."""
+        kind, day = dialog["kind"], dialog.get("pass_day")
+        dialog["step"] = "time"
+        prompt = (f"{dialog['number']}번 {KIND[kind]}" + (f" {fmt_day(day.isoformat(), date.today())}" if day else "")
+                  + " 시각을 보내세요. " + ("예: 13:30 14:30 (나감·복귀)" if kind == "out" else "예: 13:30"))
+        row = [] if day else [{"text": "지금 시각으로", "callback_data": f"dlg:{dialog['id']}:now"}]
+        row.append({"text": "📅 다른 날짜" if not day else "📅 날짜 바꾸기", "callback_data": f"dlg:{dialog['id']}:pd"})
+        return self.show(cid, message_id, prompt, [row])
 
     def show(self, cid, message_id, text, buttons):
         """단추 메시지는 새로 보내지 않고 같은 메시지를 고쳐 보여 줌 (고치지 못하면 새로 보냄)."""
@@ -484,7 +492,10 @@ class Bot:
                 label = f"▶{day}" if d == start else f"({day})" if d in closed else str(day)
                 row.append({"text": label, "callback_data": f"dlg:{did}:cd:{d:%Y%m%d}"})
             rows.append(row)
-        if start:
+        if dialog["kind"] in KIND:   # 조퇴·외출: 날짜 하나만 고름
+            rows.append([{"text": "오늘로", "callback_data": f"dlg:{did}:td"},
+                         {"text": "취소", "callback_data": f"dlg:{did}:cancel"}])
+        elif start:
             rows.append([{"text": "하루만", "callback_data": f"dlg:{did}:one"},
                          {"text": "시작일 다시 고르기", "callback_data": f"dlg:{did}:cr"},
                          {"text": "취소", "callback_data": f"dlg:{did}:cancel"}])
@@ -493,6 +504,11 @@ class Bot:
         return rows
 
     def show_calendar(self, cid, dialog, message_id, year, month):
+        if dialog["kind"] in KIND:
+            dialog["cal_month"] = (year, month)
+            text = (f"{dialog['number']}번 {KIND[dialog['kind']]}증 날짜를 누르세요\n오늘 이후만 고를 수 있습니다. "
+                    "(숫자)는 학사일정 휴업일·공휴일입니다.")
+            return self.show(cid, message_id, text, self.calendar_buttons(dialog, year, month))
         start = dialog.get("cal_start")
         head = (f"{dialog['number']}번 결석 날짜\n"
                 + (f"시작일 {start:%m/%d} · 끝나는 날을 누르세요 (같은 날을 또 누르거나 [하루만])"
@@ -503,6 +519,15 @@ class Bot:
 
     def calendar_action(self, cid, dialog, action, message_id):
         """달력 단추. 처리했으면 결과 글, 아니면 None."""
+        if dialog["kind"] in KIND and action in ("pd", "td") and dialog["step"] in ("time", "pdate"):
+            if action == "pd":
+                dialog["step"] = "pdate"
+                today = date.today()
+                return self.show_calendar(cid, dialog, message_id, today.year, today.month)
+            dialog.pop("pass_day", None)   # 오늘로 돌아감
+            return self.pass_time_prompt(cid, dialog, message_id)
+        if dialog["kind"] in KIND and dialog["step"] == "pdate" and (action in ("nop",) or action.startswith(("cm:", "cd:"))):
+            return self.pass_calendar_action(cid, dialog, action, message_id)
         if dialog["kind"] != "absence" or dialog["step"] != "date":
             return None
         year, month = dialog.get("cal_month") or (date.today().year, date.today().month)
@@ -529,6 +554,25 @@ class Bot:
                 return self.show_calendar(cid, dialog, message_id, picked.year, picked.month)
             return self.finish_calendar(cid, dialog, start, picked, message_id)
         return None
+
+    def pass_calendar_action(self, cid, dialog, action, message_id):
+        if action == "nop":
+            return ""
+        if action.startswith("cm:"):
+            if not re.fullmatch(r"\d{6}", action[3:]) or not (2000 <= int(action[3:7]) <= 2100 and 1 <= int(action[7:9]) <= 12):
+                return self.reply(cid, "달력에 없는 달입니다.")
+            return self.show_calendar(cid, dialog, message_id, int(action[3:7]), int(action[7:9]))
+        try:
+            picked = datetime.strptime(action[3:], "%Y%m%d").date()
+        except ValueError:
+            return self.reply(cid, "달력에 없는 날짜입니다.")
+        if picked < date.today():
+            return self.reply(cid, "지난 날짜는 고를 수 없습니다. 오늘 이후 날짜를 누르세요.")
+        if picked == date.today():
+            dialog.pop("pass_day", None)
+        else:
+            dialog["pass_day"] = picked
+        return self.pass_time_prompt(cid, dialog, message_id)
 
     def finish_calendar(self, cid, dialog, start, end, message_id):
         period = f"{start.isoformat()}~{end.isoformat()}"
@@ -796,7 +840,7 @@ class Bot:
             if calendar_result is not None:
                 return calendar_result
             if action == "now" and dialog["kind"] in KIND and dialog["step"] == "time":
-                return self.start_pass(cid, dialog["kind"], [str(dialog["number"])])
+                return self.start_pass(cid, dialog["kind"], [str(dialog["number"])], day=dialog.get("pass_day"))
             if action == "save" and dialog["kind"] == "absence" and dialog["step"] == "confirm":
                 self.dialog = None  # 중복 클릭으로 두 번 저장하지 않음
                 try:
@@ -888,7 +932,7 @@ class Bot:
         return None
 
     # ---- 조퇴증·외출증 (번호로, 사유는 단추로) ----
-    def start_pass(self, cid, kind, args, now=None):
+    def start_pass(self, cid, kind, args, now=None, day=None):
         word = KIND[kind]
         if not args:
             return self.begin_dialog(cid, kind)
@@ -911,15 +955,21 @@ class Bot:
         pending = {k: v for k, v in (self.db.get_meta("telegram_pending") or {}).items()}
         pid = secrets.token_hex(3)
         pending[pid] = {"kind": kind, "number": number, "time_out": time_out, "time_return": time_return,
-                        "date": (now or datetime.now()).date().isoformat()}
+                        "date": (day or (now or datetime.now()).date()).isoformat()}
         self.db.set_meta("telegram_pending", dict(list(pending.items())[-20:]))   # 최근 20개만 (학부모 확인 대기 포함)
-        when = time_out + (f"~{time_return}" if time_return else "")
+        when = self.pass_when(pending[pid])
         buttons = [[{"text": r, "callback_data": f"pr:{pid}:{i}"}] for i, r in enumerate(REASONS[kind])]
         buttons.append([{"text": "사유 없이 발급", "callback_data": f"pr:{pid}:-"},
                         {"text": "취소", "callback_data": f"px:{pid}"}])
         text = f"🎫 {number}번 {masked(students[0]['name'])} {word}증 {when}\n사유를 고르면 발급합니다."
         self.send(text, cid, buttons)
         return text
+
+    @staticmethod
+    def pass_when(p):
+        """'13:30' 또는 '13:30~14:30', 오늘이 아니면 앞에 날짜 ('11/3(화) 13:30')."""
+        when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
+        return when if p["date"] == date.today().isoformat() else f"{fmt_day(p['date'], date.today())} {when}"
 
     def finish_pass(self, pid, choice, stage="reason"):
         """증 발급 2단계. stage 'reason': 사유를 고르면 학부모 확인 대기로 / 'confirm': 학부모 확인함(1)·거절(0)이면 발급.
@@ -937,7 +987,7 @@ class Bot:
         if len(students) != 1:
             return f"학생 명단에 {p['number']}번이 없습니다."
         who = f"{p['number']}번 {masked(students[0]['name'])}"
-        when = p["time_out"] + (f"~{p['time_return']}" if p["time_return"] else "")
+        when = self.pass_when(p)
         if stage == "reason":
             if p.get("stage") != "confirm":   # 사유 단추를 또 눌러도 처음 고른 사유·확인 단추를 그대로 둠
                 reasons = REASONS[p["kind"]]
@@ -983,7 +1033,7 @@ class Bot:
         waiting = [p for p in (self.db.get_meta("telegram_pending") or {}).values() if p.get("stage") == "confirm"]
         if waiting:
             lines.append(f"\n■ 학부모 확인 대기 {len(waiting)}건: " + ", ".join(
-                f"{p['number']}번 {KIND[p['kind']]} {p['time_out']}" for p in waiting[:10]))
+                f"{p['number']}번 {KIND[p['kind']]} {self.pass_when(p)}" for p in waiting[:10]))
         mine = [t for t in queries.todos(self.db, today) if not t["done"]]
         if mine:
             lines.append(f"\n■ 꼭 할 일 (직접 넣은 것 {len(mine)})")
