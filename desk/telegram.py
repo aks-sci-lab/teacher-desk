@@ -36,7 +36,7 @@ HELP = (
     "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
     "요약 — 최근 받은 자료 · 새로고침 — 지금 수집\n"
     "\n■ 기타\n"
-    "도움말 · 메뉴 · 취소 · 상태 · /ask 질문(일반 질문 AI, 업무자료는 붙이지 않음)\n"
+    "도움말 · 메뉴 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기) · /ask 질문(일반 질문 AI, 업무자료는 붙이지 않음)\n"
     "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
 COMMANDS = {
@@ -49,6 +49,7 @@ COMMANDS = {
     "메뉴": "menu", "/menu": "menu",
     "취소": "cancel", "/cancel": "cancel",
     "상태": "status", "/status": "status",
+    "업데이트": "update", "/update": "update",
     "자료 검색": "guided-search", "내 수업": "lessons", "/lessons": "lessons",
 }
 # 뒤에 낱말이 붙는 명령
@@ -80,6 +81,7 @@ BOT_MENU = [
     {"command": "cancel", "description": "진행 중인 입력·발급 선택 취소"},
     {"command": "status", "description": "AI·수집·시간표 준비 상태"},
     {"command": "lessons", "description": "오늘 내 수업"},
+    {"command": "update", "description": "새 버전 확인·업데이트"},
     {"command": "ask", "description": "일반 질문 (업무자료 제외): /ask 질문"},
 ]
 # 화면(passes.js)의 사유 단추와 같음
@@ -203,6 +205,7 @@ class Bot:
         self.conflicts = 0      # 같은 봇을 다른 곳에서도 쓰는 중이라 받은 409 횟수
         self.last_poll = None   # 마지막으로 텔레그램에서 새 글을 확인한 시각
         self.asking = None      # 지금 답을 만드는 질문 (한 번에 하나)
+        self.updates = None     # desk.py 가 연결: state()·check()·apply(force) — 텔레그램에서 업데이트
         self.sync = False       # 시험: 질문의 답을 기다렸다가 돌려줌
         self.choice_requests = {}
         self.dialog = None
@@ -324,6 +327,9 @@ class Bot:
             return text
         if cmd == "guided-search":
             return self.begin_dialog(cid, "search")
+        if cmd == "update":
+            self.dialog = None
+            return self.send_update_offer(cid)
         if cmd == "lessons":
             self.dialog = None
             return self.reply(cid, self.lessons_text(""))
@@ -835,6 +841,8 @@ class Bot:
             return self.send_original(cid, int(rest))
         if kind == "f" and rest.isdigit():
             return self.send_item_file(cid, int(rest))
+        if kind in ("up", "ua", "uf", "uc"):
+            return self.update_button(cid, kind, rest, msg.get("message_id"))
         if kind == "pp":
             pid, _, choice = rest.partition(":")
             p = self.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
@@ -1263,13 +1271,69 @@ class Bot:
             buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
             self.send(msg, buttons=buttons)
 
+    def update_buttons(self, version):
+        return [[{"text": "⬆ 지금 업데이트", "callback_data": f"up:{version}"}]] if self.updates else None
+
+    def send_update_offer(self, cid):
+        """'업데이트' 명령: 새 버전을 확인해 있으면 [지금 업데이트] 단추."""
+        if not self.updates:
+            return self.reply(cid, "업데이트 기능을 쓸 수 없습니다.")
+        st = self.updates.check()
+        if st["error"]:
+            return self.reply(cid, st["error"])
+        if not st["portable"]:
+            return self.reply(cid, f"지금 {st['current']} · 개발용 폴더는 텔레그램에서 업데이트할 수 없습니다 (git 으로 받으세요).")
+        if not st["available"]:
+            return self.reply(cid, f"✅ 최신 버전입니다 ({st['current']}).")
+        text = f"⬆ 새 버전 {st['latest']} 이 있습니다 (지금 {st['current']})."
+        self.send(text, cid, self.update_buttons(st["latest"]))
+        return text
+
+    def update_button(self, cid, kind, version, message_id):
+        """up: 확인 묻기 → ua: 바꾸기 → (수집·AI 요약 중이면) uf: 중단하고 바꾸기. uc: 취소."""
+        if not self.updates:
+            return self.show(cid, message_id, "업데이트 기능을 쓸 수 없습니다.", [])
+        if kind == "uc":
+            return self.show(cid, message_id, "업데이트를 취소했습니다. 바뀐 것은 없습니다.", [])
+        st = self.updates.state()
+        if not (st["available"] and st["portable"]) or str(st["latest"]) != version:
+            return self.show(cid, message_id, "새 버전 정보가 바뀌었거나 이미 처리했습니다. '업데이트' 를 다시 보내 확인하세요.", [])
+        if kind == "up":
+            return self.show(cid, message_id,
+                             f"⬆ {st['current']} → {version} 으로 업데이트할까요?\n업무 데스크가 꺼졌다가 1~2분 뒤 다시 켜지며, 그동안 텔레그램도 멈춥니다. "
+                             "다시 켜지면 알려 드립니다. 자료·설정은 그대로입니다.",
+                             [[{"text": "업데이트 시작", "callback_data": f"ua:{version}"},
+                               {"text": "취소", "callback_data": "uc:0"}]])
+        self.show(cid, message_id, f"⬆ {st['current']} → {version} 업데이트를 시작합니다. 다시 켜지면 알려 드립니다.", [])
+        self.db.set_meta("telegram_update_pending", version)
+        try:
+            self.updates.apply(kind == "uf")
+        except Exception as e:
+            self.db.set_meta("telegram_update_pending", None)
+            status, message = getattr(e, "status", None), getattr(e, "message", None) or str(e)
+            buttons = ([[{"text": "중단하고 업데이트", "callback_data": f"uf:{version}"},
+                         {"text": "취소", "callback_data": "uc:0"}]] if status == 409 else None)
+            return self.reply(cid, f"⚠ 업데이트를 시작하지 못했습니다: {message}") if not buttons else \
+                self.show(cid, None, f"⚠ {message}\n끝난 뒤 다시 보내거나, 중단해도 되면 아래 단추를 누르세요.", buttons)
+        return "업데이트 시작"
+
+    def announce_update_result(self):
+        """텔레그램으로 시작한 업데이트가 끝나 다시 켜졌을 때 알림 (밖에서 보고 있어도 끝난 줄 알도록)."""
+        target = self.db.get_meta("telegram_update_pending")
+        if not target or not self.chat_id:
+            return False
+        self.db.set_meta("telegram_update_pending", None)
+        if VERSION == target:
+            return self.send(f"✅ 업무 데스크가 {VERSION} 으로 업데이트되어 다시 켜졌습니다.")
+        return self.send(f"⚠ 업데이트가 끝나지 않은 것 같습니다 (목표 {target}, 지금 {VERSION}). PC 의 업데이트 창을 확인하세요.")
+
     def notify_update(self, info):
         """새 버전이 나왔다고 텔레그램으로 한 번 알림 (같은 버전은 다시 보내지 않음). 바꾸는 것은 화면에서 직접 눌러야 함."""
         version = str(info.get("version", ""))[:20]
         if not version or not self.chat_id or self.db.get_meta("telegram_update_notified") == version:
             return False
         sent = self.send(f"⬆ 업무 데스크 새 버전 {version} 이 나왔습니다 (지금 {VERSION}).\n"
-                         "업무 데스크 화면 아래 막대의 [업데이트] 를 누르면 바뀝니다. 직접 누르기 전에는 바뀌지 않습니다.")
+                         "직접 누르기 전에는 바뀌지 않습니다.", buttons=self.update_buttons(version))
         if sent:
             self.db.set_meta("telegram_update_notified", version)
         return sent
@@ -1329,6 +1393,10 @@ class Bot:
             pass
 
     def start(self):
+        try:
+            self.announce_update_result()
+        except Exception:
+            pass   # 알림 실패가 켜는 것을 막지 않음
         self.thread = threading.Thread(target=self.loop, name="telegram", daemon=True)
         self.thread.start()
 

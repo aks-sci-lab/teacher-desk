@@ -1540,7 +1540,11 @@ def update_check(app, q, body):
 
 @api("POST", "/api/update/apply")
 def update_apply(app, q, body):
-    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬)."""
+    return apply_update(app, body.get("force") is True)
+
+
+def apply_update(app, force=False, via="화면"):
+    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬). 화면·텔레그램 공용."""
     need(app.update_checker and app.shutdown is not None, "업데이트 기능을 사용할 수 없습니다", 503)
     st = app.update_checker.state()
     need(st["portable"], "윈도우용 설치본에서만 업데이트할 수 있습니다 (개발용 폴더는 git 으로 받으세요)", 400)
@@ -1552,13 +1556,13 @@ def update_apply(app, q, body):
         app.collector.lock.release()
     if app.ai_job.running:
         busy.append("AI 요약")
-    need(not busy or body.get("force") is True,
+    need(not busy or force,
          f"{' · '.join(busy)} 중입니다. 끝난 뒤 다시 누르거나, 중단해도 되면 다시 확인하세요", 409)
     try:
         updater.start_update(APP_DIR, open_browser=False)   # 열려 있는 화면이 다시 켜지면 스스로 새로 고침하므로 새 창을 열지 않음
     except OSError as e:
         raise ApiError(500, f"업데이트 창을 열지 못했습니다 ({e.strerror or type(e).__name__})") from e
-    app.db.log(f"화면에서 업데이트 시작: {st['current']} → {st['latest']}")
+    app.db.log(f"{via}에서 업데이트 시작: {st['current']} → {st['latest']}")
     import threading
     threading.Thread(target=app.shutdown, daemon=True).start()
     return {"ok": True, "from": st["current"], "to": st["latest"]}

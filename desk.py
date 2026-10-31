@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import sys
+import types
 from contextlib import nullcontext
 
 from desk import VERSION, background, updater
@@ -20,7 +21,7 @@ from desk.config import APP_DIR, Config
 from desk.db import DB
 from desk.bell import LessonBell
 from desk.scheduler import Scheduler
-from desk.server import App, serve
+from desk.server import App, apply_update, serve
 from desk.telegram import Bot
 from desk.watcher import Watcher
 
@@ -110,6 +111,9 @@ def run(args, config, db):
         return 1
     app.shutdown = httpd.shutdown
     app.update_checker = updater.Checker(VERSION, APP_DIR, on_new=bot.notify_update)
+    bot.updates = types.SimpleNamespace(   # 텔레그램에서 새 버전 확인·업데이트 (같은 검사·같은 순서)
+        state=app.update_checker.state, check=app.update_checker.check,
+        apply=lambda force: apply_update(app, force, via="텔레그램"))
     app.update_checker.start()
     app.item_ai.start_auto()   # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약
     scheduler = Scheduler(db, config, collector)
