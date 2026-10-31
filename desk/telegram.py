@@ -61,6 +61,10 @@ ARG_COMMANDS = {
     "결석계": "absence", "결석": "absence", "/absence": "absence",
     "/ask": "general",
 }
+# 명령 뒤에 붙어도 같은 명령으로 보는 말 ('브리핑 보여줘'·'오늘 일정'). 그 밖의 낱말이 붙으면 명령이 아니라 검색·질문
+POLITE_TAILS = {"보여줘", "알려줘", "보내줘", "해줘", "줘", "좀", "주세요", "보여주세요", "알려주세요", "부탁", "부탁해", "부탁해요", "요"}
+COMMAND_TAILS = {"today": {"일정", "업무"}, "deadlines": {"일정"}}
+P_ARG_NUMBER = re.compile(r"^\d")   # 숫자로 시작하면 명령 ('1시' 같은 잘못된 번호는 명령이 안내)
 BOT_MENU = [
     {"command": "brief", "description": "브리핑 (오늘 + 1주일 요약)"},
     {"command": "today", "description": "오늘 일정·마감"},
@@ -304,6 +308,8 @@ class Bot:
             return None  # 연결되지 않은 사람에게는 답하지 않음
         head = words[0].split("@")[0].lower()
         cmd = COMMANDS.get(text) or COMMANDS.get(head)
+        if cmd and not self.plain_command(text, head, words, cmd):
+            cmd = None   # '오늘 식단표' 는 오늘 브리핑이 아니라 자료 검색으로
         if cmd in ("help", "menu"):
             self.dialog = None
             return self.send_menu(cid, full=cmd == "help")
@@ -327,7 +333,7 @@ class Bot:
                 return self.send_brief(cid)
             return self.send_answer(cid, cmd)
         arg_cmd = ARG_COMMANDS.get(head)
-        if arg_cmd:
+        if arg_cmd and self.arg_command_fits(arg_cmd, head, words[1:]):
             self.dialog = None
             return self.run_arg(cid, arg_cmd, words[1:])
         if cmd:
@@ -346,6 +352,27 @@ class Bot:
             cmd, args = found
             return self.send_brief(cid) if cmd == "brief" else self.run_arg(cid, cmd, args)
         return self.offer_choices(cid, text)
+
+    @staticmethod
+    def plain_command(text, head, words, cmd):
+        """인자 없는 명령은 그 낱말 그대로(또는 공손한 꼬리만)일 때만. '/today' 처럼 슬래시는 항상 명령."""
+        if head.startswith("/") or text in COMMANDS:
+            return True
+        tails = POLITE_TAILS | COMMAND_TAILS.get(cmd, set())
+        return all(w.strip("?!.~") in tails for w in words[1:])
+
+    @staticmethod
+    def arg_command_fits(arg_cmd, head, args):
+        """뒤따르는 말이 그 명령에 맞는 모양일 때만 명령 ('결석 인원 알려줘' 는 검색·질문으로)."""
+        if head.startswith("/") or not args:
+            return True
+        if arg_cmd in ("early", "out"):
+            return bool(P_ARG_NUMBER.match(args[0]))
+        if arg_cmd == "absence":
+            joined = " ".join(args)
+            return bool(absence.P_DATE.search(joined)) or any(
+                re.search(rf"(?<!\S){w}(?!\S)", joined) for w in absence.TYPE_WORDS)
+        return True
 
     def send_menu(self, cid, full=False):
         text = (HELP if full else
@@ -1285,6 +1312,17 @@ class Bot:
             ids = self.db.get_meta("telegram_refs", []) if stats.get("new_ids") else []
             buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
             self.send(msg, buttons=buttons)
+
+    def notify_update(self, info):
+        """새 버전이 나왔다고 텔레그램으로 한 번 알림 (같은 버전은 다시 보내지 않음). 바꾸는 것은 화면에서 직접 눌러야 함."""
+        version = str(info.get("version", ""))[:20]
+        if not version or not self.chat_id or self.db.get_meta("telegram_update_notified") == version:
+            return False
+        sent = self.send(f"⬆ 업무 데스크 새 버전 {version} 이 나왔습니다 (지금 {VERSION}).\n"
+                         "업무 데스크 화면 아래 막대의 [업데이트] 를 누르면 바뀝니다. 직접 누르기 전에는 바뀌지 않습니다.")
+        if sent:
+            self.db.set_meta("telegram_update_notified", version)
+        return sent
 
     # ---- 폴링 ----
     def loop(self):

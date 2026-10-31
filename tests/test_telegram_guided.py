@@ -1,6 +1,8 @@
 import time
 import unittest
 from datetime import date, timedelta
+
+from datetime import date
 from unittest.mock import patch
 
 from desk import ai, schoolcal
@@ -113,6 +115,40 @@ class TelegramGuidedTests(unittest.TestCase):
         self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
         record = self.env.db.one("SELECT * FROM passes")
         self.assertEqual((record["kind"], record["date"], record["time_return"]), ("out", target.isoformat(), "14:30"))
+
+    def test_words_mixed_with_command_words_go_to_search_choices_not_commands(self):
+        """'오늘 식단표' 가 오늘 브리핑이 되던 것 (명령 낱말이 섞인 자연스러운 말은 검색·질문으로)."""
+        for text in ("오늘 식단표", "마감 언제야", "결석 인원 알려줘", "조퇴 인원 알려줘", "브리핑 자료 어디 있어", "요약 좀 길게 해줘"):
+            before = len(self.fake.sent)
+            reply = self.bot.handle_update(msg(text))
+            self.assertIn("알아듣지 못했습니다", reply, text)
+            self.assertEqual(len(self.fake.sent), before + 1, text)
+            data = [b["callback_data"] for row in self.fake.sent[-1]["reply_markup"]["inline_keyboard"] for b in row]
+            self.assertTrue(any(d.endswith(":search") for d in data), text)   # AI 없이 자료 검색 단추
+            self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
+            self.assertIsNone(self.bot.dialog, text)
+
+    def test_plain_commands_and_polite_tails_still_run(self):
+        add_text_item(self.env.db, "cool", "연수 신청 안내 11월 3일까지", title="연수 신청")
+        for text in ("오늘", "오늘 일정", "오늘 업무", "마감", "마감 일정", "브리핑 보여줘", "/today", "/today 식단표", "/deadlines@bot"):
+            reply = self.bot.handle_update(msg(text))
+            self.assertNotIn("알아듣지 못했습니다", reply, text)
+        self.assertIn("업무", self.bot.handle_update(msg("오늘")))
+        self.assertIn("마감", self.bot.handle_update(msg("마감 보여줘")))
+        self.assertIn("알아듣지 못했습니다", self.bot.handle_update(msg("/모르는명령")))
+
+    def test_arg_commands_only_when_arguments_fit(self):
+        self.school_calendar()
+        self.assertIn("7번 최○○ 조퇴증", self.bot.handle_update(msg("7번 조퇴 1시 반")) or "")   # 자연스러운 말은 그대로
+        self.bot.handle_update(msg("/cancel"))
+        self.assertIn("최○○", self.bot.handle_update(msg("조퇴 7 13:30")))
+        self.assertIn("번호를 함께", self.bot.handle_update(msg("조퇴 1시 반")))      # 숫자로 시작하면 명령이 안내
+        self.assertIn("최○○", self.bot.handle_update(msg("외출 7 13:30 14:30")))
+        text = self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-10-29~2026-11-03"))
+        self.assertIn("저장", text)
+        self.assertEqual(self.bot.handle_update(msg("결석계")) is None, False)        # 인자 없으면 단계별 입력
+        self.assertEqual(self.bot.dialog["kind"], "absence")
+        self.assertIn("알아듣지 못했습니다", self.bot.handle_update(msg("/그만")))
 
     def test_search_dialog_and_rules_only_choice_never_call_ai(self):
         add_text_item(self.env.db, "cool", "연수 신청 안내 11월 3일까지", title="연수 신청")
