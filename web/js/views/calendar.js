@@ -20,7 +20,7 @@ export const exportIcs = guarded(async () => {
     toast('달력 파일을 내려받았습니다. 구글 캘린더 → 설정 → 가져오기에서 올리세요.', 'info', 6000);
 });
 
-function openEventForm(e = {}) {
+export function openEventForm(e = {}) {
     const ev = { date: todayIso(), time: '', kind: 'event', category: '참고', text: '', ...e };
     openTab({
         id: e.id ? `event-${e.id}` : 'event-new', refresh: true, title: e.id ? '일정 고치기' : '새 일정',
