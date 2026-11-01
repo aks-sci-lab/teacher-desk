@@ -321,14 +321,14 @@ export function openRoster() {
         id: 'roster', title: '학생 명단',
         render(pane, tab) {
             let parsed = null;
-            const area = el('textarea', { rows: 12, placeholder: '엑셀에서 번호·이름 두 칸을 복사해 붙여넣으세요\n예)\n1\t김가온\n2\t나하늘' });
+            const area = el('textarea', { rows: 12, placeholder: '엑셀에서 번호·이름·학부모 연락처를 복사해 붙여넣으세요 (연락처는 없어도 됩니다)\n예)\n1\t김가온\t010-1234-5678\n2\t나하늘\t010-2345-6789' });
             const previewBox = el('div');
             const showPreview = guarded(async () => {
                 parsed = await api.post('/api/students/parse', { text: area.value });
                 clear(previewBox,
-                    el('p', `${parsed.length}명을 읽었습니다. 맞으면 저장하세요 (기존 명단을 바꿉니다).`),
-                    el('table.tbl', el('thead', el('tr', el('th', '번호'), el('th', '이름'))),
-                        el('tbody', parsed.map(r => el('tr', el('td', r.number), el('td', r.name))))),
+                    el('p', `${parsed.length}명을 읽었습니다. 맞으면 저장하세요 (기존 명단을 바꿉니다). 연락처를 비워 두면 같은 번호·이름의 예전 연락처를 그대로 둡니다.`),
+                    el('table.tbl', el('thead', el('tr', el('th', '번호'), el('th', '이름'), el('th', '학부모 연락처'))),
+                        el('tbody', parsed.map(r => el('tr', el('td', r.number), el('td', r.name), el('td', r.parent_phone || '-'))))),
                     el('div.row', { style: 'margin-top: 8px' }, el('button.btn.primary', { disabled: !parsed.length, onclick: guarded(async () => {
                         await api.put('/api/students', { rows: parsed });
                         await loadStudents();
@@ -346,7 +346,7 @@ export function openRoster() {
                 previewBox,
                 el('h2', `지금 명단 (${store.students.length}명)`),
                 store.students.length
-                    ? el('table.tbl', el('tbody', store.students.map(r => el('tr', el('td', `${r.number}번`), el('td', r.name)))))
+                    ? el('table.tbl', el('tbody', store.students.map(r => el('tr', el('td', `${r.number}번`), el('td', r.name), el('td.muted', r.parent_phone || '연락처 없음')))))
                     : el('p.muted', '아직 없습니다.'));
         },
     });

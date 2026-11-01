@@ -60,8 +60,9 @@ FIRST_CHECK = 30         # 켠 뒤 처음 확인까지 (켜는 것을 늦추지 
 class Checker:
     """켜 둔 채로 새 배포가 있는지 가끔 확인 (알림만, 바꾸는 것은 사용자가 [지금 업데이트] 를 눌러야)."""
 
-    def __init__(self, version, app_dir, interval=CHECK_EVERY):
+    def __init__(self, version, app_dir, interval=CHECK_EVERY, on_new=None):
         self.version, self.app_dir, self.interval = version, app_dir, interval
+        self.on_new = on_new      # 새 버전을 알았을 때 부르는 함수(info) — 텔레그램 알림용, 실패해도 확인은 계속
         self.latest = None        # 새 버전이 있을 때 {'version', ...}
         self.latest_seen = None   # 마지막으로 읽은 배포 버전
         self.checked_at = None
@@ -78,6 +79,11 @@ class Checker:
             self.latest = info if parse_version(info["version"]) > parse_version(self.version) else None
         except Exception as e:
             self.error = f"새 버전을 확인하지 못했습니다 ({type(e).__name__}). 인터넷 연결을 확인하세요."
+        if self.latest and self.on_new:
+            try:
+                self.on_new(self.latest)
+            except Exception:
+                pass
         self.checked_at = datetime.now().strftime("%Y-%m-%d %H:%M")
         return self.state()
 

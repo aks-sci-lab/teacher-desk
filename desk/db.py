@@ -161,6 +161,8 @@ class DB:
         for col in ("ai_summary", "ai_summary_hash", "ai_summary_at", "ai_summary_model"):   # 0.5.35: 항목별 AI 요약
             if col not in cols:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
+        if "parent_phone" not in {r[1] for r in self.conn.execute("PRAGMA table_info(students)")}:
+            self.conn.execute("ALTER TABLE students ADD COLUMN parent_phone TEXT")  # 0.5.46: 학부모 확인용 연락처
         if "sort" not in {r[1] for r in self.conn.execute("PRAGMA table_info(todos)")}:
             # 0.5.20: 꼭 할 일 순서를 끌어서 바꿈. 예전 것은 그때 보이던 순서(날짜 순)대로 번호를 매김
             self.conn.execute("ALTER TABLE todos ADD COLUMN sort REAL")
@@ -206,10 +208,14 @@ class DB:
         return self.query("SELECT * FROM students ORDER BY number, name")
 
     def replace_students(self, rows):
+        """명단을 통째로 바꿈. 연락처를 주지 않은 줄은 같은 번호·이름의 예전 연락처를 이어 받음."""
         with self.lock:
+            old = {(r[0], r[1]): r[2] for r in self.conn.execute("SELECT number, name, parent_phone FROM students")}
             self.conn.execute("DELETE FROM students")
-            self.conn.executemany("INSERT INTO students(number, name) VALUES(?, ?)",
-                                  [(r["number"], r["name"]) for r in rows])
+            self.conn.executemany(
+                "INSERT INTO students(number, name, parent_phone) VALUES(?, ?, ?)",
+                [(r["number"], r["name"], r["parent_phone"] if r.get("parent_phone") is not None
+                  else old.get((r["number"], r["name"]))) for r in rows])
             self.conn.commit()
 
     # ---- 수신 항목 ----

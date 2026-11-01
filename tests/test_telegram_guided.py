@@ -1,5 +1,6 @@
 import time
 import unittest
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from desk import ai, schoolcal
@@ -56,6 +57,97 @@ class TelegramGuidedTests(unittest.TestCase):
         self.assertIn("취소", self.texts())
         self.assertNotIn("최별빛", self.texts())
 
+    def start_pass_dialog(self, word="조퇴증"):
+        self.bot.handle_update(msg(word))
+        self.bot.handle_update(msg("7"))
+        return self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0]
+
+    def test_pass_calendar_picks_a_future_day_same_message_and_issues_after_parent_confirm(self):
+        row = self.start_pass_dialog()
+        self.assertEqual([b["text"] for b in row], ["지금 시각으로", "📅 다른 날짜"])
+        sent_before = len(self.fake.sent)
+        self.bot.handle_update(press(row[1]["callback_data"]))
+        kb = self.fake.edited[-1]["reply_markup"]["inline_keyboard"]
+        self.assertEqual(len(self.fake.sent), sent_before)   # 새 메시지 없이 같은 메시지를 고침
+        self.assertEqual([b["text"] for b in kb[-1]], ["오늘로", "취소"])
+        self.assertTrue(all(len(b["callback_data"].encode()) <= 64 for r in kb for b in r))
+        did = self.bot.dialog["id"]
+        today = date.today()
+        self.assertIn("지난 날짜", self.bot.handle_update(press(f"dlg:{did}:cd:{today - timedelta(days=1):%Y%m%d}")))
+        self.assertIn("달력에 없는", self.bot.handle_update(press(f"dlg:{did}:cm:209913")))
+        self.assertIn("달력에서", self.bot.handle_update(msg("13:30")))   # 날짜 고르는 중에는 시각 글을 받지 않음
+        target = today + timedelta(days=3)
+        self.bot.handle_update(press(f"dlg:{did}:cd:{target:%Y%m%d}"))
+        edited = self.fake.edited[-1]
+        self.assertIn(f"{target.month}/{target.day}", edited["text"])
+        self.assertEqual([b["text"] for b in edited["reply_markup"]["inline_keyboard"][0]], ["📅 날짜 바꾸기"])   # 다른 날은 '지금 시각' 없음
+        waiting_prompt = self.bot.handle_update(msg("13:30"))
+        self.assertIn(f"{target.month}/{target.day}", waiting_prompt)
+        self.bot.handle_update(press(self.last_button(0)))
+        self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
+        self.assertIn(f"{target.month}/{target.day}", self.fake.edited[-1]["text"])
+        self.assertIn("확인 대기", self.bot.brief_text())
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+        record = self.env.db.one("SELECT * FROM passes")
+        self.assertEqual((record["date"], record["time_out"], record["guardian_ok"]), (target.isoformat(), "13:30", 1))
+        self.assertNotIn("최별빛", self.texts() + "\n".join(m["text"] for m in self.fake.edited))
+
+    def test_pass_calendar_back_to_today_and_out_pass_with_return_time(self):
+        row = self.start_pass_dialog("외출증")
+        self.bot.handle_update(press(row[1]["callback_data"]))
+        did = self.bot.dialog["id"]
+        target = date.today() + timedelta(days=1)
+        self.bot.handle_update(press(f"dlg:{did}:cd:{target:%Y%m%d}"))
+        self.bot.handle_update(press(f"dlg:{did}:pd"))              # 날짜 바꾸기 → 다시 달력
+        self.assertEqual(self.bot.dialog["step"], "pdate")
+        self.bot.handle_update(press(f"dlg:{did}:td"))              # 오늘로
+        self.assertNotIn("pass_day", self.bot.dialog)
+        self.assertEqual([b["text"] for b in self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0]], ["지금 시각으로", "📅 다른 날짜"])
+        self.bot.handle_update(press(f"dlg:{did}:cd:{target:%Y%m%d}"))   # 시각 단계에서 달력 날짜 단추는 무시
+        self.assertEqual(self.bot.dialog["step"], "time")
+        self.assertNotIn("pass_day", self.bot.dialog)
+        self.bot.handle_update(press(f"dlg:{did}:pd"))
+        self.bot.handle_update(press(f"dlg:{did}:cd:{target:%Y%m%d}"))
+        self.bot.handle_update(msg("13:30 14:30"))
+        self.bot.handle_update(press(self.last_button(0)))
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+        record = self.env.db.one("SELECT * FROM passes")
+        self.assertEqual((record["kind"], record["date"], record["time_return"]), ("out", target.isoformat(), "14:30"))
+
+    def test_words_mixed_with_command_words_go_to_search_choices_not_commands(self):
+        """'오늘 식단표' 가 오늘 브리핑이 되던 것 (명령 낱말이 섞인 자연스러운 말은 검색·질문으로)."""
+        for text in ("오늘 식단표", "마감 언제야", "결석 인원 알려줘", "조퇴 인원 알려줘", "브리핑 자료 어디 있어", "요약 좀 길게 해줘"):
+            before = len(self.fake.sent)
+            reply = self.bot.handle_update(msg(text))
+            self.assertIn("알아듣지 못했습니다", reply, text)
+            self.assertEqual(len(self.fake.sent), before + 1, text)
+            data = [b["callback_data"] for row in self.fake.sent[-1]["reply_markup"]["inline_keyboard"] for b in row]
+            self.assertTrue(any(d.endswith(":search") for d in data), text)   # AI 없이 자료 검색 단추
+            self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
+            self.assertIsNone(self.bot.dialog, text)
+
+    def test_plain_commands_and_polite_tails_still_run(self):
+        add_text_item(self.env.db, "cool", "연수 신청 안내 11월 3일까지", title="연수 신청")
+        for text in ("오늘", "오늘 일정", "오늘 업무", "마감", "마감 일정", "브리핑 보여줘", "/today", "/today 식단표", "/deadlines@bot"):
+            reply = self.bot.handle_update(msg(text))
+            self.assertNotIn("알아듣지 못했습니다", reply, text)
+        self.assertIn("업무", self.bot.handle_update(msg("오늘")))
+        self.assertIn("마감", self.bot.handle_update(msg("마감 보여줘")))
+        self.assertIn("알아듣지 못했습니다", self.bot.handle_update(msg("/모르는명령")))
+
+    def test_arg_commands_only_when_arguments_fit(self):
+        self.school_calendar()
+        self.assertIn("7번 최○○ 조퇴증", self.bot.handle_update(msg("7번 조퇴 1시 반")) or "")   # 자연스러운 말은 그대로
+        self.bot.handle_update(msg("/cancel"))
+        self.assertIn("최○○", self.bot.handle_update(msg("조퇴 7 13:30")))
+        self.assertIn("번호를 함께", self.bot.handle_update(msg("조퇴 1시 반")))      # 숫자로 시작하면 명령이 안내
+        self.assertIn("최○○", self.bot.handle_update(msg("외출 7 13:30 14:30")))
+        text = self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-10-29~2026-11-03"))
+        self.assertIn("저장", text)
+        self.assertEqual(self.bot.handle_update(msg("결석계")) is None, False)        # 인자 없으면 단계별 입력
+        self.assertEqual(self.bot.dialog["kind"], "absence")
+        self.assertIn("알아듣지 못했습니다", self.bot.handle_update(msg("/그만")))
+
     def test_search_dialog_and_rules_only_choice_never_call_ai(self):
         add_text_item(self.env.db, "cool", "연수 신청 안내 11월 3일까지", title="연수 신청")
         with patch.object(self.bot, "ask") as ask:
@@ -86,6 +178,8 @@ class TelegramGuidedTests(unittest.TestCase):
         self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
         reason = self.last_button()
         self.bot.handle_update(press(reason))
+        self.assertIsNone(self.env.db.one("SELECT * FROM passes"))   # 학부모 확인 전
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
         record = self.env.db.one("SELECT * FROM passes")
         self.assertEqual((record["student_number"], record["time_out"], record["time_return"]), (7, "13:30", "14:30"))
         self.assertNotIn("최별빛", self.texts())
@@ -147,6 +241,87 @@ class TelegramGuidedTests(unittest.TestCase):
         record = self.env.db.one("SELECT * FROM absences")
         self.assertEqual(record["student_name"], "최별빛")
         self.assertEqual(record["absence_type"], "질병")
+
+    def calendar_flow(self):
+        self.school_calendar()
+        self.bot.handle_update(msg("결석계"))
+        self.bot.handle_update(msg("7"))
+        self.bot.handle_update(press(self.last_button(0)))   # 종류 단추 → 같은 메시지가 달력으로
+        return self.fake.edited[-1]["reply_markup"]["inline_keyboard"]
+
+    def find(self, keyboard, label):
+        return next(b["callback_data"] for row in keyboard for b in row if b["text"] == label)
+
+    def test_absence_calendar_edits_same_message_and_picks_range(self):
+        sent_before = len(self.fake.sent)
+        kb = self.calendar_flow()
+        self.assertEqual(len(self.fake.sent), sent_before + 2)   # 번호 안내·종류 단추만 새로 보냄
+        today = date.today()
+        self.assertEqual(kb[0][1]["text"], f"{today.year}년 {today.month}월")
+        self.assertEqual([b["text"] for b in kb[1]], list("일월화수목금토"))
+        self.assertTrue(all(len(b["callback_data"].encode()) <= 64 for row in kb for b in row))
+        kb = self.bot_press_edit(self.find(kb, "▶"))   # 다음 달로
+        kb = self.bot_press_edit(self.find(kb, "◀"))
+        self.assertEqual(self.fake.edited[-1]["message_id"], 1)
+
+    def bot_press_edit(self, data):
+        self.bot.handle_update(press(data))
+        return self.fake.edited[-1]["reply_markup"]["inline_keyboard"]
+
+    def go_month(self, kb, year, month):
+        while True:
+            title = kb[0][1]["text"]
+            if title == f"{year}년 {month}월":
+                return kb
+            kb = self.bot_press_edit(kb[0][2]["callback_data"] if title < f"{year}년 {month}월" else kb[0][0]["callback_data"])
+
+    def test_absence_calendar_range_marks_closed_day_and_saves(self):
+        kb = self.calendar_flow()
+        kb = self.go_month(kb, 2026, 10)
+        kb = self.bot_press_edit(self.find(kb, "29"))
+        self.assertIn("▶29", [b["text"] for row in kb for b in row])
+        self.assertIn("시작일 10/29", self.fake.edited[-1]["text"])
+        kb = self.go_month(kb, 2026, 11)
+        self.assertIn("(2)", [b["text"] for row in kb for b in row])   # 재량휴업일 표시
+        self.bot.handle_update(press(self.find(kb, "3")))
+        self.assertIn("수업일 3일", self.fake.edited[-1]["text"])   # 10/29·10/30·11/3 (11/2 휴업, 주말 제외)
+        self.assertIsNone(self.env.db.one("SELECT * FROM absences"))
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+        record = self.env.db.one("SELECT * FROM absences")
+        self.assertEqual((record["start_date"], record["end_date"]), ("2026-10-29", "2026-11-03"))
+        self.assertNotIn("최별빛", self.texts())
+        self.assertNotIn("최별빛", "\n".join(m["text"] for m in self.fake.edited))
+
+    def test_absence_calendar_one_day_buttons_and_earlier_pick_restarts(self):
+        kb = self.go_month(self.calendar_flow(), 2026, 10)
+        kb = self.bot_press_edit(self.find(kb, "30"))
+        kb = self.bot_press_edit(self.find(kb, "29"))     # 시작일보다 앞 → 새 시작일
+        self.assertIn("시작일 10/29", self.fake.edited[-1]["text"])
+        self.bot.handle_update(press(self.find(kb, "하루만")))
+        self.assertIn("2026-10-29~2026-10-29 · 수업일 1일", self.fake.edited[-1]["text"])
+        self.bot.handle_update(msg("/cancel"))
+        kb = self.go_month(self.calendar_flow(), 2026, 10)
+        kb = self.bot_press_edit(self.find(kb, "30"))
+        self.bot.handle_update(press(self.find(kb, "▶30")))   # 같은 날 두 번
+        self.assertIn("2026-10-30~2026-10-30", self.fake.edited[-1]["text"])
+
+    def test_absence_calendar_text_input_still_works_and_bad_buttons_rejected(self):
+        self.calendar_flow()
+        did = self.bot.dialog["id"]
+        self.assertIn("달력에 없는", self.bot.handle_update(press(f"dlg:{did}:cd:20261340")))
+        self.assertIn("달력에 없는", self.bot.handle_update(press(f"dlg:{did}:cm:209913")))
+        self.assertIn("수업일 3일", self.bot.handle_update(msg("2026-10-29~2026-11-03")))
+
+    def test_absence_calendar_without_school_calendar_keeps_calendar(self):
+        self.bot.handle_update(msg("결석계"))
+        self.bot.handle_update(msg("7"))
+        self.bot.handle_update(press(self.last_button(0)))
+        kb = self.go_month(self.fake.edited[-1]["reply_markup"]["inline_keyboard"], 2026, 10)
+        kb = self.bot_press_edit(self.find(kb, "29"))
+        self.bot.handle_update(press(self.find(kb, "하루만")))
+        self.assertIn("학사일정", self.texts())
+        self.assertEqual(self.bot.dialog["step"], "date")
+        self.assertIsNone(self.env.db.one("SELECT * FROM absences"))
 
     def test_absence_does_not_save_without_school_calendar(self):
         self.bot.handle_update(msg("결석계"))

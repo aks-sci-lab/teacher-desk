@@ -224,10 +224,17 @@ class ServerTests(unittest.TestCase):
 
     def test_roster(self):
         rows = parse_roster("번호\t이름\n1\t김가온\n2\t나하늘\n\n3  도윤서\n박지민")
-        self.assertEqual(rows, [{"number": 1, "name": "김가온"}, {"number": 2, "name": "나하늘"},
-                                {"number": 3, "name": "도윤서"}, {"number": 4, "name": "박지민"}])
+        self.assertEqual(rows, [{"number": 1, "name": "김가온", "parent_phone": None}, {"number": 2, "name": "나하늘", "parent_phone": None},
+                                {"number": 3, "name": "도윤서", "parent_phone": None}, {"number": 4, "name": "박지민", "parent_phone": None}])
         st, saved = self.req("PUT", "/api/students", {"rows": rows})
         self.assertEqual(len(saved), 4)
+        # 학부모 연락처: 붙여넣기에서 읽고, 비워 다시 저장해도 예전 연락처를 이어 받음
+        with_phone = parse_roster("1\t김가온\t01012345678\n2\t나하늘\t010-2345-6789\n3\t도윤서\t전화 몰라")
+        self.assertEqual([r["parent_phone"] for r in with_phone], ["010-1234-5678", "010-2345-6789", None])
+        self.req("PUT", "/api/students", {"rows": with_phone})
+        st, again = self.req("PUT", "/api/students", {"rows": rows})
+        self.assertEqual([r["parent_phone"] for r in again][:2], ["010-1234-5678", "010-2345-6789"])
+        self.assertEqual(self.req("PUT", "/api/students", {"rows": [{"number": 1, "name": "x", "parent_phone": "abc"}]})[0], 400)
         self.assertEqual(self.req("PUT", "/api/students", {"rows": [{"number": "1", "name": "x"}]})[0], 400)
 
     # ---- 수신함·일정 ----

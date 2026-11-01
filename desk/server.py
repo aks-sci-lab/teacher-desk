@@ -88,8 +88,20 @@ def month_range(v):
     return start.isoformat(), (nxt - timedelta(days=1)).isoformat()
 
 
+P_PHONE = re.compile(r"0\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}")
+
+
+def clean_phone(value):
+    """전화번호 한 개를 010-1234-5678 꼴로. 아니면 None."""
+    text = str(value or "").strip()
+    if not P_PHONE.fullmatch(text):
+        return None
+    digits = re.sub(r"\D", "", text)
+    return f"{digits[:3]}-{digits[3:-4]}-{digits[-4:]}" if len(digits) >= 10 else None
+
+
 def parse_roster(text):
-    """엑셀에서 복사한 '번호  이름' 줄들 → [{number, name}]. 번호가 없으면 순서대로."""
+    """엑셀에서 복사한 '번호  이름  학부모 연락처' 줄들 → [{number, name, parent_phone}]. 번호가 없으면 순서대로."""
     rows, auto = [], 0
     for line in text.splitlines():
         cells = [c.strip() for c in re.split(r"[\t,]+|\s{2,}", line.strip()) if c.strip()]
@@ -97,13 +109,14 @@ def parse_roster(text):
             cells = cells[0].split()
         if not cells:
             continue
+        phone = next((clean_phone(c) for c in cells if clean_phone(c)), None)
         number = next((int(c) for c in cells if c.isdigit() and int(c) < 1000), None)
         name = next((c for c in cells if re.search(r"[가-힣A-Za-z]", c)
                      and c not in ("번호", "이름", "성명")), None)
         if not name:
             continue
         auto += 1
-        rows.append({"number": number if number is not None else auto, "name": name[:20]})
+        rows.append({"number": number if number is not None else auto, "name": name[:20], "parent_phone": phone})
     return rows
 
 
@@ -423,7 +436,11 @@ def put_students(app, q, body):
     clean = []
     for r in rows:
         need(isinstance(r, dict) and isinstance(r.get("number"), int), "번호가 잘못되었습니다")
-        clean.append({"number": r["number"], "name": text_field(r.get("name"), "이름", 20, True)})
+        row = {"number": r["number"], "name": text_field(r.get("name"), "이름", 20, True)}
+        if r.get("parent_phone") not in (None, ""):
+            row["parent_phone"] = clean_phone(r["parent_phone"])
+            need(row["parent_phone"], "학부모 연락처는 010-1234-5678 처럼 입력하세요")
+        clean.append(row)
     app.db.replace_students(clean)
     app.db.log(f"학생 명단 {len(clean)}명 저장")
     return app.db.students()
@@ -1531,7 +1548,11 @@ def update_check(app, q, body):
 
 @api("POST", "/api/update/apply")
 def update_apply(app, q, body):
-    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬)."""
+    return apply_update(app, body.get("force") is True)
+
+
+def apply_update(app, force=False, via="화면"):
+    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬). 화면·텔레그램 공용."""
     need(app.update_checker and app.shutdown is not None, "업데이트 기능을 사용할 수 없습니다", 503)
     st = app.update_checker.state()
     need(st["portable"], "윈도우용 설치본에서만 업데이트할 수 있습니다 (개발용 폴더는 git 으로 받으세요)", 400)
@@ -1543,13 +1564,13 @@ def update_apply(app, q, body):
         app.collector.lock.release()
     if app.ai_job.running:
         busy.append("AI 요약")
-    need(not busy or body.get("force") is True,
+    need(not busy or force,
          f"{' · '.join(busy)} 중입니다. 끝난 뒤 다시 누르거나, 중단해도 되면 다시 확인하세요", 409)
     try:
         updater.start_update(APP_DIR, open_browser=False)   # 열려 있는 화면이 다시 켜지면 스스로 새로 고침하므로 새 창을 열지 않음
     except OSError as e:
         raise ApiError(500, f"업데이트 창을 열지 못했습니다 ({e.strerror or type(e).__name__})") from e
-    app.db.log(f"화면에서 업데이트 시작: {st['current']} → {st['latest']}")
+    app.db.log(f"{via}에서 업데이트 시작: {st['current']} → {st['latest']}")
     import threading
     threading.Thread(target=app.shutdown, daemon=True).start()
     return {"ok": True, "from": st["current"], "to": st["latest"]}
