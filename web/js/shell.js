@@ -83,6 +83,25 @@ function applyViewOrder(order) {
     }
 }
 
+// 설정에서 끈 메뉴는 활동 막대에서만 숨김 (화면에 열린 탭은 그대로). 설정 메뉴는 항상 보임.
+function applyMenuVisibility() {
+    const off = new Set(layout.menuHidden || []);
+    for (const [id, view] of views) view.button?.classList.toggle('menu-off', off.has(id) && id !== 'settings');
+}
+
+// 설정 화면에서 쓰는 목록: 메뉴 id·이름·지금 켜짐 여부
+export function menuList() {
+    const off = new Set(layout.menuHidden || []);
+    return normalizedViewOrder(layout.viewOrder).map(id => ({ id, label: menuLabel(views.get(id)), on: !off.has(id) || id === 'settings' }));
+}
+
+export function setMenuOn(id, on) {
+    if (id === 'settings') return;
+    const off = new Set(layout.menuHidden || []);
+    if (on) off.delete(id); else off.add(id);
+    setLayout({ menuHidden: [...off] });
+}
+
 function moveView(sourceId, targetId, after) {
     const source = views.get(sourceId);
     const target = views.get(targetId);
@@ -308,6 +327,7 @@ export const DEFAULT_LAYOUT = {
     labels: true,
     menuLabels: {},
     viewOrder: [],
+    menuHidden: [],   // 설정에서 끈 메뉴 (활동 막대에서 숨김, 설정은 항상 보임)
 };
 let layout = { ...DEFAULT_LAYOUT };
 let saveTimer;
@@ -330,6 +350,7 @@ export function applyLayout(next, save = true) {
     root.style.setProperty('--font-scale', layout.fontScale);
     applyMenuLabels();
     applyViewOrder(layout.viewOrder);
+    applyMenuVisibility();
     const dark = layout.theme === 'dark' || (layout.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
     root.dataset.theme = dark ? 'dark' : 'light';
     if (save) {
