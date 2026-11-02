@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, visits, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -126,6 +126,7 @@ class App:
     def __init__(self, db, config, collector, bot):
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
+        self.neis = neisfill.NeisFill(db)   # 나이스 입력 칸 채우기 (시험 단계)
         self.ui = window_mod.UiTracker()   # 지금 열려 있는 화면들 (전용 창 하나만 쓰게)
         self.watcher = None
         self.shutdown = None
@@ -209,6 +210,29 @@ def make_handler(app):
                 return self.send_json(200, {"ok": True, "version": VERSION})
             if path == "/capture" and method == "POST":
                 return self.send_json(200, capture_mod.receive(app, self.read_json()))
+            try:
+                # 나이스 입력 칸 채우기: 구조 받기 · 채우기 요청 가져가기(기다려 받기) · 결과 받기
+                if path == "/capture/form" and method == "POST":
+                    b = self.read_json()
+                    form = app.neis.save_form(b.get("host"), b.get("frame_path"), b.get("title"), b.get("fields"))
+                    app.db.log(f"나이스 입력 칸 구조를 받았습니다: {form['title']} ({len(form['fields'])}칸)")
+                    return self.send_json(200, {"ok": True, "id": form["id"], "fields": len(form["fields"])})
+                if path == "/capture/fill" and method == "GET":
+                    wait = parse_qs(urlparse(self.path).query).get("wait", ["0"])[-1]
+                    try:
+                        wait = float(wait)
+                    except ValueError:
+                        wait = 0
+                    return self.send_json(200, {"job": app.neis.take(wait)})
+                if path == "/capture/fill/result" and method == "POST":
+                    b = self.read_json()
+                    job = app.neis.report(str(b.get("id") or ""), b)
+                    app.db.log(f"나이스 채우기 결과: {job['title']} · {job['result']['filled']}칸 채움"
+                               + (f" · 못 찾음 {len(job['result']['missing'])}칸" if job['result']['missing'] else "")
+                               + (f" · {job['result']['error']}" if job['result']['error'] else ""))
+                    return self.send_json(200, {"ok": True})
+            except neisfill.FillError as e:
+                raise ApiError(400, str(e))
             raise ApiError(405, "허용되지 않은 요청")
 
         def do_OPTIONS(self):
@@ -234,7 +258,7 @@ def make_handler(app):
         def dispatch(self, method):
             try:
                 url = urlparse(self.path)
-                is_capture = url.path in ("/capture", "/capture/ping")
+                is_capture = url.path in ("/capture", "/capture/ping", "/capture/form", "/capture/fill", "/capture/fill/result")
                 self.guard(capture=is_capture)
                 if is_capture:
                     return self.capture(method, url.path)
@@ -411,6 +435,33 @@ def ui_claim(app, q, body):
 def ui_bye(app, q, body):
     """화면이 닫힐 때 (바로 알려 줘야 다음에 켤 때 새 창을 엶)."""
     app.ui.bye(ui_id(body))
+    return {"ok": True}
+
+
+# ---- 나이스 입력 칸 채우기 (시험 단계) ----
+@api("GET", "/api/neis-fill")
+def neis_fill_state(app, q, body):
+    return {"forms": app.neis.forms(), "jobs": app.neis.jobs()}
+
+
+@api("DELETE", r"/api/neis-fill/forms/(\w+)")
+def neis_fill_delete_form(app, q, body, form_id):
+    app.neis.delete_form(form_id)
+    return {"ok": True}
+
+
+@api("POST", "/api/neis-fill/jobs")
+def neis_fill_request(app, q, body):
+    """선생님이 정한 값으로 나이스 채우기 요청 (나이스 탭이 열린 브라우저의 확장 프로그램이 가져가 채움)."""
+    try:
+        return app.neis.request(str(body.get("form_id") or ""), body.get("values"))
+    except neisfill.FillError as e:
+        raise ApiError(400, str(e))
+
+
+@api("DELETE", r"/api/neis-fill/jobs/(\w+)")
+def neis_fill_cancel(app, q, body, job_id):
+    app.neis.cancel(job_id)
     return {"ok": True}
 
 
