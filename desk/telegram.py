@@ -101,6 +101,7 @@ KEYBOARD = [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외�
 MENU_MORE = ("자료 검색", "요약", "새로고침", "상태", "취소")
 
 
+PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
 
 
@@ -205,6 +206,7 @@ class Bot:
         self.conflicts = 0      # 같은 봇을 다른 곳에서도 쓰는 중이라 받은 409 횟수
         self.last_poll = None   # 마지막으로 텔레그램에서 새 글을 확인한 시각
         self.asking = None      # 지금 답을 만드는 질문 (한 번에 하나)
+        self.read_image = None  # desk.py 가 연결: 쿨메신저 사진 주소 → (바이트, 종류) 또는 None
         self.updates = None     # desk.py 가 연결: state()·check()·apply(force) — 텔레그램에서 업데이트
         self.sync = False       # 시험: 질문의 답을 기다렸다가 돌려줌
         self.choice_requests = {}
@@ -238,18 +240,19 @@ class Bot:
         self.api("sendMessage", params, timeout=15)
         return True
 
-    def send_file(self, chat_id, name, data, caption=""):
-        """파일 하나 보내기 (sendDocument, multipart). 표준 라이브러리만."""
+    def send_file(self, chat_id, name, data, caption="", photo=False):
+        """파일 하나 보내기 (sendDocument, photo=True 면 sendPhoto, multipart). 표준 라이브러리만."""
         boundary = uuid.uuid4().hex
         parts = []
         for k, v in (("chat_id", str(chat_id)), ("caption", caption[:1000])):
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode("utf-8"))
         quoted = urllib.parse.quote(name)
-        parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{quoted}"; '
+        field, method = ("photo", "sendPhoto") if photo else ("document", "sendDocument")
+        parts.append((f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{quoted}"; '
                       f"filename*=UTF-8''{quoted}\r\nContent-Type: application/octet-stream\r\n\r\n").encode("utf-8")
                      + data + b"\r\n")
         parts.append(f"--{boundary}--\r\n".encode())
-        url = f"{self.config['telegram_api_base'].rstrip('/')}/bot{self.token}/sendDocument"
+        url = f"{self.config['telegram_api_base'].rstrip('/')}/bot{self.token}/{method}"
         req = urllib.request.Request(url, data=b"".join(parts),
                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
         with urllib.request.urlopen(req, timeout=120) as r:
@@ -1312,7 +1315,52 @@ class Bot:
         self.set_refs([r["id"] for r in shown])
         return "\n".join(lines)
 
+    def send_collect_photos(self, stats):
+        """새 쿨메신저 쪽지에 든 사진을 텔레그램으로도 보냄 (사용자 요청 2026-11-02, 설정 telegram_photos).
+        쪽지 안 그림·허용한 폴더의 PC 파일만 (인터넷 주소 사진은 읽지 않고 개수만 알림). 한 번에 최대 10장."""
+        ids = list(stats.get("new_ids") or [])
+        if not (ids and self.chat_id and self.read_image and self.config["telegram_photos"]):
+            return 0
+        rows = self.db.query(
+            f"SELECT id, title, images FROM items WHERE source = 'cool' AND images IS NOT NULL AND id IN ({','.join('?' * len(ids))}) "
+            "ORDER BY received_at", ids)
+        sent = left = web = 0
+        for r in rows:
+            try:
+                srcs = json.loads(r["images"] or "[]")
+            except ValueError:
+                continue
+            for i, src in enumerate(srcs, 1):
+                if src.lower().startswith(("http://", "https://")):
+                    web += 1
+                    continue
+                if sent >= PHOTO_LIMIT:
+                    left += 1
+                    continue
+                try:
+                    found = self.read_image(src)
+                    if not found:
+                        continue
+                    data, ctype = found
+                    ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(ctype)
+                    caption = f"📷 {cut(self.mask(r['title']), 50)} ({i}/{len(srcs)})"
+                    if ext and len(data) <= 10 * 1024 * 1024:
+                        self.send_file(self.chat_id, f"photo{ext}", data, caption=caption, photo=True)
+                    else:   # gif·bmp·10MB 넘는 그림은 파일로
+                        self.send_file(self.chat_id, f"photo{ext or '.bin'}", data, caption=caption)
+                    sent += 1
+                except (urllib.error.URLError, OSError, RuntimeError):
+                    left += 1
+        if left or web:
+            parts = ([f"사진 {left}장" ] if left else []) + ([f"인터넷 주소 사진 {web}장"] if web else [])
+            self.send("📷 " + "·".join(parts) + "은 텔레그램으로 보내지 않았습니다. 업무 데스크 수신함에서 보세요.")
+        return sent
+
     def notify_collect(self, stats, reason):
+        try:
+            self.send_collect_photos(stats)
+        except Exception:
+            pass   # 사진 전달이 실패해도 알림은 보냄
         if reason == "telegram":
             return  # 명령에 대한 답장으로 이미 보냄
         msg = self.collect_message(stats)

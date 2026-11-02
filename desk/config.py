@@ -58,6 +58,7 @@ DEFAULTS = {
     "telegram_token": "",
     "telegram_detail": "titles",  # counts: 개수만 / titles: 제목까지 / summary: 요약까지
     "telegram_api_base": "https://api.telegram.org",
+    "telegram_photos": True,   # 새 쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보냄 (0.5.52)
     # 화면 배치 (🧩 화면 배치 모드에서 저장)
     "layout": {},
 }
@@ -68,12 +69,12 @@ SECRET_KEYS = {"capture_key", "telegram_token", "neis_key", "ai_openai_key", "ai
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
-    "pass_page_url", "telegram_token", "telegram_detail", "layout", "neis_key", "neis_school",
+    "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key",
 }
-BOOL_KEYS = {"watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
+BOOL_KEYS = {"telegram_photos", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)

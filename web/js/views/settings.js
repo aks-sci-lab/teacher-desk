@@ -347,6 +347,8 @@ function renderSettings(pane, tab) {
                 !tg.linked && s.telegram_token_set ? el('code', { style: 'font-size: 1.3em; font-weight: 800' }, `/start ${tg.pair_code}`) : null),
             el('label.field', el('span', '수집 알림에 담을 내용'), detail,
                 el('span.hint', '새 자료가 들어왔을 때 저절로 보내는 알림의 내용입니다. 공문 내용이 텔레그램 서버를 거치는 것이 걱정되면 "개수만"을 고르세요.')),
+            checkField('telegram_photos', '쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보내기',
+                '새 쪽지에 든 사진(쪽지 안 그림·이 PC 의 사진 파일)을 한 번에 10장까지 텔레그램으로 보냅니다. 사진 속 내용은 가릴 수 없어서 학생 정보가 든 사진이 걱정되면 끄세요. 인터넷 주소 사진은 보내지 않습니다.'),
             el('div.tg-help.small',
                 el('b', '봇에게 보낼 수 있는 말'),
                 el('ul',
