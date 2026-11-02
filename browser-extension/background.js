@@ -30,8 +30,18 @@ async function badge(tabId, text, color) {
 export async function sendActiveTab() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
+    // 옵션에서 '보내기 전에 미리 보기'를 켰으면 화면 위에 첫 몇 줄을 보여 주고 물어봄
+    const confirm = text => chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        args: [text.split('\n').filter(l => l.trim()).slice(0, 12).join('\n'), text.length],
+        func: (head, n) => window.confirm(`업무 데스크로 보낼까요? (${n}자)\n\n${head}${n > head.length ? '\n…' : ''}`),
+    }).then(r => r[0]?.result === true).catch(() => true);
     try {
-        const r = await sendTab(tab.id);
+        const r = await sendTab(tab.id, { confirm });
+        if (r.cancelled) {
+            await toast(tab.id, '보내지 않았습니다', false);
+            return;
+        }
         const what = r.selected ? '고른 글' : '화면';
         const msg = r.duplicate
             ? '이미 수신함에 있는 내용입니다'

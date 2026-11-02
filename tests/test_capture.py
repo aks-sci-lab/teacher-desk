@@ -2,6 +2,7 @@
 import http.client
 import json
 import unittest
+from datetime import datetime
 
 from desk import capture
 from tests import test_server
@@ -15,6 +16,17 @@ class CleanTextTests(unittest.TestCase):
     def test_clean(self):
         raw = "가나다  \r\n\r\n\r\n\r\n라마바\n라마바\n라마바\n \n사아자\x00"
         self.assertEqual(capture.clean_text(raw), "가나다\n\n라마바\n\n사아자")
+
+    def test_boilerplate_and_list_titles(self):
+        self.assertEqual(capture.clean_text("접근성모드로 전환을 원하시면 컨트롤 + 스페이스 키를 입력하세요.\n결재 대기"), "결재 대기")
+        when = datetime(2026, 11, 2, 9, 10)
+        self.assertEqual(capture.list_title("https://klef.use.go.kr/bms/cz/cb/viw/retrieveSanctnWaitDocList.do", when),
+                         "결재 대기 문서 목록 (11/02 09:10)")
+        self.assertEqual(capture.list_title("https://klef.use.go.kr/bms/cz/cb/dbx/retrieveDocRegistRegstrList.do?x=1", when),
+                         "문서등록대장 목록 (11/02 09:10)")
+        self.assertEqual(capture.list_title("https://klef.use.go.kr/a/retrieveSomethingList.do", when), "에듀파인 목록 (11/02 09:10)")
+        self.assertIsNone(capture.list_title("https://klef.use.go.kr/keris_ui/main.do", when))
+        self.assertIsNone(capture.list_title("", when))
 
     def test_extension_origin(self):
         self.assertTrue(capture.is_extension_origin(EXT))
@@ -106,6 +118,29 @@ class CaptureApiTests(unittest.TestCase):
         # 같은 화면을 또 보내면 중복
         status, again, _ = self.raw("POST", "/capture", {"text": PAGE}, h)
         self.assertEqual((status, again["duplicate"]), (200, True))
+
+    def test_list_capture_gets_list_title(self):
+        key = self.enable()
+        h = {"Origin": EXT, "X-Desk-Capture-Key": key}
+        status, body, _ = self.raw("POST", "/capture", {
+            "text": "열람\n여부\n게시일\n제목\n2026-11-02 현장체험학습 결과 보고 (목록 제목 시험)", "title": "K-에듀파인",
+            "frame_url": "https://klef.use.go.kr/bms/cz/cb/viw/retrieveSanctnWaitDocList.do"}, h)
+        self.assertEqual(status, 200, body)
+        self.assertTrue(self.env.db.item(body["id"])["title"].startswith("결재 대기 문서 목록 ("))
+
+    def test_neis_screen_goes_to_direct_input_with_neis_title(self):
+        key = self.enable()
+        h = {"Origin": EXT, "X-Desk-Capture-Key": key}
+        status, body, _ = self.raw("POST", "/capture", {
+            "text": "학급 출결 현황 화면입니다. 11월 3일 결석 처리 확인 필요 (나이스 시험)", "title": "출결관리",
+            "url": "https://use.neis.go.kr/jsp/main.jsp"}, h)
+        self.assertEqual(status, 200, body)
+        it = self.env.db.item(body["id"])
+        self.assertEqual(it["source"], "paste")
+        self.assertTrue(it["title"].startswith("나이스 · 출결관리 ("))
+        self.assertTrue(capture.is_neis("https://neis.go.kr/x"))
+        self.assertFalse(capture.is_neis("https://neis.go.kr.evil.example/x"))
+        self.assertFalse(capture.is_neis("https://klef.use.go.kr/x"))
 
     def test_title_falls_back_to_page_title_and_short_text_rejected(self):
         key = self.enable()
