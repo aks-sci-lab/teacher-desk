@@ -1,7 +1,7 @@
 // ⚙ 설정: 학교·학급, 수집 폴더·시각, 텔레그램, 공유 페이지
 import { api } from '../api.js';
 import { el, clear, toast, guarded, download } from '../ui.js';
-import { registerView, openTab, findTab, on, toggleLayoutMode } from '../shell.js';
+import { registerView, openTab, findTab, on, toggleLayoutMode, menuList, setMenuOn } from '../shell.js';
 import { store, loadState, saveSettings } from '../store.js';
 import { openAI } from './ai.js';
 import { checkUpdate, startUpdate } from '../update.js';
@@ -390,6 +390,12 @@ function renderSettings(pane, tab) {
             checkField('auto_update', '켤 때 새 버전 확인',
                 '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
             updateBox(st)),
+        group('menus', '🧩 사용할 메뉴 (끈 메뉴는 왼쪽 막대에서 숨김)', `${menuList().filter(m => m.on).length}개 켜짐`,
+            el('p.small.muted', '쓰지 않는 메뉴는 끄세요. 설정 메뉴는 항상 보입니다. 다시 켜면 그대로 나옵니다.'),
+            menuList().map(m => el('label.field.menu-toggle',
+                el('input', { type: 'checkbox', checked: m.on, disabled: m.id === 'settings',
+                    onchange: e => setMenuOn(m.id, e.target.checked) }),
+                el('span', m.label)))),
         group('advanced', '🔧 고급', '대부분 그대로 두면 됩니다',
             checkField('app_window', '전용 창으로 열기 (권장)',
                 '주소창 없는 전용 창으로 엽니다. 다른 브라우저 창을 닫아도 같이 닫히지 않습니다. 끄면 기본 브라우저의 새 탭. 다음에 켤 때부터 적용.'),
