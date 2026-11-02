@@ -992,6 +992,19 @@ def delete_item(app, q, body, item_id):
     return {"ok": True}
 
 
+@api("POST", "/api/items/delete")
+def delete_items(app, q, body):
+    """수신함 목록에서 골라서 한꺼번에 지우기 (일정 후보도 함께 지워짐, 같은 파일을 다시 수집하지는 않음)."""
+    ids = body.get("ids")
+    need(isinstance(ids, list) and ids and len(ids) <= 500 and all(isinstance(i, int) and not isinstance(i, bool) for i in ids),
+         "지울 항목 번호가 잘못되었습니다")
+    marks = ",".join("?" * len(ids))
+    n = app.db.one(f"SELECT COUNT(*) AS n FROM items WHERE id IN ({marks})", ids)["n"]
+    app.db.execute(f"DELETE FROM items WHERE id IN ({marks})", ids)
+    app.db.log(f"수신함 항목 {n}건을 지웠습니다")
+    return {"deleted": n}
+
+
 # ---- 일정 ----
 def event_fields(body, partial=False):
     f = {}
