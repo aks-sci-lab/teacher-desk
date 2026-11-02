@@ -188,7 +188,7 @@ function captureBox() {
                         el('li', '에듀파인 화면에서 Alt+Shift+S 를 누르면 지금 보이는 글이 수신함(출처: 에듀파인)으로 들어옵니다. 글을 드래그로 고른 뒤 누르면 고른 글만 보냅니다.')),
                     !c.folder_exists && el('p.small', { style: 'color: var(--danger)' }, '확장 프로그램 폴더를 찾지 못했습니다. 업데이트 뒤에 다시 확인하세요.'))
                 : el('div',
-                    el('p.small', '에듀파인(*.use.go.kr) 화면에서 단축키를 누르면 지금 보이는 글을 이 PC 의 업무 데스크로 보내 수신함에 넣고, 날짜·마감을 찾습니다. 읽은 글은 이 PC 밖으로 나가지 않습니다. 켜기 전에는 어떤 화면도 받지 않습니다.'),
+                    el('p.small', '에듀파인(*.use.go.kr)·나이스(*.neis.go.kr) 화면에서 단축키를 누르면 지금 보이는 글을 이 PC 의 업무 데스크로 보내 수신함에 넣고, 날짜·마감을 찾습니다. 읽은 글은 이 PC 밖으로 나가지 않습니다. 켜기 전에는 어떤 화면도 받지 않습니다.'),
                     el('div.row', el('button.btn.small.primary', { onclick: act('enable') }, '연결 켜기'))));
     };
     guarded(async () => draw(await api.get('/api/capture')))();
@@ -335,7 +335,7 @@ function renderSettings(pane, tab) {
                 el('input', { type: 'text', value: (s.collect_times || []).join(', '), dataset: { key: 'collect_times' } }),
                 el('span.hint', '쉼표로 구분. 예: 09:00, 12:00, 15:00 — 업무 데스크가 켜져 있어야 합니다. 놓친 시각은 켜진 뒤 한 번 수집합니다.')),
             el('p.small.muted', `PDF 읽기: ${st.pdf_ready ? '준비됨' : '꺼짐 — 명령 프롬프트에서  pip install pypdf  실행 후 다시 시작'}`)),
-        section('브라우저 단축키로 화면 보내기 (에듀파인)', captureBox()),
+        section('브라우저 단축키로 화면 보내기 (에듀파인·나이스)', captureBox()),
         section('텔레그램',
             el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
                 el('li', '텔레그램에서 @BotFather 를 찾아 /newbot 으로 봇을 만들고 토큰을 받습니다.'),

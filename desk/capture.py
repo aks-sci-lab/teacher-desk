@@ -1,18 +1,27 @@
 """브라우저 단축키로 보낸 화면(에듀파인 등)을 수신함에 넣기.
 
 브라우저 확장 프로그램(browser-extension/)이 단축키를 누른 순간의 화면 글자를 이 PC 의 업무 데스크로만 보냅니다.
+- 에듀파인(*.use.go.kr) 화면은 '에듀파인' 출처, 나이스(*.neis.go.kr) 화면은 '직접 입력' 출처에 '나이스 · …' 제목으로.
 - 설정에서 '단축키 연결'을 켜야 받습니다 (연결 키가 있어야 하고, 꺼 두면 모두 거절).
 - 받은 글은 '에듀파인' 출처로 수신함에 들어가 날짜·마감을 찾습니다 (공문 파일을 읽을 때와 같은 규칙).
 """
 
 import re
 import secrets
+from datetime import datetime
 from urllib.parse import urlparse
 
 from . import extract
 from .collect import add_text_item
 
 MAX_TEXT = 200000
+# 확장 프로그램 옛 버전(0.1)이 보낸 글에도 섞여 들어오는 에듀파인 바깥 틀의 안내문
+BOILERPLATE = ("접근성모드로 전환을 원하시면",)
+# 에듀파인 목록 화면 (보낸 칸의 주소 끝 → 수신함 제목)
+LIST_NAMES = {
+    "retrieveSanctnWaitDocList.do": "결재 대기 문서 목록",
+    "retrieveDocRegistRegstrList.do": "문서등록대장 목록",
+}
 EXT_ORIGIN = re.compile(r"^(chrome-extension|moz-extension)://[A-Za-z0-9._-]+$")
 
 
@@ -30,6 +39,8 @@ def clean_text(text):
     out, blank, last = [], 0, None
     for line in text.split("\n"):
         line = line.rstrip()
+        if any(b in line for b in BOILERPLATE):
+            continue
         if not line.strip():
             blank += 1
             continue
@@ -40,6 +51,26 @@ def clean_text(text):
         out.append(line)
         blank, last = 0, line.strip()
     return "\n".join(out).strip()
+
+
+def list_title(frame_url, now=None):
+    """목록 화면을 보낸 것이면 '결재 대기 문서 목록 (11/02 09:10)' 같은 제목 (같은 제목이 쌓이지 않게 시각을 붙임)."""
+    try:
+        name = (urlparse(frame_url).path or "").rsplit("/", 1)[-1]
+    except ValueError:
+        return None
+    label = LIST_NAMES.get(name) or ("에듀파인 목록" if name.endswith("List.do") else None)
+    if not label:
+        return None
+    return f"{label} ({(now or datetime.now()).strftime('%m/%d %H:%M')})"
+
+
+def is_neis(url):
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host == "neis.go.kr" or host.endswith(".neis.go.kr")
 
 
 def short_where(url):
@@ -56,9 +87,16 @@ def receive(app, body):
     if len(text) < 10:
         return {"ok": False, "error": "보낼 글이 거의 없습니다 (화면이 다 열린 뒤 다시 눌러 보세요)"}
     ext_title = " ".join(str(body.get("title") or "").split())[:200]
-    title = extract.subject_line(text) or ext_title or None
-    res = add_text_item(app.db, "edufine", text, title=title)
-    where = short_where(str(body.get("url") or ""))
+    url = str(body.get("url") or "")
+    if is_neis(url):   # 나이스 화면은 공문이 아니라 '직접 입력' 출처로, 제목은 '나이스 · 화면 이름 (시각)'
+        source = "paste"
+        page = ext_title if ext_title and "나이스" not in ext_title else "화면"
+        title = f"나이스 · {page} ({datetime.now().strftime('%m/%d %H:%M')})"[:200]
+    else:
+        source = "edufine"
+        title = extract.subject_line(text) or list_title(str(body.get("frame_url") or "")) or ext_title or None
+    res = add_text_item(app.db, source, text, title=title)
+    where = short_where(url)
     if not res:
         return {"ok": True, "duplicate": True}
     app.db.log(f"단축키로 받음({where}): 일정 {res['events']}건, 마감 {res['deadlines']}건")
