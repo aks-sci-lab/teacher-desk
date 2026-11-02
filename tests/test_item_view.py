@@ -210,3 +210,25 @@ class ItemApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ItemBulkDeleteTests(unittest.TestCase):
+    """수신함 목록에서 골라서 한꺼번에 지우기 (0.5.58)."""
+    setUpClass = classmethod(test_server.ServerTests.setUpClass.__func__)
+    tearDownClass = classmethod(test_server.ServerTests.tearDownClass.__func__)
+    req = test_server.ServerTests.req
+
+    def test_bulk_delete_removes_items_and_their_event_candidates(self):
+        a = add_text_item(self.env.db, "cool", "지울 쪽지 하나: 11월 20일까지 제출해 주세요", title="지울1")["id"]
+        b = add_text_item(self.env.db, "cool", "지울 쪽지 둘: 11월 21일까지 제출해 주세요", title="지울2")["id"]
+        keep = add_text_item(self.env.db, "cool", "남길 쪽지: 11월 22일까지 제출해 주세요", title="남길")["id"]
+        self.assertTrue(self.env.db.one("SELECT COUNT(*) AS n FROM events WHERE item_id = ?", (a,))["n"])
+        st, r = self.req("POST", "/api/items/delete", {"ids": [a, b, 999999]})
+        self.assertEqual((st, r["deleted"]), (200, 2))
+        left = {x["id"] for x in self.env.db.query("SELECT id FROM items")}
+        self.assertNotIn(a, left)
+        self.assertIn(keep, left)
+        self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM events WHERE item_id IN (?, ?)", (a, b))["n"], 0)
+        for bad in ([], "1", [True], ["1"], list(range(501))):
+            self.assertEqual(self.req("POST", "/api/items/delete", {"ids": bad})[0], 400, bad)
+        self.assertEqual(self.req("POST", "/api/items/delete", {"ids": [keep]}, token=False)[0], 401)
