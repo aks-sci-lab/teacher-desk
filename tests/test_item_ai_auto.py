@@ -203,6 +203,7 @@ class ListApiTests(unittest.TestCase):
         self.env.config.values["ai_enabled"] = False
         row = next(r for r in self.req("GET", "/api/items?status=all")[1] if r["id"] == iid)
         self.assertEqual(row["ai_line"], "")
+        self.assertNotIn("ai_summary", row)                               # AI 를 꺼도 전체 요약은 목록에 싣지 않음
         self.assertIn("queued", self.req("GET", f"/api/items/{iid}")[1]["ai"])
 
     def test_setting_is_a_switch(self):
