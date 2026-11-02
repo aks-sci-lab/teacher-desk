@@ -942,6 +942,24 @@ def _local_image(app, src):
     return None
 
 
+def read_item_image(app, src):
+    """쿨메신저 사진 하나의 (바이트, 종류). 쪽지 안 그림(data:)과 허용한 폴더 안의 PC 파일만, 아니면 None
+    (인터넷 주소는 읽지 않음). 텔레그램으로 보낼 때 씀."""
+    if src.lower().startswith(("http://", "https://")):
+        return None
+    m = re.match(r"^data:(image/(?:png|jpeg|gif|bmp|webp));base64,(.+)$", src, re.S)
+    if m:
+        try:
+            data = base64.b64decode(m.group(2), validate=True)
+        except (binascii.Error, ValueError):
+            return None
+        return (data, m.group(1)) if data else None
+    p = _local_image(app, src)
+    if not p or p.stat().st_size > 30 * 1024 * 1024:
+        return None
+    return p.read_bytes(), mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+
+
 @api("GET", r"/api/items/(\d+)/images/(\d+)")
 def item_image(app, q, body, item_id, n):
     """쿨메신저 사진 하나 (쪽지 안에 든 그림, PC 파일). 인터넷 주소 사진은 화면이 직접 불러옴."""
