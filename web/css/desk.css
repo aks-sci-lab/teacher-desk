@@ -124,6 +124,8 @@ a { color: var(--accent); }
     cursor: pointer;
     font-size: 11px;
 }
+.act.menu-off { display: none; }
+.menu-toggle { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .act .ico { font-size: 20px; line-height: 1; display: grid; place-items: center; width: 34px; height: 30px; border-radius: 8px; }
 .act:hover { color: var(--ink); }
 .act:hover .ico { background: var(--surface-2); }
