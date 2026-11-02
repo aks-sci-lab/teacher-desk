@@ -311,7 +311,7 @@ function teacherSearch(onPick, placeholder = '선생님 찾기 (이름·과목·
 const viewTeacher = id => { viewTid = id; picked = null; };
 
 export function openTimetable() {
-    openTab({ id: 'timetable', title: '시간표', wide: true, refresh: true, render: renderWeek });
+    openTab({ id: 'timetable', title: '시간표', menu: true, wide: true, refresh: true, render: renderWeek });
 }
 
 // ---------------------------------------------------------------- 목록 패널: 교체 기록

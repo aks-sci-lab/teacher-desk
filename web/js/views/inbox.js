@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import { el, clear, toast, guarded, dayLabel, debounce, catBadge, srcBadge, todayIso, parseIso, ddayInfo, markDates, modal, WD, CATEGORIES, SOURCE_NAMES } from '../ui.js';
 import { icon } from '../icons.js';
-import { registerView, openTab, refreshSide, findTab, setBadge, emit, on, openPopup } from '../shell.js';
+import { registerView, openTab, pinTab, refreshSide, findTab, setBadge, emit, on, openPopup } from '../shell.js';
 import { loadState, store } from '../store.js';
 
 let filter = { status: 'active', source: '' };
@@ -104,7 +104,7 @@ function renderSide(body, actions) {
             e.stopPropagation();
             if (!window.confirm(`「${it.title}」을(를) 지울까요?\n일정 후보도 함께 지워지고, 되돌릴 수 없습니다.`)) return;
             await api.del(`/api/items/${it.id}`);
-            findTab(`item-${it.id}`)?.close();
+            closeItemTabs(it.id);
             await loadItems();
             refreshSide();
             emit('data-changed');
@@ -168,19 +168,32 @@ export function openPaste() {
 
 // ---------------------------------------------------------------- 항목 화면
 export function openItem(id) {
-    openTab({
-        id: `item-${id}`, title: '…', refresh: true,
+    const pinnedId = `item-${id}`;
+    const pinned = findTab(pinnedId);
+    const tabId = pinned?.id === pinnedId ? pinnedId : 'item-preview';
+    const spec = {
+        id: tabId, itemId: id, title: '…', preview: tabId === 'item-preview', refresh: true,
         render(pane, tab) {
             pane.append(el('p.muted', '불러오는 중…'));
             guarded(async () => {
                 const it = await api.get(`/api/items/${id}`);
+                if (tab.spec !== spec) return;
                 tab.setTitle(it.title);
                 clear(pane);
                 renderItem(pane, tab, it);
                 emit('item-read', id);
             })();
         },
-    });
+    };
+    return openTab(spec);
+}
+
+function closeItemTabs(id) {
+    const itemTabId = `item-${id}`;
+    const pinned = findTab(itemTabId);
+    if (pinned?.id === itemTabId) pinned.close();
+    const preview = findTab('item-preview');
+    if (preview && String(preview.itemId) === String(id)) preview.close();
 }
 
 function renderItem(pane, tab, it) {
@@ -207,7 +220,11 @@ function renderItem(pane, tab, it) {
     };
     showTitle();
 
+    const pinned = tab.id === `item-${it.id}`;
     const actions = el('div.item-actions',
+        !pinned && el('button.btn', { title: '이 항목을 고정된 탭으로 남겨 둡니다', onclick: () => {
+            if (pinTab(tab.id, `item-${it.id}`) === tab) tab.rerender();
+        } }, '📌 고정'),
         it.registered
             ? el('button.btn.ok', { onclick: () => patch({ registered: false }), title: '누르면 이 메시지의 일정을 달력·브리핑에서 뺍니다' }, icon('check'), '달력에 넣음')
             : el('button.btn.primary', { onclick: () => patch({ registered: true }), title: '이 메시지의 일정을 달력·브리핑에 넣습니다' }, icon('calendar'), '일정 등록'),
@@ -218,7 +235,7 @@ function renderItem(pane, tab, it) {
         el('button.btn.danger', { title: '이 항목과 일정 지우기', onclick: guarded(async () => {
             if (!confirm('이 항목과 일정을 지울까요?')) return;
             await api.del(`/api/items/${it.id}`);
-            tab.close();
+            closeItemTabs(it.id);
             emit('data-changed');
         }) }, icon('trash'), '삭제'));
 
