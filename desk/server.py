@@ -1334,6 +1334,14 @@ def timetable_import(app, q, body):
     return timetable_get(app, q, {})
 
 
+def teacher_brief(t):
+    """시간표 화면의 선생님 찾기용: 이름·부서·수업 수·가르치는 과목·맡은 반 (0.5.60)."""
+    lessons = t["lessons"].values()
+    return {"id": t["id"], "name": t["name"], "dept": t["dept"], "count": len(t["lessons"]),
+            "subjects": sorted({l["subj"] for l in lessons if l.get("subj")})[:8],
+            "classes": sorted({l["cls"] for l in lessons if l.get("cls")})[:20]}
+
+
 @api("GET", "/api/timetable")
 def timetable_get(app, q, body):
     tt = app.db.get_meta("timetable")
@@ -1342,7 +1350,7 @@ def timetable_get(app, q, body):
     return {
         "loaded": True, "file": tt.get("file"), "sheet": tt.get("sheet"), "sheets": tt.get("sheets") or [], "at": tt.get("at"),
         "days": tt["days"], "slots": tt["slots"], "lock_words": tt.get("lock_words") or [],
-        "teachers": [{"id": t["id"], "name": t["name"], "dept": t["dept"], "count": len(t["lessons"])} for t in tt["teachers"]],
+        "teachers": [teacher_brief(t) for t in tt["teachers"]],
         "me": app.db.get_meta("timetable_me"),
         "swaps": app.db.get_meta("timetable_swaps") or [],
         "periods": app.db.get_meta("timetable_periods"), "default_periods": bell.DEFAULT_PERIODS,

@@ -1066,3 +1066,12 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .set-group .set-status { margin-left: auto; color: var(--muted); font-size: .9em; }
 .set-group .set-body { padding: 0 16px 14px; }
 
+/* 시간표 선생님 찾기 (0.5.60) */
+.tt-find { position: relative; min-width: 220px; }
+.tt-find input { width: 100%; }
+.tt-find-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 2px); max-height: 320px; overflow: auto;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+.tt-find-item { display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 7px 10px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
+.tt-find-item:hover, .tt-find-item.on { background: var(--accent-soft); }
+.tt-find-item .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+

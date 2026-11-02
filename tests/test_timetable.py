@@ -142,6 +142,10 @@ class TimetableApiTests(unittest.TestCase):
                                                           "data": base64.b64encode(sample_xlsx()).decode()})
         self.assertEqual(status, 200, tt)
         self.assertEqual((tt["me"], len(tt["teachers"]), tt["locked"]), (0, 4, 2))   # 설정의 담임 이름으로 나를 찾음
+        # 선생님 찾기용: 가르치는 과목·맡은 반 (0.5.60)
+        kim = tt["teachers"][0]
+        self.assertEqual((kim["subjects"], kim["classes"]), (["국어", "자율"], ["2-1", "2-2"]))
+        self.assertEqual(tt["teachers"][3]["classes"], ["2-3"])
         self.assertEqual(self.req("POST", "/api/timetable", {"filename": "x.xlsx", "data": "!!"})[0], 400)
         # 다음 주 월요일
         today = date.today()
