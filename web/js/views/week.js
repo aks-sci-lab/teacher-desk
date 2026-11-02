@@ -3,7 +3,7 @@ import { api } from '../api.js';
 import { el, clear, guarded, todayIso, addDays, parseIso, dayLabel, ddayInfo, catBadge, CAT_VARS } from '../ui.js';
 import { registerView, openTab, findTab, on } from '../shell.js';
 import { openItem } from './inbox.js';
-import { openCalendar } from './calendar.js';
+import { openCalendar, openEventForm } from './calendar.js';
 
 const KEY = 'desk.week.days';
 const monday = iso => addDays(iso, -((parseIso(iso).getDay() + 6) % 7));
@@ -34,7 +34,8 @@ function todoRow(t) {
 function dayCol(c) {
     const today = c.date === todayIso();
     const empty = !c.events.length && !c.todos.length;
-    return el('section', { className: `wk-col${today ? ' today' : ''}`, dataset: { date: c.date } },
+    return el('section', { className: `wk-col${today ? ' today' : ''}`, dataset: { date: c.date }, title: '두 번 누르면 이 날짜에 일정 추가',
+        ondblclick: e => { if (!e.target.closest('button')) openEventForm({ date: c.date }); } },
         el('h3', dayLabel(c.date, !today), today && el('span.badge', '오늘')),
         c.check && el('div.wk-check', `⚠ 확인 필요: ${c.check}`),
         c.school.map(t => el('div.wk-school', t)),
@@ -74,10 +75,11 @@ function render(pane, tab) {
             el('section.wk-box', el('h3', thisWeek ? '이번 주 안에 (날짜 없는 꼭 할 일)' : '날짜 없는 꼭 할 일'),
                 w.undated.length ? w.undated.map(todoRow) : el('div.muted.small', '없음')),
             w.other.length > 0 && el('section.wk-box', el('h3', '수업 없는 날의 일정'),
-                w.other.map(o => el('div.wk-other', el('b', dayLabel(o.date)), o.reason && el('span.muted', ` ${o.reason}`),
+                w.other.map(o => el('div.wk-other', { title: '두 번 누르면 이 날짜에 일정 추가',
+                    ondblclick: e => { if (!e.target.closest('button')) openEventForm({ date: o.date }); } }, el('b', dayLabel(o.date)), o.reason && el('span.muted', ` ${o.reason}`),
                     o.school.filter(t => t !== o.reason).map(t => el('div.wk-school', t)),
                     o.events.map(e => evRow(e, o.date)), o.todos.map(todoRow)))),
-            el('p.small.muted', '보기만 하는 화면입니다. 일정을 누르면 원래 자료가 열립니다. 조퇴·외출 기록은 여기에 나오지 않습니다.'));
+            el('p.small.muted', '날짜 칸을 두 번 누르면 그 날짜에 일정을 직접 추가합니다. 일정을 누르면 원래 자료가 열립니다. 조퇴·외출 기록은 여기에 나오지 않습니다.'));
     })();
 }
 
