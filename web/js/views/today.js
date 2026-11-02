@@ -384,7 +384,22 @@ function appliedNote(res, updates) {
     return el('p.small.muted', `요약에 맞춰 수신함 메시지 ${items}건의 분류를 정리하고 일정 후보 ${added}건을 더했습니다 (달력에 넣은 메시지는 그대로).`);
 }
 
-function aiCard(todoCard) {
+// 'YYYY-MM-DD HH:MM' → '10/30(금) 16:20'
+const atLabel = s => (s ? `${dayLabel(s.slice(0, 10), false)} ${s.slice(11, 16)}`.trim() : '');
+
+// 지난 접속 이후 받은 자료 (AI 가 꺼져 있거나 요약 전에도 보이는 목록, 규칙만)
+function sinceList(sv) {
+    const items = sv?.items || [];
+    return el('div',
+        el('p.small.muted', sv?.first ? '처음 쓰는 날이라 지난 7일 자료입니다.' : `${atLabel(sv?.prev_end)} 이후 받은 자료 ${items.length}건`),
+        items.length
+            ? el('ul.list.compact', items.map(it => el('li', { onclick: () => openItem(it.id) },
+                el('span.ttl', it.title), it.ai_line && el('span.ai-line', it.ai_line),
+                el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16)))))
+            : el('p.muted.small', '새로 받은 쪽지·공문이 없습니다.'));
+}
+
+function aiCard(todoCard, sv) {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
     // 꼭 할 일: AI 요약이 보이면 요약의 '꼭 할 일' 칸 안에, 아니면 따로 카드로
     const standalone = on => { todoCard.hidden = !on; };
@@ -406,18 +421,22 @@ function aiCard(todoCard) {
             // 전체 요약 + 그 뒤 '새로 들어온 것' 들을 한 벌의 칸으로 (새 줄에는 '새' 표시)
             res && res.text ? aiText([...updates.map(u => ({ text: u.text, ids: u.ids, fresh: u.at.slice(11, 16) })),
                 { text: res.text, ids: res.ids }], r.hidden, { todo: main }) : el('p.muted.small', '아직 요약이 없습니다.'),
-            res && res.at ? el('p.small.muted', `${res.at} 전체 요약 · 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}`
+            res && res.at ? el('p.small.muted', `${res.at} 요약 · ${res.range === 'visit' ? `${atLabel(res.since)} 이후` : '지난 1주일'} 자료 ${res.used ?? res.count}건${res.count > (res.used ?? res.count) ? ` (전체 ${res.count}건 중 최근 것)` : ''}`
                 + (updates.length ? ` · 그 뒤 새 자료 ${updates.reduce((n, u) => n + (u.used ?? u.count ?? 0), 0)}건 덧붙임 (${updates.map(u => u.at.slice(11, 16)).reverse().join('·')})` : '')
                 + `${res.model ? ' · ' + res.model : ''}`) : null,
             appliedNote(res, updates),
             note ? el('p.small', { style: 'color: var(--danger)' }, note) : null,
-            el('div.row', el('button.btn.small', { onclick: () => run('full') }, '전체 다시 요약')));
+            el('div.row',
+                el('button.btn.small', { onclick: () => run('full', res?.range === 'week' ? 'week' : 'visit') }, '전체 다시 요약'),
+                res?.range === 'week'
+                    ? el('button.btn.small', { onclick: () => run('full', 'visit') }, '지난 접속 이후로 요약')
+                    : el('button.btn.small', { onclick: () => run('full', 'week') }, '지난 1주일로 요약')));
     };
     // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
     let timer = null;
     const waiting = st => {
         const sec = Math.max(0, Math.round((Date.now() - new Date(st.started_at.replace(' ', 'T'))) / 1000));
-        const what = st.kind === 'new' ? '새로 들어온 자료를' : '지난 1주일 자료를';
+        const what = st.kind === 'new' ? '새로 들어온 자료를' : '자료를';
         if (st.result && st.result.text) {
             if (!progress || !progress.isConnected) show(st, null, true);
             clear(progress, el('span.spin'), `${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`,
@@ -429,7 +448,8 @@ function aiCard(todoCard) {
             el('p.small', `${what} 요약하는 중… ${Math.floor(sec / 60)}분 ${sec % 60}초`),
             el('p.small.muted', st.kind === 'new'
                 ? '새 자료만 읽으므로 보통 1분 안쪽입니다. 다른 화면을 써도 됩니다.'
-                : 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'));
+                : 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'),
+            sinceList(sv));
     };
     const poll = async () => {
         clearTimeout(timer);
@@ -442,34 +462,38 @@ function aiCard(todoCard) {
             show(st, st.error);
         }
     };
-    // kind: 'auto' (브리핑을 열 때) · 'new' (새 것만) · 'full' (전체 다시)
-    const run = async kind => {
+    // kind: 'auto' (브리핑을 열 때) · 'new' (새 것만) · 'full' (전체 다시). range: 'visit'(지난 접속 이후, 기본) · 'week'(지난 1주일)
+    const run = async (kind, range = 'visit') => {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
             standalone(true);
-            body.closest('.brief')?.classList.add('no-ai');   // AI 를 안 쓰면 카드가 화면 폭을 다 씀
-            clear(body, el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 지난 1주일 쿨메신저·업무포털 내용을 요약해 드립니다.'));
+            clear(body, sinceList(sv),
+                el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 이 자료들을 AI 가 요약해 드립니다.'));
             return;
         }
         if (st.running) return poll();
         if (kind === 'auto') {
-            const fresh = st.result && st.result.at && st.result.at.slice(0, 10) === todayIso();
-            // 하루 처음엔 전체, 그 뒤엔 새 자료가 있을 때만 새 것만.
-            // 쪽지가 잇달아 오면 LM Studio 가 쉬지 못하므로, 자동으로는 마지막 요약 10분 뒤부터
-            const last = (st.result?.updates?.[0]?.at || st.result?.at || '').replace(' ', 'T');
+            const res = st.result || {};
+            const want = st.visit?.since;
+            // 이번 접속에 맞는 요약이 이미 있으면 그대로 (지난 1주일을 직접 골랐다면 이번 접속 동안은 그대로 둠)
+            const madeThisVisit = res.at && st.visit?.start && res.at >= st.visit.start;
+            const same = (res.range === 'visit' && res.since === want) || (res.range === 'week' && madeThisVisit);
+            // 쪽지가 잇달아 오면 LM Studio 가 쉬지 못하므로, 새 것만 요약은 마지막 요약 10분 뒤부터
+            const last = (res.updates?.[0]?.at || res.at || '').replace(' ', 'T');
             const recent = last && Date.now() - new Date(last) < AUTO_GAP_MS;
-            if (fresh && (!st.new_count || recent)) return show(st, st.error);
-            kind = fresh ? 'new' : 'full';
+            if (same && (!st.new_count || recent)) return show(st, st.error);
+            if (same) kind = 'new';
+            else { kind = 'full'; range = 'visit'; }
         }
         try {
-            await api.post('/api/ai/weekly', { kind });
+            await api.post('/api/ai/weekly', { kind, range });
             await poll();
         } catch (e) {
             show(st, e.message);
         }
     };
     setTimeout(() => run('auto').catch(e => { show({}, e.message); standalone(true); }), 0);  // 카드가 화면에 붙은 뒤 시작
-    return card('지난 1주일 요약', null, body, { cls: 'ai-card' });
+    return card(sv?.first ? '지난 1주일 요약' : `지난 접속 이후 요약 (${atLabel(sv?.prev_end)}부터)`, null, body, { cls: 'ai-card' });
 }
 
 // 비어 있는 카드는 한 줄로 모음 ('오늘 일정 없음 · 7일 안 마감 없음'), 내용 있는 카드만 칸을 차지
@@ -516,7 +540,7 @@ function renderToday(pane) {
                     el('button.btn.small', { onclick: openPaste }, icon('plus'), '붙여넣기'),
                     el('button.btn.small', { onclick: collectNow }, icon('refresh'), '지금 수집'))),
             // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
-            el('div.brief', aiCard(todoCard), withEmptyStrip(el('div.cards',
+            el('div.brief', aiCard(todoCard, s.since_visit), withEmptyStrip(el('div.cards',
                 todoCard,
                 s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                 s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,

@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, visits, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -244,6 +244,8 @@ def make_handler(app):
                     cid = self.headers.get("X-Desk-Client", "")
                     if window_mod.CLIENT_ID_RE.match(cid):
                         app.ui.touch(cid)   # 이 화면이 아직 열려 있다는 신호
+                        if self.headers.get("X-Desk-Active") == "1":
+                            visits.record_active(app.db)   # 선생님이 화면을 쓰는 중 (브리핑 '지난 접속 이후' 기준)
                     q = {k: v[-1] for k, v in parse_qs(url.query).items()}
                     body = self.read_json() if method in ("POST", "PUT", "PATCH") else {}
                     result = route(app, method, url.path, q, body)
@@ -717,8 +719,17 @@ def create_item(app, q, body):
     return app.db.item(res["id"])
 
 
+def body_preview(head, title, limit=70):
+    """목록에 보일 원문 첫머리: 제목과 같은 첫 줄은 건너뛰고 공백을 줄여 한 줄로."""
+    lines = [ln.strip() for ln in (head or "").splitlines() if ln.strip()]
+    if lines and title and lines[0].replace(" ", "") == (title or "").replace(" ", ""):
+        lines = lines[1:]
+    return " ".join(" ".join(lines).split())[:limit]
+
+
 ITEM_LIST_SQL = """
 SELECT i.id, i.source, i.title, i.received_at, i.category, i.status, i.registered, i.ai_summary,
+       substr(i.body, 1, 300) AS body_head,
        (SELECT MIN(e.date) FROM events e WHERE e.item_id = i.id AND e.kind = 'deadline' AND e.done = 0
           AND e.date >= ?) AS next_deadline,
        (SELECT COUNT(*) FROM events e WHERE e.item_id = i.id) AS event_count
@@ -741,8 +752,10 @@ def list_items(app, q, body):
     sql += " ORDER BY i.received_at DESC, i.id DESC LIMIT 300"
     rows = app.db.query(sql, args)
     show_ai = bool(app.config["ai_enabled"])
-    for r in rows:   # 목록에는 AI 가 만든 '한 줄 요약'만 (전체 요약은 항목을 열면)
-        r["ai_line"] = ai.summary_line(r.pop("ai_summary")) if show_ai else ""
+    for r in rows:   # 목록에는 AI 가 만든 '한 줄 요약'만 (전체 요약은 항목을 열면), 없으면 원문 첫머리
+        summary = r.pop("ai_summary")
+        r["ai_line"] = ai.summary_line(summary) if show_ai else ""
+        r["preview"] = body_preview(r.pop("body_head"), r["title"])
     return rows
 
 
@@ -1061,6 +1074,17 @@ def calendar_ics(app, q, body):
 def get_today(app, q, body):
     s = queries.today_summary(app.db)
     s["lessons"] = queries.day_lessons(app.db, app.config, date.today())
+    # 지난 접속 이후 받은 자료 (AI 가 꺼져 있어도 보이게, 규칙만)
+    v = visits.info(app.db)
+    rows = app.db.query(
+        "SELECT id, source, title, category, received_at, ai_summary FROM items "
+        "WHERE source IN ('cool', 'edufine', 'paste') AND status != 'archived' AND received_at >= ? "
+        "ORDER BY received_at DESC LIMIT 40", (v["since"],))
+    show_ai = bool(app.config["ai_enabled"])
+    for r in rows:
+        summary = r.pop("ai_summary")
+        r["ai_line"] = ai.summary_line(summary) if show_ai else ""
+    s["since_visit"] = {**v, "items": rows}
     return s
 
 
@@ -1387,7 +1411,10 @@ def ai_weekly_run(app, q, body):
         ai.check_local(app.config["ai_base"])
     except ai.AIError as e:
         raise ApiError(400, str(e))
-    app.ai_job.start("new" if body.get("kind") == "new" else "full")
+    kind = "new" if body.get("kind") == "new" else "full"
+    # 범위: visit(지난 접속 이후, 기본) / week(지난 1주일)
+    since = visits.since(app.db) if body.get("range", "visit") == "visit" else None
+    app.ai_job.start(kind, since=since)
     return app.ai_job.state()
 
 

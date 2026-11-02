@@ -1034,3 +1034,10 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .wk-check { margin-top: 3px; font-size: 0.82em; color: var(--danger); }
 .wk-other { margin-bottom: 6px; }
 .wk-toggle { display: inline-flex; gap: 4px; }
+
+/* 수신함 항목: 내용이 화면의 중심 (0.5.54) */
+.item-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; padding: 12px 14px; margin-top: 10px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface); max-height: 520px; overflow: auto; }
+.item-body .link { display: block; margin-top: 8px; }
+.list .ai-line.preview { font-style: normal; opacity: .85; }
+
