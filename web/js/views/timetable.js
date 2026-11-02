@@ -214,6 +214,7 @@ function renderWeek(pane, tab) {
                     el('button.btn.small', { onclick: move(7), title: '다음 주' }, '▶'),
                     el('button.btn.small', { onclick: () => { week = todayIso(); picked = null; tab.rerender(); } }, '이번 주')),
                 el('span.spacer'),
+                teacherSearch(id => { viewTeacher(id); tab.rerender(); }),
                 el('label.tt-view', '보기 ', teacherSel),
                 !mine && el('button.btn.small.primary', { onclick: () => setMe(tid), title: '브리핑의 오늘 내 수업·텔레그램·교체 후보를 이 선생님 기준으로' }, `이 선생님을 '나'로`)),
             info.me == null && el('div.tt-me',
@@ -257,6 +258,58 @@ function renderWeek(pane, tab) {
     })();
 }
 
+// ---------------------------------------------------------------- 선생님 찾기 (0.5.60)
+// 이름·부서·과목·반으로 찾기 (띄어 쓰면 모든 낱말이 들어간 선생님만). 이름이 앞에서 맞으면 위로
+const norm = s => String(s || '').toLowerCase().replace(/\s+/g, '');
+export function findTeachers(teachers, q, limit = 8) {
+    const words = String(q || '').trim().split(/\s+/).map(norm).filter(Boolean);
+    if (!words.length) return [];
+    const scored = [];
+    for (const tch of teachers) {
+        const name = norm(tch.name);
+        const hay = [tch.name, tch.dept, ...(tch.subjects || []), ...(tch.classes || [])].map(norm).join('|');
+        if (!words.every(w => hay.includes(w))) continue;
+        const w0 = words[0];
+        scored.push([name.startsWith(w0) ? 0 : name.includes(w0) ? 1 : 2, tch]);
+    }
+    return scored.sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name, 'ko')).slice(0, limit).map(x => x[1]);
+}
+
+function teacherDesc(tch) {
+    const subj = (tch.subjects || []).filter(x => x !== tch.dept).slice(0, 3).join('·');   // 부서와 같은 과목은 한 번만
+    return [tch.dept, subj, tch.classes?.length ? `${tch.classes.slice(0, 4).join(', ')}${tch.classes.length > 4 ? ' …' : ''}` : '']
+        .filter(Boolean).join(' · ');
+}
+
+// 찾기 칸: 고르면 onPick(선생님 번호). ↑↓ 로 고르고 Enter, Esc 로 지움
+function teacherSearch(onPick, placeholder = '선생님 찾기 (이름·과목·반)') {
+    const results = el('div.tt-find-list', { hidden: true });
+    let found = [];
+    let cur = 0;
+    const draw = () => {
+        results.hidden = !input.value.trim();
+        clear(results, found.length
+            ? found.map((tch, i) => el('button', { type: 'button', className: `tt-find-item${i === cur ? ' on' : ''}`,
+                onmousedown: e => { e.preventDefault(); pick(tch); } },
+                el('b', tch.name), tch.id === info.me && el('span.tag', '나'), el('span.muted.small', teacherDesc(tch))))
+            : el('div.muted.small', { style: 'padding: 8px 10px' }, '맞는 선생님이 없습니다'));
+    };
+    const pick = tch => { input.value = ''; found = []; results.hidden = true; onPick(tch.id); };
+    const input = el('input', { type: 'search', placeholder, 'aria-label': '선생님 찾기', autocomplete: 'off',
+        oninput: () => { found = findTeachers(info.teachers, input.value); cur = 0; draw(); },
+        onkeydown: e => {
+            if (e.key === 'ArrowDown' && found.length) { cur = (cur + 1) % found.length; draw(); e.preventDefault(); }
+            else if (e.key === 'ArrowUp' && found.length) { cur = (cur - 1 + found.length) % found.length; draw(); e.preventDefault(); }
+            else if (e.key === 'Enter' && found[cur]) { pick(found[cur]); e.preventDefault(); }
+            else if (e.key === 'Escape') { input.value = ''; found = []; draw(); }
+        },
+        onblur: () => setTimeout(() => { results.hidden = true; }, 150),
+        onfocus: () => { if (input.value.trim()) draw(); } });
+    return el('div.tt-find', input, results);
+}
+
+const viewTeacher = id => { viewTid = id; picked = null; };
+
 export function openTimetable() {
     openTab({ id: 'timetable', title: '시간표', wide: true, refresh: true, render: renderWeek });
 }
@@ -268,6 +321,7 @@ function renderSide(body, actions) {
         body.append(el('div.empty', '불러온 시간표가 없습니다.'), el('div', { style: 'padding: 0 12px' }, el('button.btn', { onclick: openTimetable }, '시간표 엑셀 불러오기')));
         return;
     }
+    body.append(el('div', { style: 'padding: 8px 12px' }, teacherSearch(id => { viewTeacher(id); openTimetable(); refreshSide(); }, '선생님 찾아 시간표 보기')));
     const list = el('ul.list');
     const swaps = [...info.swaps].reverse();
     if (!swaps.length) list.append(el('li.empty', '아직 기록한 교체가 없습니다. 내 시간표에서 바꿀 수업을 누르세요.'));
