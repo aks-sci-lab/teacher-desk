@@ -1,7 +1,7 @@
 // 🎫 조퇴증·외출증: 명단 → 작성 → 미리보기 → 인쇄 → 기록 → 학생 공유(QR)
 import { api } from '../api.js';
 import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad, monthNav, monthKey, dayHead } from '../ui.js';
-import { openTab, refreshSide, findTab, emit, on, showView } from '../shell.js';
+import { refreshSide, emit, on, showView, openPopup, popupOpen } from '../shell.js';
 import { openSettings } from './settings.js';
 import { store, loadStudents } from '../store.js';
 
@@ -128,7 +128,7 @@ export function renderPassesSide(body, actions) {
             list.append(dayHead(dayLabel(p.date, false), dayPasses.filter(x => x.date === p.date).length));
         }
         const st = { issued: '발급', returned: '복귀', cancelled: '취소' }[p.status];
-        list.append(el('li', { onclick: () => openPass(p), className: findTab(`pass-${p.id}`) ? 'on' : '' },
+        list.append(el('li', { onclick: () => openPass(p), className: popupOpen(`pass-${p.id}`) ? 'on' : '' },
             el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
             el('span.meta', el('span.badge', { className: `badge cat ${p.kind === 'out' ? 'cat-수업·평가' : 'cat-행사'}` }, KIND[p.kind]),
                 `${p.time_out || ''}${p.time_return ? '~' + p.time_return : ''}`,
@@ -162,7 +162,7 @@ export function openForm(init = {}) {
     };
     if (p.kind === 'out' && !p.time_return) p.time_return = plusHour(p.time_out);
     const id = editing ? `pass-edit-${init.id}` : 'pass-new';
-    openTab({
+    openPopup({
         id, refresh: !editing, title: editing ? `${init.student_name}` : `새 ${KIND[p.kind]}증`,
         render(pane, tab) {
             const preview = el('div.preview-box');
@@ -265,7 +265,7 @@ export function openForm(init = {}) {
 
 // ---------------------------------------------------------------- 발급 기록 화면
 export function openPass(p, refresh = false) {
-    openTab({
+    openPopup({
         id: `pass-${p.id}`, refresh, title: `${p.student_name} ${KIND[p.kind]}`,
         render(pane, tab) {
             const url = shareUrl(p);
@@ -317,7 +317,7 @@ export function openPass(p, refresh = false) {
 
 // ---------------------------------------------------------------- 학생 명단
 export function openRoster() {
-    openTab({
+    openPopup({
         id: 'roster', title: '학생 명단',
         render(pane, tab) {
             let parsed = null;

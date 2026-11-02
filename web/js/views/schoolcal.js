@@ -1,7 +1,7 @@
 // 📥 학사일정 가져오기: 파일(엑셀·한글·PDF·CSV·글) / 붙여넣기 / 나이스 → 미리보기에서 고치기 → 달력에 넣기
 import { api } from '../api.js';
 import { el, clear, toast, guarded, catBadge, CATEGORIES } from '../ui.js';
-import { openTab, emit } from '../shell.js';
+import { emit, openPopup } from '../shell.js';
 import { store, saveSettings, loadState } from '../store.js';
 
 const MODE_NAMES = { grid: '달력표', list: '목록', text: '글', neis: '나이스' };
@@ -21,7 +21,7 @@ function fileToBase64(file) {
 }
 
 export function openSchoolCal() {
-    openTab({
+    openPopup({
         id: 'schoolcal', title: '학사일정 가져오기',
         render(pane) {
             let year = defaultYear();

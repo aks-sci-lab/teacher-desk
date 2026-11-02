@@ -1,6 +1,6 @@
 // 화면 틀: ① 활동 막대 ② 목록 패널 ③ 탭 ④ 작업 영역 ⑤ 하단 패널 ⑥ 상태 표시줄 + 🧩 화면 배치 모드
 import { api } from './api.js';
-import { el, clear, toast, guarded } from './ui.js';
+import { el, clear, toast, guarded, modal } from './ui.js';
 import { icon } from './icons.js';
 
 const $ = id => document.getElementById(id);
@@ -183,6 +183,39 @@ export function openTab(spec) {
         tab.rerender();
     }
     activate(spec.id);
+    return tab;
+}
+
+// ---------------------------------------------------------------- 팝업
+// openPopup({ id, title, render(pane, tab), wide?, refresh? }) — 입력·보기 양식은 탭을 늘리지 않고 팝업으로 (0.5.58)
+// render 가 받는 tab 은 탭과 같은 모양(close·rerender·setTitle·pane)이라 양식 코드는 그대로 씀.
+// 같은 id 가 열려 있으면 그 팝업을 앞으로 (refresh 면 새 내용으로). 바깥을 눌러도 닫히지 않음 (✕·Esc·양식의 닫기 단추로)
+const popups = new Map();
+export const popupOpen = id => popups.has(id);
+
+export function openPopup(spec) {
+    const open = popups.get(spec.id);
+    if (open) {
+        if (spec.refresh) {
+            open.spec = spec;
+            open.setTitle(spec.title);
+            open.rerender();
+        }
+        open.box.focus();
+        return open;
+    }
+    const pane = el('div.pane.on.popup-pane');
+    const tab = {
+        id: spec.id, pane, spec, popup: true,
+        setTitle(t) { const h = m.box.querySelector('.modal-head h2'); if (h) h.textContent = plainTitle(t); },
+        close: () => m.close(),
+        rerender: () => { clear(pane); tab.spec.render(pane, tab); },
+    };
+    const m = modal({ title: plainTitle(spec.title), body: pane, wide: spec.wide !== false, backdropClose: false,
+        onClose: () => { popups.delete(spec.id); spec.onClose?.(); emit('popup-closed', spec.id); } });
+    tab.box = m.box;
+    popups.set(spec.id, tab);
+    spec.render(pane, tab);
     return tab;
 }
 

@@ -184,7 +184,8 @@ export function markDates(text) {
 }
 
 // 팝업 창: modal({ title, body, actions }) → { close, box }. Esc·바깥을 누르면 닫힘
-export function modal({ title, body, actions = [], wide = false, onClose }) {
+// backdropClose: 바깥(어두운 곳)을 누르면 닫기 — 입력 중인 양식은 false (잘못 눌러 쓴 내용을 잃지 않게)
+export function modal({ title, body, actions = [], wide = false, onClose, backdropClose = true }) {
     const prev = document.activeElement;
     const close = () => {
         back.remove();
@@ -197,7 +198,7 @@ export function modal({ title, body, actions = [], wide = false, onClose }) {
         el('header.modal-head', el('h2', title), el('div.modal-actions', actions,
             el('button.icon-btn', { title: '닫기 (Esc)', onclick: () => close() }, '✕'))),
         el('div.modal-body', body));
-    const back = el('div.modal-back', { onclick: e => { if (e.target === back) close(); } }, box);
+    const back = el('div.modal-back', { onclick: e => { if (backdropClose && e.target === back) close(); } }, box);
     document.body.append(back);
     document.addEventListener('keydown', onKey);
     box.focus();
