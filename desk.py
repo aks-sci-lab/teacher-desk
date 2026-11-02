@@ -104,6 +104,7 @@ def run(args, config, db):
         return 0
 
     app = App(db, config, collector, bot)
+    bot.read_image = lambda src: read_item_image(app, src)   # 새 쿨메신저 사진을 텔레그램으로 보낼 때
     try:
         httpd = serve(app, open_browser=not args.no_browser)
     except OSError:
