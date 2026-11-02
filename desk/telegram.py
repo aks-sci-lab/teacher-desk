@@ -1356,11 +1356,38 @@ class Bot:
             self.send("📷 " + "·".join(parts) + "은 텔레그램으로 보내지 않았습니다. 업무 데스크 수신함에서 보세요.")
         return sent
 
+    def send_collect_texts(self, stats):
+        """새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 설정 telegram_cool_text 를 켠 경우만, 0.5.61).
+        원문은 가리지 않고 그대로 (원문 규칙). 한 번에 최대 5건, 긴 글은 나눠 보냄."""
+        ids = list(stats.get("new_ids") or [])
+        if not (ids and self.chat_id and self.config["telegram_cool_text"]):
+            return 0
+        rows = self.db.query(
+            f"SELECT id, title, body, received_at FROM items WHERE source = 'cool' AND id IN ({','.join('?' * len(ids))}) "
+            "ORDER BY received_at", ids)
+        sent = 0
+        for r in rows[:5]:
+            body = (r["body"] or "").strip()
+            if not body:
+                continue
+            head = f"📨 쿨메신저 쪽지 · {self.mask(r['title'])}"
+            for k in range(0, len(body), 3500):
+                chunk = body[k:k + 3500]
+                self.send((head + "\n\n" if k == 0 else "") + chunk)
+            sent += 1
+        if len(rows) > 5:
+            self.send(f"📨 쪽지 {len(rows) - 5}건의 원문은 업무 데스크 수신함에서 보세요.")
+        return sent
+
     def notify_collect(self, stats, reason):
         try:
             self.send_collect_photos(stats)
         except Exception:
             pass   # 사진 전달이 실패해도 알림은 보냄
+        try:
+            self.send_collect_texts(stats)
+        except Exception:
+            pass   # 원문 전달이 실패해도 알림은 보냄
         if reason == "telegram":
             return  # 명령에 대한 답장으로 이미 보냄
         msg = self.collect_message(stats)

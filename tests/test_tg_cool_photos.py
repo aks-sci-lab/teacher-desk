@@ -47,6 +47,23 @@ class TelegramCoolPhotoTests(unittest.TestCase):
         self.assertIn("(1/2)".encode(), raw)
         self.assertNotIn("최별빛".encode(), raw)       # 제목 속 학생 이름은 가림
 
+    def test_cool_text_is_off_by_default_and_when_on_sends_body_in_chunks(self):
+        """0.5.61: 쿨메신저 쪽지 원문은 선생님이 설정에서 켠 경우에만, 원문 그대로 (제목 머리줄은 이름 가림)."""
+        self.assertFalse(self.env.config["telegram_cool_text"])
+        body = "가" * 4000 + "나" * 10                     # 텔레그램 한 메시지 한도를 넘어 나눠 보내야 함
+        it = add_text_item(self.env.db, "cool", body, title="최별빛 체험학습 안내")
+        a = it["id"] if isinstance(it, dict) else it
+        self.run_notify(a)
+        self.assertFalse(any("나" * 10 in m.get("text", "") for m in self.fake.sent))   # 기본은 원문을 보내지 않음
+        self.env.config.values["telegram_cool_text"] = True
+        self.run_notify(a)
+        texts = [m.get("text", "") for m in self.fake.sent]
+        joined = "".join(texts)
+        self.assertIn("나" * 10, joined)                       # 원문 끝까지 빠짐없이
+        self.assertGreaterEqual(len([t for t in texts if "가" in t]), 2)   # 긴 글은 여러 번에 나눠 보냄
+        self.assertNotIn("최별빛", joined)                    # 머리줄의 이름은 가림
+        self.env.config.values["telegram_cool_text"] = False
+
     def test_nothing_sent_when_off_unpaired_not_cool_or_old(self):
         a = self.item("안내", [DATA])
         self.env.config.values["telegram_photos"] = False
