@@ -1,6 +1,6 @@
 // 단축키(Alt+Shift+S) → 지금 보는 탭의 글을 업무 데스크로 보냄
 import { sendTab } from './capture.js';
-import { pollFill, NEIS_URL } from './neis.js';
+import { fillNow, NEIS_URL } from './neis.js';
 
 function toast(tabId, text, ok) {
     // 화면 위쪽 프레임에 잠깐 보였다 사라지는 알림 (보내졌는지 바로 알 수 있게)
@@ -60,7 +60,7 @@ chrome.commands.onCommand.addListener(async command => {
     if (command === 'fill-page') {   // Alt+Shift+F: 업무 데스크의 나이스 채우기 요청을 지금 확인
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         try {
-            const r = await pollFill(0, toast);
+            const r = await fillNow({ auto: false, toast });
             if (r === null && tab) await toast(tab.id, '업무 데스크에 나이스 채우기 요청이 없습니다', false);
         } catch (e) {
             if (tab) await toast(tab.id, '채우지 못했습니다: ' + e.message, false);
@@ -68,7 +68,7 @@ chrome.commands.onCommand.addListener(async command => {
     }
 });
 
-// 나이스 탭이 열려 있는 동안 30초마다 업무 데스크의 채우기 요청을 20초까지 기다려 받음 (업무 데스크에서 누르면 곧 채워짐)
+// 나이스 탭이 열려 있는 동안 30초마다 업무 데스크에 채우기 요청이 있는지 봄. 있어도 나이스 탭이 앞에 있을 때만 가져가서 채움 (탭·창은 바꾸지 않음)
 const ensureAlarm = () => chrome.alarms.get('desk-fill').then(a => a || chrome.alarms.create('desk-fill', { periodInMinutes: 0.5 }));
 chrome.runtime.onInstalled.addListener(ensureAlarm);
 chrome.runtime.onStartup.addListener(ensureAlarm);
@@ -79,5 +79,5 @@ chrome.alarms.onAlarm.addListener(async alarm => {
     const tabs = await chrome.tabs.query({ url: NEIS_URL });
     if (!tabs.length) return;
     polling = true;
-    try { await pollFill(20, toast); } catch (e) { /* 업무 데스크가 꺼져 있거나 연결 전: 다음 차례에 다시 */ } finally { polling = false; }
+    try { await fillNow({ auto: true, toast }); } catch (e) { /* 업무 데스크가 꺼져 있거나 연결 전: 다음 차례에 다시 */ } finally { polling = false; }
 });

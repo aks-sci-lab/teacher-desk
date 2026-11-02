@@ -63,6 +63,21 @@ class NeisFillTests(unittest.TestCase):
         self.nf.take()
         self.assertEqual(self.nf.report(cancelled["id"], {"filled": 0, "error": "선생님이 취소함"})["status"], "failed")
 
+    def test_peek_does_not_take_and_too_many_entries_refused(self):
+        """0.5.57: 자동 확인은 가져가지 않고 들여다봄. 한 번에 200칸을 넘으면 요청 자체를 거절."""
+        f = self.form()
+        job = self.nf.request(f["id"], {"#reason": "감기"})
+        self.assertEqual(self.nf.peek()["id"], job["id"])
+        self.assertEqual(self.nf.peek()["status"], "pending")                            # 들여다본 뒤에도 그대로 기다림
+        self.assertEqual(self.nf.take()["status"], "taken")
+        self.assertIsNone(self.nf.peek())                                                # 가져간 뒤에는 대기 요청 없음
+        many = [{"label": f"칸{i}", "key": f"#f{i}", "type": "text"} for i in range(neisfill.MAX_ENTRIES + 1)]
+        big = self.nf.save_form("use.neis.go.kr", "/edu/big.do", "큰 화면", many)
+        with self.assertRaises(neisfill.FillError):
+            self.nf.request(big["id"], {f"#f{i}": "값" for i in range(neisfill.MAX_ENTRIES + 1)})
+        ok = self.nf.request(big["id"], {f"#f{i}": "값" for i in range(neisfill.MAX_ENTRIES)})
+        self.assertEqual(len(ok["entries"]), neisfill.MAX_ENTRIES)
+
     def test_new_request_replaces_waiting_one_and_cancel(self):
         f = self.form()
         a = self.nf.request(f["id"], {"#reason": "가"})
@@ -112,6 +127,7 @@ class NeisFillApiTests(unittest.TestCase):
         form = next(f for f in state["forms"] if f["frame_path"] == "/a.do")
         self.assertEqual(self.req("GET", "/api/neis-fill", token=False)[0], 401)
         self.assertEqual(self.ext("GET", "/capture/fill")[1], {"job": None})
+        self.assertEqual(self.ext("GET", "/capture/fill?peek=1")[1], {"job": None})
         st, job = self.req("POST", "/api/neis-fill/jobs", {"form_id": form["id"], "values": {"#reason": "감기"}})
         self.assertEqual(st, 200, job)
         st, got = self.ext("GET", "/capture/fill?wait=1")

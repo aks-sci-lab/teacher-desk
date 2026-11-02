@@ -218,7 +218,10 @@ def make_handler(app):
                     app.db.log(f"나이스 입력 칸 구조를 받았습니다: {form['title']} ({len(form['fields'])}칸)")
                     return self.send_json(200, {"ok": True, "id": form["id"], "fields": len(form["fields"])})
                 if path == "/capture/fill" and method == "GET":
-                    wait = parse_qs(urlparse(self.path).query).get("wait", ["0"])[-1]
+                    query = parse_qs(urlparse(self.path).query)
+                    if query.get("peek", ["0"])[-1] == "1":   # 가져가지 않고 대기 중인 요청만 확인
+                        return self.send_json(200, {"job": app.neis.peek()})
+                    wait = query.get("wait", ["0"])[-1]
                     try:
                         wait = float(wait)
                     except ValueError:

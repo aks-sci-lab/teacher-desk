@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "업무 데스크로 보내기",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "에듀파인·나이스 화면에서 단축키를 누르면 지금 보이는 글을 이 PC 의 업무 데스크로만 보내고, 업무 데스크에서 정한 값을 나이스 입력 칸에 채웁니다(저장은 직접).",
   "permissions": [
     "activeTab",

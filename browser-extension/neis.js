@@ -65,6 +65,7 @@ export function scanFields() {
 }
 
 // ---- 한 프레임에서 실행: 칸 채우기 (저장 단추는 누르지 않음) ----
+// 저장된 이름표와 지금 화면의 이름표가 다르면 그 칸은 건드리지 않음 (엉뚱한 칸을 채우지 않게)
 export function fillFields(entries) {
     const res = { filled: 0, missing: [] };
     const setValue = (el, v) => {   // 화면 프로그램(프레임워크)이 바뀐 값을 알아채게 원래 값 넣는 법으로
@@ -74,10 +75,18 @@ export function fillFields(entries) {
         if (d && d.set) d.set.call(el, v); else el.value = v;
     };
     const fire = el => ['keydown', 'keyup', 'input', 'change', 'blur'].forEach(t => el.dispatchEvent(new Event(t, { bubbles: true })));
+    const sameLabel = (el, want) => {   // 저장한 이름표가 지금 칸 주변에 있는지 (이름표가 이름·번호뿐이었으면 그 값으로 비교)
+        if (!want || el.name === want || el.id === want) return true;
+        const txt = n => (n ? (n.innerText || n.textContent || '') : '');
+        const near = [el.closest('label'), el.closest('td'), el.closest('tr'), el.parentElement, el.previousElementSibling,
+            el.id ? document.querySelector(`label[for="${el.id}"]`) : null].map(txt).join(' ').replace(/\s+/g, ' ');
+        return near.includes(String(want).replace(/\s+/g, ' ').slice(0, 15));
+    };
     for (const e of entries) {
         let el = null;
         try { el = document.querySelector(e.key); } catch { el = null; }
         if (!el) { res.missing.push(e.label); continue; }
+        if (!sameLabel(el, e.label)) { res.missing.push(`${e.label} (이름표가 달라 건너뜀)`); continue; }
         if (e.type === 'checkbox' || e.type === 'radio') {
             if (el.checked !== !!e.value) el.click();
         } else if (e.type === 'select') {
@@ -133,37 +142,48 @@ export async function sendForms(tabId) {
     return { forms: frames.length, fields };
 }
 
-// 업무 데스크의 채우기 요청 하나를 가져와 채움 (wait 초까지 기다려 받음). 요청이 없으면 null
-export async function pollFill(wait = 0, toast = null) {
-    const { job } = await desk(`/capture/fill?wait=${wait}`);
+// 업무 데스크의 채우기 요청을 채움. 가져가기 전에 확인하므로 나이스 탭이 앞에 없으면 아무것도 바꾸지 않음.
+// auto: 30초마다 자동 확인 (나이스 탭이 앞에 있을 때만 채움, 탭·창을 바꾸지 않음)
+// 수동: Alt+Shift+F 나 팝업 단추 (나이스 탭이 앞에 없으면 안내만)
+export async function fillNow({ auto = false, toast = null } = {}) {
+    const { job } = await desk('/capture/fill?peek=1');
     if (!job) return null;
-    const report = result => desk('/capture/fill/result', { method: 'POST', body: JSON.stringify({ id: job.id, ...result }) });
-    try {
-        if (!isNeis(job.host)) throw new Error('나이스 화면만 채웁니다');
-        const tabs = await chrome.tabs.query({ url: `https://${job.host}/*` });
-        let target = null;
-        for (const tab of tabs) {
-            const fr = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => location.pathname })
-                .catch(() => []);
-            const hit = fr.find(r => r.result === job.frame_path);
-            if (hit) { target = { tab, frameId: hit.frameId }; break; }
+    if (!isNeis(job.host)) throw new Error('나이스 화면만 채웁니다');
+    const tabs = await chrome.tabs.query({ url: `https://${job.host}/*` });
+    let target = null;
+    for (const tab of tabs) {
+        const fr = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: () => location.pathname })
+            .catch(() => []);
+        const hit = fr.find(r => r.result === job.frame_path);
+        if (hit) { target = { tab, frameId: hit.frameId }; break; }
+    }
+    const front = target && target.tab.active && (await chrome.windows.get(target.tab.windowId)).focused;
+    if (!front) {   // 가져가지 않음: 요청은 그대로 기다림
+        if (!auto && toast) {
+            const here = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+            if (here) await toast(here.id, target
+                ? `「${job.title}」 나이스 화면을 앞에 두고 다시 누르세요`
+                : `나이스에서 「${job.title}」 화면을 연 뒤 다시 누르세요`, false);
         }
-        if (!target) throw new Error(`나이스에서 「${job.title}」 화면이 열려 있지 않습니다. 그 화면을 연 뒤 다시 [나이스에 채우기]를 누르세요`);
-        await chrome.tabs.update(target.tab.id, { active: true });
-        await chrome.windows.update(target.tab.windowId, { focused: true }).catch(() => {});
-        // 채우기 전에 화면 위에서 반드시 물어봄
-        const lines = job.entries.slice(0, 15).map(e => `· ${e.label}: ${typeof e.value === 'boolean' ? (e.value ? '선택' : '해제') : String(e.value).slice(0, 40)}`);
+        return { waiting: true };
+    }
+    const { job: taken } = await desk('/capture/fill?wait=0');   // 이제 가져감
+    if (!taken) return null;
+    const report = result => desk('/capture/fill/result', { method: 'POST', body: JSON.stringify({ id: taken.id, ...result }) });
+    try {
+        // 채우기 전에 화면 위에서 반드시 물어봄 (칸을 모두 보여 줌)
+        const lines = taken.entries.map(e => `· ${e.label}: ${typeof e.value === 'boolean' ? (e.value ? '선택' : '해제') : String(e.value).slice(0, 40)}`);
         const ok = await chrome.scripting.executeScript({ target: { tabId: target.tab.id },
-            args: [`업무 데스크에서 「${job.title}」 ${job.entries.length}칸을 채울까요?\n저장 단추는 누르지 않습니다. 채운 뒤 확인하고 직접 저장하세요.\n\n${lines.join('\n')}${job.entries.length > 15 ? '\n…' : ''}`],
+            args: [`업무 데스크에서 「${taken.title}」 ${taken.entries.length}칸을 채울까요?\n저장 단추는 누르지 않습니다. 채운 뒤 내용을 확인하고 직접 저장하세요.\n\n${lines.join('\n')}`],
             func: msg => window.confirm(msg) }).then(r => r[0]?.result === true);
         if (!ok) {
             await report({ filled: 0, missing: [], error: '선생님이 취소함' });
             return { cancelled: true };
         }
-        const [r] = await chrome.scripting.executeScript({ target: { tabId: target.tab.id, frameIds: [target.frameId] }, func: fillFields, args: [job.entries] });
-        const result = r?.result || { filled: 0, missing: job.entries.map(e => e.label) };
+        const [r] = await chrome.scripting.executeScript({ target: { tabId: target.tab.id, frameIds: [target.frameId] }, func: fillFields, args: [taken.entries] });
+        const result = r?.result || { filled: 0, missing: taken.entries.map(e => e.label) };
         await report(result);
-        if (toast) await toast(target.tab.id, `${result.filled}칸을 채웠습니다${result.missing.length ? ` · 못 찾음 ${result.missing.length}칸` : ''}. 확인하고 직접 저장하세요`, !result.missing.length);
+        if (toast) await toast(target.tab.id, `${result.filled}칸을 채웠습니다${result.missing.length ? ` · 못 채운 칸 ${result.missing.length}` : ''}. 내용을 확인하고 직접 저장하세요`, result.missing.length === 0);
         return result;
     } catch (e) {
         await report({ filled: 0, missing: [], error: e.message }).catch(() => {});
