@@ -1,5 +1,5 @@
 import { readTab, combine, sendTab, loadSettings, rememberPick, MODE_NAMES } from './capture.js';
-import { isNeis, sendForms, pollFill } from './neis.js';
+import { isNeis, sendForms, fillNow } from './neis.js';
 
 const $ = id => document.getElementById(id);
 let frames = [];
@@ -68,9 +68,11 @@ async function load() {
         };
         $('neisFill').onclick = async () => {
             try {
-                const r = await pollFill(0);
+                const r = await fillNow({ auto: false });
                 say(r === null ? '업무 데스크에 채우기 요청이 없습니다'
-                    : r.cancelled ? '채우지 않았습니다' : `${r.filled}칸을 채웠습니다${r.missing.length ? ` · 못 찾음: ${r.missing.join(', ')}` : ''}. 확인하고 직접 저장하세요`, r?.filled ? 'ok' : 'muted');
+                    : r.waiting ? '나이스 채우기 화면을 앞에 둔 뒤 다시 누르세요'
+                    : r.cancelled ? '채우지 않았습니다'
+                    : `${r.filled}칸을 채웠습니다${r.missing.length ? ` · 못 채운 칸: ${r.missing.join(', ')}` : ''}. 내용을 확인하고 직접 저장하세요`, r?.filled ? 'ok' : 'bad');
             } catch (e) { say('채우지 못했습니다: ' + e.message, 'bad'); }
         };
     }

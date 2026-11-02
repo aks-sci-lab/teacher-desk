@@ -14,6 +14,7 @@ from datetime import datetime
 
 MAX_FORMS = 30
 MAX_FIELDS = 300
+MAX_ENTRIES = 200     # 한 번에 채우는 칸 수 (확인창에 전부 보여 줄 수 있는 양)
 MAX_JOBS = 20
 MAX_WAIT = 25          # 확장 프로그램이 요청을 기다리는 최대 초
 TYPES = {"text", "textarea", "select", "checkbox", "radio", "date", "number", "editable", "other"}
@@ -103,6 +104,8 @@ class NeisFill:
             entries.append({"key": f["key"], "label": f["label"], "type": f["type"], "value": v})
         if not entries:
             raise FillError("채울 값을 하나 이상 넣으세요")
+        if len(entries) > MAX_ENTRIES:
+            raise FillError(f"한 번에 {MAX_ENTRIES}칸까지만 채웁니다. 나누어 요청하세요 (지금 {len(entries)}칸)")
         job = {"id": secrets.token_hex(4), "form_id": form_id, "title": form["title"], "host": form["host"],
                "frame_path": form["frame_path"], "entries": entries, "status": "pending",
                "created_at": now_str(), "result": None}
@@ -115,6 +118,12 @@ class NeisFill:
     def cancel(self, job_id):
         with self.cond:
             self._save_jobs([j for j in self.jobs() if not (j["id"] == job_id and j["status"] == "pending")])
+
+    def peek(self):
+        """가져가지 않고 대기 중인 요청만 봄 (확장 프로그램이 나이스 탭이 앞에 있는지 보고 가져갈지 정할 때)."""
+        with self.cond:
+            job = self._next()
+            return dict(job) if job else None
 
     def take(self, wait=0):
         """확장 프로그램이 가져갈 요청 (없으면 wait 초까지 기다림). 가져가면 'taken'."""
