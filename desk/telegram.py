@@ -136,6 +136,11 @@ def fmt_day(iso, today):
     return f"{label} {rel}" if rel else label
 
 
+def fmt_range(start, end):
+    a, b = date.fromisoformat(start), date.fromisoformat(end)
+    return f"{a.month}/{a.day}" if a == b else f"{a.month}/{a.day}~{b.month}/{b.day}"
+
+
 def masked(name):
     """'김민준' → '김○○' (텔레그램에는 이름을 다 쓰지 않음)."""
     name = (name or "").strip()
@@ -475,8 +480,11 @@ class Bot:
         dialog.update(step="confirm", period=period)
         prompt = (f"{dialog['number']}번 결석계\n{fields['start_date']}~{fields['end_date']} · 수업일 {len(dates)}일\n"
                   "주말·가져온 학사일정 휴업일을 뺐습니다. 아직 저장하지 않았습니다.")
+        dups = self.absence_duplicates(fields["student_number"], fields["student_name"], fields["start_date"], fields["end_date"])
+        if dups:   # 이미 신청한 기간과 겹침 (신청할 때 알림)
+            prompt = ("⚠ 중복 신청일 수 있습니다. 이미 있는 결석계:\n" + "\n".join(f"- {n}" for n in dups[:5]) + "\n\n" + prompt)
         return self.show(cid, message_id, prompt, [[
-            {"text": "앱에 저장", "callback_data": f"dlg:{dialog['id']}:save"},
+            {"text": "그래도 앱에 저장" if dups else "앱에 저장", "callback_data": f"dlg:{dialog['id']}:save"},
             {"text": "취소", "callback_data": f"dlg:{dialog['id']}:cancel"}]])
 
     def calendar_buttons(self, dialog, year, month):
@@ -766,7 +774,38 @@ class Bot:
             dates = self.validate_absence(fields)
         except absence.AbsenceError as e:
             return self.reply(cid, str(e))
+        if self.absence_duplicates(fields["student_number"], fields["student_name"], fields["start_date"], fields["end_date"]):
+            # 이미 신청한 기간과 겹치면 한 줄 명령도 바로 저장하지 않고 확인을 거침 (단계별 입력과 같은 화면)
+            self.dialog = {"id": secrets.token_hex(6), "kind": "absence", "step": "date", "number": fields["student_number"],
+                           "student_name": fields["student_name"], "type": fields["reason"],
+                           "expires": time.monotonic() + DIALOG_TTL}
+            return self.confirm_absence(cid, self.dialog, f"{fields['start_date']}~{fields['end_date']}")
         return self.save_absence(cid, fields, dates)
+
+    def absence_duplicates(self, number, name, start, end):
+        """같은 학생의 겹치는 결석계 줄들 (이름·사유 없이 발급 번호와 기간만)."""
+        rows = self.db.query(
+            "SELECT serial, start_date, end_date FROM absences WHERE (student_number = ? OR student_name = ?) "
+            "AND start_date <= ? AND end_date >= ? ORDER BY start_date", (number, name, end, start))
+        return [f"결석계 {r['serial']} ({fmt_range(r['start_date'], r['end_date'])})" for r in rows]
+
+    def pass_duplicates(self, kind, number, name, day, time_out):
+        """같은 학생의 같은 날 조퇴·외출 발급, 학부모 확인 대기 중인 신청, 그날을 덮는 결석계."""
+        notes = []
+        for r in self.db.query(
+                "SELECT serial, kind, time_out FROM passes WHERE (student_number = ? OR student_name = ?) "
+                "AND date = ? AND status != 'cancelled' ORDER BY time_out, id", (number, name, day)):
+            notes.append(f"{KIND[r['kind']]}증 {r['serial']} 발급 ({r['time_out'] or '시각 없음'})")
+        for p in (self.db.get_meta("telegram_pending") or {}).values():
+            if p.get("stage") == "confirm" and p["number"] == number and p["date"] == day:
+                notes.append(f"{KIND[p['kind']]}증 {self.pass_when(p)} 학부모 확인 대기 중")
+        notes += self.absence_duplicates(number, name, day, day)
+        return notes
+
+    def show_duplicate_warning(self, cid, head, notes, yes_label, yes_data, no_data, message_id=None):
+        text = f"⚠ {head}\n이미 있는 기록:\n" + "\n".join(f"- {n}" for n in notes[:5]) + "\n그래도 계속할까요?"
+        return self.show(cid, message_id, text, [[{"text": yes_label, "callback_data": yes_data},
+                                                  {"text": "취소", "callback_data": no_data}]])
 
     def validate_absence(self, fields):
         students = [s for s in self.db.students() if s["number"] == fields["student_number"]]
@@ -888,6 +927,21 @@ class Bot:
             return self.send_original(cid, int(rest))
         if kind == "f" and rest.isdigit():
             return self.send_item_file(cid, int(rest))
+        if kind == "dk":
+            pid, _, _ = rest.partition(":")
+            pending = self.db.get_meta("telegram_pending") or {}
+            p = pending.get(pid)
+            students = [s for s in self.db.students() if p and s["number"] == p["number"]]
+            if not p or p.get("stage") != "dup" or len(students) != 1:
+                return self.reply(cid, "이미 처리했거나 오래된 요청입니다.")
+            p.pop("stage")
+            self.db.set_meta("telegram_pending", pending)
+            buttons = [[{"text": r, "callback_data": f"pr:{pid}:{i}"}] for i, r in enumerate(REASONS[p["kind"]])]
+            buttons.append([{"text": "사유 없이 발급", "callback_data": f"pr:{pid}:-"},
+                            {"text": "취소", "callback_data": f"px:{pid}"}])
+            return self.show(cid, msg.get("message_id"),
+                             f"🎫 {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 {self.pass_when(p)}\n"
+                             "사유를 고르면 발급합니다.", buttons)
         if kind in ("up", "ua", "uf", "uc"):
             return self.update_button(cid, kind, rest, msg.get("message_id"))
         if kind == "pp":
@@ -969,6 +1023,13 @@ class Bot:
                         "date": (day or (now or datetime.now()).date()).isoformat()}
         self.db.set_meta("telegram_pending", dict(list(pending.items())[-20:]))   # 최근 20개만 (학부모 확인 대기 포함)
         when = self.pass_when(pending[pid])
+        notes = self.pass_duplicates(kind, number, students[0]["name"], pending[pid]["date"], time_out)
+        if notes:   # 신청할 때 이미 있는 기록이 있으면 먼저 알리고, [그래도 신청] 을 눌러야 사유 고르기로 감
+            pending[pid]["stage"] = "dup"
+            self.db.set_meta("telegram_pending", dict(list(pending.items())[-20:]))
+            self.show_duplicate_warning(cid, f"{number}번 {masked(students[0]['name'])} {word}증 {when} — 중복 신청일 수 있습니다",
+                                        notes, "그래도 신청", f"dk:{pid}:1", f"px:{pid}")
+            return "중복 확인"
         buttons = [[{"text": r, "callback_data": f"pr:{pid}:{i}"}] for i, r in enumerate(REASONS[kind])]
         buttons.append([{"text": "사유 없이 발급", "callback_data": f"pr:{pid}:-"},
                         {"text": "취소", "callback_data": f"px:{pid}"}])
@@ -1000,6 +1061,8 @@ class Bot:
         who = f"{p['number']}번 {masked(students[0]['name'])}"
         when = self.pass_when(p)
         if stage == "reason":
+            if p.get("stage") == "dup":
+                return "먼저 중복 확인에서 [그래도 신청]을 눌러 주세요."
             if p.get("stage") != "confirm":   # 사유 단추를 또 눌러도 처음 고른 사유·확인 단추를 그대로 둠
                 reasons = REASONS[p["kind"]]
                 p["reason"] = reasons[int(choice)] if choice.isdigit() and int(choice) < len(reasons) else ""

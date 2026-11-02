@@ -148,6 +148,89 @@ class TelegramGuidedTests(unittest.TestCase):
         self.assertEqual(self.bot.dialog["kind"], "absence")
         self.assertIn("알아듣지 못했습니다", self.bot.handle_update(msg("/그만")))
 
+    def issue_today(self, text="조퇴 7 13:30"):
+        """한 줄 명령으로 신청해 학부모 확인까지 거쳐 발급 (중복 확인이 나오면 [그래도 신청] 까지)."""
+        self.bot.handle_update(msg(text))
+        row = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0]
+        if row[0]["callback_data"].startswith("dk:"):
+            self.bot.handle_update(press(row[0]["callback_data"]))
+            row = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0]
+        self.bot.handle_update(press(row[0]["callback_data"]))
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+
+    def test_duplicate_pass_request_is_warned_when_applying(self):
+        self.issue_today()
+        self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM passes")["n"], 1)
+        sent = len(self.fake.sent)
+        self.assertEqual(self.bot.handle_update(msg("조퇴 7 14:00")), "중복 확인")
+        warning = self.fake.sent[-1]
+        self.assertEqual(len(self.fake.sent), sent + 1)
+        self.assertIn("중복", warning["text"])
+        self.assertIn("조퇴증", warning["text"])
+        self.assertIn(self.env.db.one("SELECT serial FROM passes")["serial"], warning["text"])
+        self.assertNotIn("최별빛", warning["text"])
+        buttons = {b["text"]: b["callback_data"] for row in warning["reply_markup"]["inline_keyboard"] for b in row}
+        self.assertEqual(set(buttons), {"그래도 신청", "취소"})
+        pid = buttons["그래도 신청"].split(":")[1]
+        self.assertIn("중복 확인", self.bot.handle_update(press(f"pr:{pid}:0")))   # 사유 단추를 몰래 눌러도 못 넘어감
+        self.assertIsNone(self.bot.handle_update(press(buttons["그래도 신청"], chat=6)))
+        self.bot.handle_update(press(buttons["취소"]))
+        self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM passes")["n"], 1)
+        self.bot.handle_update(msg("조퇴 7 14:00"))
+        self.bot.handle_update(press(self.last_button(0)))               # [그래도 신청]
+        self.assertIn("사유를 고르면", self.fake.edited[-1]["text"])
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+        self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
+        self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM passes")["n"], 2)
+        self.assertIn("오래된", self.bot.handle_update(press(buttons["그래도 신청"])))
+
+    def test_pass_request_waiting_for_parent_and_covering_absence_also_count(self):
+        self.env.db.replace_students([{"number": 7, "name": "최별빛"}, {"number": 12, "name": "한가람"}])
+        self.bot.handle_update(msg("조퇴 7 13:30"))
+        self.bot.handle_update(press(self.last_button(0)))                # 사유 → 학부모 확인 대기
+        self.assertIsNone(self.env.db.one("SELECT * FROM passes"))
+        self.bot.handle_update(msg("외출 7 15:00 16:00"))
+        self.assertIn("학부모 확인 대기", self.fake.sent[-1]["text"])
+        self.bot.handle_update(press(self.last_button(0, 1)))             # 취소
+        self.bot.handle_update(msg("조퇴 12 13:30"))                      # 다른 학생은 경고 없음
+        self.assertNotIn("중복", self.fake.sent[-1]["text"])
+        today = date.today()
+        from desk import absence
+        absence.save(self.env.db, {"student_number": 7, "student_name": "최별빛", "absence_type": "질병", "reason": "병결",
+                                   "start_date": today.isoformat(), "end_date": (today + timedelta(days=2)).isoformat()})
+        self.bot.handle_update(msg("조퇴 7 14:00"))
+        self.assertIn("결석계", self.fake.sent[-1]["text"])
+        self.assertNotIn("병결", self.fake.sent[-1]["text"])
+
+    def test_duplicate_absence_period_is_warned_in_dialog_and_one_line_command(self):
+        self.school_calendar()
+        self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-10-29~2026-11-03"))   # 겹치는 기록이 없으면 예전처럼 바로 저장
+        self.assertEqual(len(self.env.db.query("SELECT * FROM absences")), 1)
+        serial = self.env.db.one("SELECT serial FROM absences")["serial"]
+        # 한 줄 명령: 겹치면 바로 저장하지 않고 확인
+        self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-11-02~2026-11-03"))
+        self.assertEqual(len(self.env.db.query("SELECT * FROM absences")), 1)
+        text = self.fake.sent[-1]["text"] if self.fake.sent[-1].get("reply_markup") else ""
+        self.assertIn("중복", text)
+        self.assertIn(serial, text)
+        self.assertNotIn("최별빛", text)
+        self.assertEqual(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["text"], "그래도 앱에 저장")
+        self.bot.handle_update(press(self.last_button()))
+        self.assertEqual(len(self.env.db.query("SELECT * FROM absences")), 2)
+        # 겹치지 않는 기간은 예전처럼 바로 저장
+        self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-11-10"))
+        self.assertEqual(len(self.env.db.query("SELECT * FROM absences")), 3)
+
+    def test_duplicate_absence_period_in_calendar_dialog(self):
+        self.school_calendar()
+        self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-10-29"))
+        self.bot.handle_update(msg("결석계"))
+        self.bot.handle_update(msg("7"))
+        self.bot.handle_update(press(self.last_button(0)))
+        self.bot.handle_update(msg("2026-10-29"))
+        self.assertIn("중복", self.fake.sent[-1]["text"])
+        self.assertEqual(self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["text"], "그래도 앱에 저장")
+
     def test_search_dialog_and_rules_only_choice_never_call_ai(self):
         add_text_item(self.env.db, "cool", "연수 신청 안내 11월 3일까지", title="연수 신청")
         with patch.object(self.bot, "ask") as ask:

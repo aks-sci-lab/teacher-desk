@@ -2,11 +2,14 @@
 import { api } from '../api.js';
 import { el, clear, toast, guarded, dayLabel, debounce, catBadge, srcBadge, todayIso, parseIso, ddayInfo, markDates, modal, WD, CATEGORIES, SOURCE_NAMES } from '../ui.js';
 import { icon } from '../icons.js';
-import { registerView, openTab, refreshSide, findTab, setBadge, emit, on } from '../shell.js';
+import { registerView, openTab, refreshSide, findTab, setBadge, emit, on, openPopup } from '../shell.js';
 import { loadState, store } from '../store.js';
 
 let filter = { status: 'active', source: '' };
 let items = [];
+// 골라서 지우기 (목록 위 🗑 → 고르기 → [n건 지우기])
+let pickMode = false;
+const picked = new Set();
 
 export async function loadItems() {
     const q = new URLSearchParams({ status: filter.status });
@@ -36,7 +39,9 @@ const setRegistered = guarded(async (id, on) => {
 function renderSide(body, actions) {
     actions.append(
         el('button.icon-btn', { title: '직접 붙여넣기', onclick: openPaste }, icon('plus')),
-        el('button.icon-btn', { title: '지금 수집', onclick: collectNow }, icon('refresh')));
+        el('button.icon-btn', { title: '지금 수집', onclick: collectNow }, icon('refresh')),
+        el('button.icon-btn', { title: pickMode ? '고르기 끝내기' : '골라서 지우기', className: pickMode ? 'icon-btn on' : 'icon-btn',
+            onclick: () => { pickMode = !pickMode; picked.clear(); refreshSide(); } }, icon('trash')));
     const chip = (key, value, label) => el('button.chip', {
         className: filter[key] === value ? 'chip on' : 'chip',
         onclick: guarded(async () => { filter[key] = value; await loadItems(); refreshSide(); }),
@@ -58,20 +63,52 @@ function renderSide(body, actions) {
                     emit('data-changed');
                 }) }, `${unread.length}건 모두 읽음`)));
     }
+    if (pickMode) {   // 고르기 줄: 몇 건 골랐는지 · 모두 고르기 · 지우기 · 취소
+        const deleteNow = guarded(async () => {
+            if (!picked.size) return toast('지울 항목을 먼저 고르세요');
+            if (!window.confirm(`고른 ${picked.size}건을 지울까요?\n각 항목의 일정 후보도 함께 지워지고, 되돌릴 수 없습니다.\n(같은 파일·쪽지를 다시 가져오지는 않습니다)`)) return;
+            const r = await api.post('/api/items/delete', { ids: [...picked] });
+            toast(`${r.deleted}건을 지웠습니다`);
+            pickMode = false;
+            picked.clear();
+            await loadItems();
+            refreshSide();
+            emit('data-changed');
+        });
+        body.append(el('div.pick-bar',
+            el('span', `${picked.size}건 고름`),
+            el('button.btn.small', { onclick: () => { (picked.size === items.length ? picked.clear() : items.forEach(it => picked.add(it.id))); refreshSide(); } },
+                picked.size === items.length && items.length ? '모두 풀기' : '모두 고르기'),
+            el('button.btn.small.danger', { onclick: deleteNow, disabled: !picked.size }, icon('trash'), `${picked.size}건 지우기`),
+            el('button.btn.small', { onclick: () => { pickMode = false; picked.clear(); refreshSide(); } }, '취소')));
+    }
     const list = el('ul.list');
     if (!items.length) {
         list.append(el('li.empty', filter.status === 'active'
             ? '처리할 항목이 없습니다. 위의 + 로 메시지를 붙여넣거나 ↻ 로 수집하세요.' : '항목이 없습니다.'));
     }
     for (const it of items) {
+        const togglePick = () => { picked.has(it.id) ? picked.delete(it.id) : picked.add(it.id); refreshSide(); };
         list.append(el('li', {
-            className: ['reg', it.status === 'new' && 'unread', findTab(`item-${it.id}`) && 'on'].filter(Boolean).join(' '),
-            onclick: () => openItem(it.id),
+            className: ['reg', it.status === 'new' && 'unread', !pickMode && findTab(`item-${it.id}`) && 'on', pickMode && picked.has(it.id) && 'picked'].filter(Boolean).join(' '),
+            onclick: pickMode ? togglePick : () => openItem(it.id),
         },
-        el('input', { type: 'checkbox', checked: !!it.registered,
-            title: it.event_count ? `체크하면 일정 ${it.event_count}건이 달력·브리핑에 들어갑니다` : '체크하면 이 메시지의 일정이 달력·브리핑에 들어갑니다',
-            onclick: e => e.stopPropagation(),
-            onchange: e => setRegistered(it.id, e.target.checked) }),
+        pickMode
+            ? el('input.pick', { type: 'checkbox', checked: picked.has(it.id), title: '지울 항목으로 고르기',
+                onclick: e => e.stopPropagation(), onchange: togglePick })
+            : el('input', { type: 'checkbox', checked: !!it.registered,
+                title: it.event_count ? `체크하면 일정 ${it.event_count}건이 달력·브리핑에 들어갑니다` : '체크하면 이 메시지의 일정이 달력·브리핑에 들어갑니다',
+                onclick: e => e.stopPropagation(),
+                onchange: e => setRegistered(it.id, e.target.checked) }),
+        !pickMode && el('button.row-del', { title: '이 항목 지우기', onclick: guarded(async e => {
+            e.stopPropagation();
+            if (!window.confirm(`「${it.title}」을(를) 지울까요?\n일정 후보도 함께 지워지고, 되돌릴 수 없습니다.`)) return;
+            await api.del(`/api/items/${it.id}`);
+            findTab(`item-${it.id}`)?.close();
+            await loadItems();
+            refreshSide();
+            emit('data-changed');
+        }) }, icon('trash')),
         el('div.body',
             el('span.ttl', it.title),
             (it.ai_line || it.preview) && el('span', { className: it.ai_line ? 'ai-line' : 'ai-line preview' }, it.ai_line || it.preview),
@@ -99,7 +136,7 @@ function analysisPreview(a) {
 }
 
 export function openPaste() {
-    openTab({
+    openPopup({
         id: 'paste', title: '＋ 붙여넣기',
         render(pane, tab) {
             const src = el('select', ['paste', 'cool', 'edufine'].map(s => el('option', { value: s }, SOURCE_NAMES[s])));

@@ -1,7 +1,7 @@
 // 결석계: 작성 → 미리보기 → 인쇄 → 기록
 import { api } from '../api.js';
 import { el, clear, toast, guarded, todayIso, dayLabel, longDate, monthNav, monthKey, dayHead } from '../ui.js';
-import { openTab, refreshSide, findTab, on, emit } from '../shell.js';
+import { refreshSide, on, emit, openPopup, popupOpen } from '../shell.js';
 import { store } from '../store.js';
 
 const TYPE_LABELS = { '질병': '병결', '출석인정': '인정결', '기타': '기타결', '미인정': '미인정결' };
@@ -70,7 +70,7 @@ export function renderAbsenceSide(body, actions) {
             list.append(dayHead(g === 'prev' ? '전달부터 이어짐' : dayLabel(g, false), absences.filter(x => groupOf(x) === g).length));
         }
         list.append(el('li', {
-            className: findTab(`absence-${a.id}`) ? 'on' : '',
+            className: popupOpen(`absence-${a.id}`) ? 'on' : '',
             onclick: () => openAbsence(a),
         },
         el('span.ttl', `${a.student_number != null ? a.student_number + '번 ' : ''}${a.student_name}`),
@@ -92,7 +92,7 @@ export function openAbsenceForm(initial = {}) {
         note: '',
         ...initial,
     };
-    openTab({
+    openPopup({
         id: editing ? `absence-edit-${a.id}` : 'absence-new',
         refresh: !editing,
         title: editing ? `${a.student_name} 결석계 수정` : '새 결석계',
@@ -207,7 +207,7 @@ export function openAbsenceForm(initial = {}) {
 }
 
 export function openAbsence(a) {
-    openTab({
+    openPopup({
         id: `absence-${a.id}`, title: `${a.student_name} 결석계`,
         render(pane) {
             pane.append(

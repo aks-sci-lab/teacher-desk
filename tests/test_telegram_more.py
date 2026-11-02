@@ -134,6 +134,9 @@ class TelegramMoreTests(unittest.TestCase):
     def issue_and_buttons(self):
         self.bot.start_pass(CHAT, "early", ["7", "13:30"], now=datetime(2026, 10, 30, 9, 2))
         first = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        if first.startswith("dk:"):   # 같은 학생·같은 날 두 번째 신청은 중복 확인을 거침
+            self.bot.handle_update(press(first))
+            first = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
         self.bot.handle_update(press(first))
         self.parent_confirm()
         return {b["text"]: b["callback_data"] for row in self.fake.edited[-1]["reply_markup"]["inline_keyboard"] for b in row}

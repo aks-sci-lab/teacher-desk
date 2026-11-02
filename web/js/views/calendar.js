@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { el, clear, toast, guarded, todayIso, isoDate, parseIso, addDays, dayLabel, download, eventLine, WD, CAT_VARS, CATEGORIES } from '../ui.js';
-import { registerView, openTab, findTab, refreshSide, emit, on } from '../shell.js';
+import { registerView, openTab, findTab, refreshSide, emit, on, openPopup } from '../shell.js';
 import { openItem } from './inbox.js';
 import { openSchoolCal } from './schoolcal.js';
 
@@ -22,7 +22,7 @@ export const exportIcs = guarded(async () => {
 
 export function openEventForm(e = {}) {
     const ev = { date: todayIso(), time: '', kind: 'event', category: '참고', text: '', ...e };
-    openTab({
+    openPopup({
         id: e.id ? `event-${e.id}` : 'event-new', refresh: true, title: e.id ? '일정 고치기' : '새 일정',
         render(pane, tab) {
             const f = {
