@@ -74,7 +74,7 @@ function renderSide(body, actions) {
             onchange: e => setRegistered(it.id, e.target.checked) }),
         el('div.body',
             el('span.ttl', it.title),
-            it.ai_line && el('span.ai-line', it.ai_line),
+            (it.ai_line || it.preview) && el('span', { className: it.ai_line ? 'ai-line' : 'ai-line preview' }, it.ai_line || it.preview),
             el('span.meta', srcBadge(it.source), catBadge(it.category),
                 it.event_count ? el('span', it.registered ? `일정 ${it.event_count}` : `후보 ${it.event_count}`) : null,
                 it.next_deadline && el('span.dl', `마감 ${dayLabel(it.next_deadline)}`),
@@ -189,7 +189,7 @@ function renderItem(pane, tab, it) {
         el('div.item-kicker', srcBadge(it.source), catSel, el('span', `받은 때 ${it.received_at.slice(0, 16)}`)),
         titleBox, actions);
 
-    // ---- 일정 (가장 위에, 크게)
+    // ---- 일정 후보 (내용 아래)
     const open = it.events.filter(e => !e.done).length;
     const evSec = el('section.item-sec',
         el('div.sec-head',
@@ -215,11 +215,20 @@ function renderItem(pane, tab, it) {
     const a = it.ai || {};
     // AI 요약이 최신으로 있으면 그것을 먼저 보이고, 규칙으로 뽑은 줄은 접어 둠 (AI 가 없거나 실패·예전 것이면 그대로 펼침)
     const aiFirst = store.settings.ai_enabled && a.text && !a.stale && !a.error && !a.running;
-    const sumSec = el('section.item-sec',
-        el('div.sec-head', el('h2', '내용 요약'), el('span.spacer'),
+    // ---- 내용 (맨 위, 이 화면의 중심): AI 요약 → 원문 글 → (접어 둔) 규칙 요약
+    const BODY_PREVIEW = 1500;
+    const bodyText = (it.body || '').trim();
+    const bodyBox = el('div.item-body');
+    const showBody = full => clear(bodyBox, markDates(full ? bodyText : bodyText.slice(0, BODY_PREVIEW)),
+        bodyText.length > BODY_PREVIEW && el('button.btn.small.link', { onclick: () => showBody(!full) },
+            full ? '접기' : `… 전체 보기 (${bodyText.length.toLocaleString()}자)`));
+    showBody(false);
+    const sumSec = el('section.item-sec.content-sec',
+        el('div.sec-head', el('h2', '내용'), el('span.spacer'),
             el('button.btn.small', { onclick: () => openOriginal(it) }, icon('doc'), '원문 보기')),
         aiSummaryBox(it, tab),
-        aiFirst ? el('details.rule-sum', el('summary.small.muted', '기본 요약 (날짜·마감을 규칙으로 뽑은 줄) 보기'), rules) : rules);
+        bodyText ? bodyBox : el('p.muted', '글자가 없습니다. 원문 보기로 확인하세요.'),
+        aiFirst || bodyText ? el('details.rule-sum', el('summary.small.muted', '기본 요약 (날짜·마감을 규칙으로 뽑은 줄) 보기'), rules) : rules);
 
     // ---- 오른쪽: 원문·파일·문서번호·관련 항목·사진
     const f = it.file;
@@ -238,7 +247,7 @@ function renderItem(pane, tab, it) {
                 el('span.ttl', r.title), el('span.meta', srcBadge(r.source), r.received_at.slice(0, 16)))))),
         it.images && it.images.length > 0 && el('section.card.info', el('h3', `사진 ${it.images.length}장`), imageGrid(it)));
 
-    pane.append(el('div.item-view', head, el('div.item-grid', el('div.item-main', evSec, sumSec), side)));
+    pane.append(el('div.item-view', head, el('div.item-grid', el('div.item-main', sumSec, evSec), side)));
 }
 
 // 이 항목의 AI 요약 (이 PC 의 LM Studio, 원문은 그대로 두고 따로 보여 줌).

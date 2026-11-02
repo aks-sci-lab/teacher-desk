@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable
+from . import VERSION, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -126,6 +126,7 @@ class App:
     def __init__(self, db, config, collector, bot):
         self.db, self.config, self.collector, self.bot = db, config, collector, bot
         self.token = secrets.token_urlsafe(24)
+        self.neis = neisfill.NeisFill(db)   # 나이스 입력 칸 채우기 (시험 단계)
         self.ui = window_mod.UiTracker()   # 지금 열려 있는 화면들 (전용 창 하나만 쓰게)
         self.watcher = None
         self.shutdown = None
@@ -209,6 +210,32 @@ def make_handler(app):
                 return self.send_json(200, {"ok": True, "version": VERSION})
             if path == "/capture" and method == "POST":
                 return self.send_json(200, capture_mod.receive(app, self.read_json()))
+            try:
+                # 나이스 입력 칸 채우기: 구조 받기 · 채우기 요청 가져가기(기다려 받기) · 결과 받기
+                if path == "/capture/form" and method == "POST":
+                    b = self.read_json()
+                    form = app.neis.save_form(b.get("host"), b.get("frame_path"), b.get("title"), b.get("fields"))
+                    app.db.log(f"나이스 입력 칸 구조를 받았습니다: {form['title']} ({len(form['fields'])}칸)")
+                    return self.send_json(200, {"ok": True, "id": form["id"], "fields": len(form["fields"])})
+                if path == "/capture/fill" and method == "GET":
+                    query = parse_qs(urlparse(self.path).query)
+                    if query.get("peek", ["0"])[-1] == "1":   # 가져가지 않고 대기 중인 요청만 확인
+                        return self.send_json(200, {"job": app.neis.peek()})
+                    wait = query.get("wait", ["0"])[-1]
+                    try:
+                        wait = float(wait)
+                    except ValueError:
+                        wait = 0
+                    return self.send_json(200, {"job": app.neis.take(wait)})
+                if path == "/capture/fill/result" and method == "POST":
+                    b = self.read_json()
+                    job = app.neis.report(str(b.get("id") or ""), b)
+                    app.db.log(f"나이스 채우기 결과: {job['title']} · {job['result']['filled']}칸 채움"
+                               + (f" · 못 찾음 {len(job['result']['missing'])}칸" if job['result']['missing'] else "")
+                               + (f" · {job['result']['error']}" if job['result']['error'] else ""))
+                    return self.send_json(200, {"ok": True})
+            except neisfill.FillError as e:
+                raise ApiError(400, str(e))
             raise ApiError(405, "허용되지 않은 요청")
 
         def do_OPTIONS(self):
@@ -234,7 +261,7 @@ def make_handler(app):
         def dispatch(self, method):
             try:
                 url = urlparse(self.path)
-                is_capture = url.path in ("/capture", "/capture/ping")
+                is_capture = url.path in ("/capture", "/capture/ping", "/capture/form", "/capture/fill", "/capture/fill/result")
                 self.guard(capture=is_capture)
                 if is_capture:
                     return self.capture(method, url.path)
@@ -244,6 +271,8 @@ def make_handler(app):
                     cid = self.headers.get("X-Desk-Client", "")
                     if window_mod.CLIENT_ID_RE.match(cid):
                         app.ui.touch(cid)   # 이 화면이 아직 열려 있다는 신호
+                        if self.headers.get("X-Desk-Active") == "1":
+                            visits.record_active(app.db)   # 선생님이 화면을 쓰는 중 (브리핑 '지난 접속 이후' 기준)
                     q = {k: v[-1] for k, v in parse_qs(url.query).items()}
                     body = self.read_json() if method in ("POST", "PUT", "PATCH") else {}
                     result = route(app, method, url.path, q, body)
@@ -409,6 +438,33 @@ def ui_claim(app, q, body):
 def ui_bye(app, q, body):
     """화면이 닫힐 때 (바로 알려 줘야 다음에 켤 때 새 창을 엶)."""
     app.ui.bye(ui_id(body))
+    return {"ok": True}
+
+
+# ---- 나이스 입력 칸 채우기 (시험 단계) ----
+@api("GET", "/api/neis-fill")
+def neis_fill_state(app, q, body):
+    return {"forms": app.neis.forms(), "jobs": app.neis.jobs()}
+
+
+@api("DELETE", r"/api/neis-fill/forms/(\w+)")
+def neis_fill_delete_form(app, q, body, form_id):
+    app.neis.delete_form(form_id)
+    return {"ok": True}
+
+
+@api("POST", "/api/neis-fill/jobs")
+def neis_fill_request(app, q, body):
+    """선생님이 정한 값으로 나이스 채우기 요청 (나이스 탭이 열린 브라우저의 확장 프로그램이 가져가 채움)."""
+    try:
+        return app.neis.request(str(body.get("form_id") or ""), body.get("values"))
+    except neisfill.FillError as e:
+        raise ApiError(400, str(e))
+
+
+@api("DELETE", r"/api/neis-fill/jobs/(\w+)")
+def neis_fill_cancel(app, q, body, job_id):
+    app.neis.cancel(job_id)
     return {"ok": True}
 
 
@@ -717,8 +773,17 @@ def create_item(app, q, body):
     return app.db.item(res["id"])
 
 
+def body_preview(head, title, limit=70):
+    """목록에 보일 원문 첫머리: 제목과 같은 첫 줄은 건너뛰고 공백을 줄여 한 줄로."""
+    lines = [ln.strip() for ln in (head or "").splitlines() if ln.strip()]
+    if lines and title and lines[0].replace(" ", "") == (title or "").replace(" ", ""):
+        lines = lines[1:]
+    return " ".join(" ".join(lines).split())[:limit]
+
+
 ITEM_LIST_SQL = """
 SELECT i.id, i.source, i.title, i.received_at, i.category, i.status, i.registered, i.ai_summary,
+       substr(i.body, 1, 300) AS body_head,
        (SELECT MIN(e.date) FROM events e WHERE e.item_id = i.id AND e.kind = 'deadline' AND e.done = 0
           AND e.date >= ?) AS next_deadline,
        (SELECT COUNT(*) FROM events e WHERE e.item_id = i.id) AS event_count
@@ -741,8 +806,10 @@ def list_items(app, q, body):
     sql += " ORDER BY i.received_at DESC, i.id DESC LIMIT 300"
     rows = app.db.query(sql, args)
     show_ai = bool(app.config["ai_enabled"])
-    for r in rows:   # 목록에는 AI 가 만든 '한 줄 요약'만 (전체 요약은 항목을 열면)
-        r["ai_line"] = ai.summary_line(r.pop("ai_summary")) if show_ai else ""
+    for r in rows:   # 목록에는 AI 가 만든 '한 줄 요약'만 (전체 요약은 항목을 열면), 없으면 원문 첫머리
+        summary = r.pop("ai_summary")
+        r["ai_line"] = ai.summary_line(summary) if show_ai else ""
+        r["preview"] = body_preview(r.pop("body_head"), r["title"])
     return rows
 
 
@@ -1061,7 +1128,26 @@ def calendar_ics(app, q, body):
 def get_today(app, q, body):
     s = queries.today_summary(app.db)
     s["lessons"] = queries.day_lessons(app.db, app.config, date.today())
+    # 지난 접속 이후 받은 자료 (AI 가 꺼져 있어도 보이게, 규칙만)
+    v = visits.info(app.db)
+    rows = app.db.query(
+        "SELECT id, source, title, category, received_at, ai_summary FROM items "
+        "WHERE source IN ('cool', 'edufine', 'paste') AND status != 'archived' AND received_at >= ? "
+        "ORDER BY received_at DESC LIMIT 40", (v["since"],))
+    show_ai = bool(app.config["ai_enabled"])
+    for r in rows:
+        summary = r.pop("ai_summary")
+        r["ai_line"] = ai.summary_line(summary) if show_ai else ""
+    s["since_visit"] = {**v, "items": rows}
     return s
+
+
+@api("GET", "/api/week")
+def get_week(app, q, body):
+    """주간 계획(읽기 전용): start 가 든 주의 월요일부터 days(7|14)일."""
+    start = date.fromisoformat(check_date(q.get("start") or date.today().isoformat(), "시작 날짜"))
+    need(q.get("days", "7") in ("7", "14"), "기간은 7일 또는 14일이어야 합니다")
+    return weekplan.week_plan(app.db, start, int(q.get("days", "7")))
 
 
 # ---- 꼭 할 일 (브리핑) ----
@@ -1379,7 +1465,10 @@ def ai_weekly_run(app, q, body):
         ai.check_local(app.config["ai_base"])
     except ai.AIError as e:
         raise ApiError(400, str(e))
-    app.ai_job.start("new" if body.get("kind") == "new" else "full")
+    kind = "new" if body.get("kind") == "new" else "full"
+    # 범위: visit(지난 접속 이후, 기본) / week(지난 1주일)
+    since = visits.since(app.db) if body.get("range", "visit") == "visit" else None
+    app.ai_job.start(kind, since=since)
     return app.ai_job.state()
 
 
@@ -1540,7 +1629,11 @@ def update_check(app, q, body):
 
 @api("POST", "/api/update/apply")
 def update_apply(app, q, body):
-    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬)."""
+    return apply_update(app, body.get("force") is True)
+
+
+def apply_update(app, force=False, via="화면"):
+    """새 버전으로 바꾸기: 업데이트 창을 띄우고 업무 데스크를 끔 (창이 파일을 바꾼 뒤 다시 켬). 화면·텔레그램 공용."""
     need(app.update_checker and app.shutdown is not None, "업데이트 기능을 사용할 수 없습니다", 503)
     st = app.update_checker.state()
     need(st["portable"], "윈도우용 설치본에서만 업데이트할 수 있습니다 (개발용 폴더는 git 으로 받으세요)", 400)
@@ -1552,13 +1645,13 @@ def update_apply(app, q, body):
         app.collector.lock.release()
     if app.ai_job.running:
         busy.append("AI 요약")
-    need(not busy or body.get("force") is True,
+    need(not busy or force,
          f"{' · '.join(busy)} 중입니다. 끝난 뒤 다시 누르거나, 중단해도 되면 다시 확인하세요", 409)
     try:
         updater.start_update(APP_DIR, open_browser=False)   # 열려 있는 화면이 다시 켜지면 스스로 새로 고침하므로 새 창을 열지 않음
     except OSError as e:
         raise ApiError(500, f"업데이트 창을 열지 못했습니다 ({e.strerror or type(e).__name__})") from e
-    app.db.log(f"화면에서 업데이트 시작: {st['current']} → {st['latest']}")
+    app.db.log(f"{via}에서 업데이트 시작: {st['current']} → {st['latest']}")
     import threading
     threading.Thread(target=app.shutdown, daemon=True).start()
     return {"ok": True, "from": st["current"], "to": st["latest"]}

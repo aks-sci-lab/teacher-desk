@@ -16,7 +16,7 @@ import hashlib
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import extract
+from . import extract, visits
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 DAYS = 7
@@ -29,7 +29,7 @@ TIMEOUT = 900             # LM Studio 답을 기다리는 최대 시간 (15분)
 SOURCE_NAMES = {"cool": "쿨메신저", "edufine": "업무포털"}
 
 SYSTEM = (
-    "너는 한국 중·고등학교 담임 교사의 업무 비서다. 지난 1주일 동안 받은 쿨메신저 쪽지와 업무포털 공문을 읽고 "
+    "너는 한국 중·고등학교 담임 교사의 업무 비서다. 교사가 지난번 업무 데스크를 본 뒤(또는 지난 1주일 동안) 받은 쿨메신저 쪽지와 업무포털 공문을 읽고 "
     "교사가 1분 안에 파악할 수 있게 한국어로 요약한다. 자료에 없는 내용은 지어내지 않는다."
 )
 INSTRUCTION = """오늘은 {today}이다. 아래 자료를 다음 형식으로만 요약해 줘 (앞뒤 인사말 없이). 해당하는 것이 없는 칸은 '- 없음'.
@@ -107,9 +107,10 @@ def mask_names(text, names):
     return text
 
 
-def week_items(db, today=None, days=DAYS):
+def week_items(db, today=None, days=DAYS, since=None):
+    """요약할 자료: since('YYYY-MM-DD HH:MM', 지난 접속 이후)가 있으면 그 뒤, 없으면 지난 days 일."""
     today = today or date.today()
-    since = (today - timedelta(days=days - 1)).isoformat()
+    since = since or (today - timedelta(days=days - 1)).isoformat()
     return db.query(
         "SELECT id, source, title, body, received_at FROM items "
         "WHERE source IN ('cool', 'edufine') AND received_at >= ? AND status != 'archived' "
@@ -176,16 +177,19 @@ def pick_model(config):
     return model
 
 
-def weekly_summary(db, config, today=None, timeout=TIMEOUT):
-    """지난 1주일 요약을 만들어 저장하고 돌려줌 {at, text, count, used, model, days, ids, seen_id}."""
+def weekly_summary(db, config, today=None, timeout=TIMEOUT, since=None):
+    """요약을 만들어 저장하고 돌려줌 {at, text, count, used, model, days, ids, seen_id, range, since}.
+    since 가 있으면 '지난 접속 이후'(range=visit), 없으면 '지난 1주일'(range=week)."""
     base = config["ai_base"]
     check_local(base)
     top = last_item_id(db)
-    items = week_items(db, today)
+    items = week_items(db, today, since=since)
     result = {"at": datetime.now().strftime("%Y-%m-%d %H:%M"), "count": len(items), "used": 0,
-              "model": "", "days": DAYS, "text": "", "seen_id": top, "updates": []}
+              "model": "", "days": DAYS, "text": "", "seen_id": top, "updates": [],
+              "range": "visit" if since else "week", "since": since}
     if not items:
-        result["text"] = "지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문이 없습니다."
+        result["text"] = (f"{since} 이후 새로 받은 쿨메신저 쪽지·업무포털 공문이 없습니다." if since
+                          else "지난 1주일 동안 받은 쿨메신저 쪽지·업무포털 공문이 없습니다.")
         db.set_meta("ai_weekly", result)
         return result
     model = pick_model(config)
@@ -194,7 +198,7 @@ def weekly_summary(db, config, today=None, timeout=TIMEOUT):
     result.update(text=text, used=used, model=model, ids=[it["id"] for it in items[:used]])
     result["applied"] = apply_summary(db, text, result["ids"], today)
     db.set_meta("ai_weekly", result)
-    db.log(f"AI 요약: 지난 {DAYS}일 자료 {used}건 ({model})")
+    db.log(f"AI 요약: {since + ' 이후' if since else f'지난 {DAYS}일'} 자료 {used}건 ({model})")
     return result
 
 
@@ -351,17 +355,20 @@ class Job:
         self.started_at = None
         self.error = None
         self.kind = None   # full: 전체 다시 요약 / new: 새로 들어온 것만
+        self.since = None  # 지난 접속 이후로 요약할 때 시작 시각
 
     @property
     def running(self):
         return bool(self.thread and self.thread.is_alive())
 
-    def start(self, kind="full"):
+    def start(self, kind="full", since=None):
+        """kind: full(전체 다시) / new(새로 들어온 것만). since 가 있으면 '지난 접속 이후' 범위로 전체 요약."""
         with self.lock:
             if self.running:
                 return False
             self.error = None
             self.kind = "new" if kind == "new" else "full"
+            self.since = since
             self.started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self.thread = threading.Thread(target=self._run, name="ai-summary", daemon=True)
             self.thread.start()
@@ -369,7 +376,10 @@ class Job:
 
     def _run(self):
         try:
-            (update_summary if self.kind == "new" else weekly_summary)(self.db, self.config)
+            if self.kind == "new":
+                update_summary(self.db, self.config)
+            else:
+                weekly_summary(self.db, self.config, since=self.since)
         except AIError as e:
             self.error = str(e)
         except Exception as e:  # 뒤에서 도는 일이 조용히 죽지 않게
@@ -382,7 +392,8 @@ class Job:
                 "kind": self.kind if self.running else None,
                 "started_at": self.started_at if self.running else None, "error": self.error,
                 "result": result, "timeout": TIMEOUT, "hidden": self.db.get_meta("ai_hidden", []),
-                "new_count": len(new_items(self.db, result)) if result and result.get("text") else 0}
+                "new_count": len(new_items(self.db, result)) if result and result.get("text") else 0,
+                "visit": visits.info(self.db)}
 
 
 ITEM_SYSTEM = ("너는 한국 중·고등학교 담임 교사의 업무 비서다. 쪽지나 공문 한 건을 읽고 교사가 10초 안에 파악하게 "
