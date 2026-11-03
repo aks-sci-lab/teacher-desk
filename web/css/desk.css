@@ -5,7 +5,11 @@
 :root {
     --font: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
     --font-scale: 1;
-    --fs: calc(14px * var(--font-scale));
+    /* 기본 글자 크기는 화면 폭에 따라 단계적으로 (아래 @media). 사용자의 '글자 크기' 설정(--font-scale)이 여기에 곱해짐 */
+    --base-fs: 15px;
+    --fs: calc(var(--base-fs) * var(--font-scale));
+    --fs-small: 0.87em;   /* 보조 글자(날짜·출처·상태) 약 13px */
+    --status-h: calc(var(--fs) * 1.8);
     --side-w: 300px;
     --bottom-h: 150px;
     --pad: 12px;
@@ -96,10 +100,10 @@ a { color: var(--accent); }
 /* ---------- 전체 틀 ---------- */
 #app {
     display: flex;
-    height: calc(100% - 26px);
+    height: calc(100% - var(--status-h));
 }
 #activity {
-    width: 64px;
+    width: calc(var(--fs) * 4.6);
     flex: none;
     background: var(--activity);
     border-right: 1px solid var(--line);
@@ -122,11 +126,11 @@ a { color: var(--accent); }
     background: none;
     color: var(--activity-ink);
     cursor: pointer;
-    font-size: 11px;
+    font-size: calc(var(--fs) * 0.8);
 }
 .act.menu-off { display: none; }
 .menu-toggle { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
-.act .ico { font-size: 20px; line-height: 1; display: grid; place-items: center; width: 34px; height: 30px; border-radius: 8px; }
+.act .ico { font-size: calc(var(--fs) * 1.4); line-height: 1; display: grid; place-items: center; width: 34px; height: 30px; border-radius: 8px; }
 .act:hover { color: var(--ink); }
 .act:hover .ico { background: var(--surface-2); }
 .act.on { color: var(--activity-on); font-weight: 700; }
@@ -146,7 +150,7 @@ body.layout-edit .act { cursor: grab; }
     border-radius: 9px;
     background: var(--danger);
     color: #fff;
-    font-size: 10px;
+    font-size: calc(var(--fs) * 0.72);
     line-height: 17px;
 }
 #app.hide-labels .act .lbl { display: none; }
@@ -263,7 +267,7 @@ body.layout-edit .act { cursor: grab; }
 #app.bottom-hidden #bottom, #app.bottom-hidden .splitter.h { display: none; }
 
 #statusbar {
-    height: 26px;
+    height: var(--status-h);
     display: flex;
     align-items: center;
     gap: 2px;
@@ -271,7 +275,7 @@ body.layout-edit .act { cursor: grab; }
     background: var(--status);
     color: var(--status-ink);
     border-top: 1px solid var(--line);
-    font-size: 12px;
+    font-size: calc(var(--fs) * 0.85);
     white-space: nowrap;
     overflow: hidden;
 }
@@ -425,7 +429,7 @@ dl.kvs dd { margin: 0; }
 .list li.reg > .body { flex: 1; min-width: 0; }
 .list .ttl { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .meta .dl { color: var(--c-deadline); font-weight: 700; }
-.list .meta { display: flex; gap: 6px; align-items: center; font-size: 0.8em; color: var(--muted); margin-top: 2px; flex-wrap: wrap; }
+.list .meta { display: flex; gap: 6px; align-items: center; font-size: var(--fs-small); color: var(--muted); margin-top: 2px; flex-wrap: wrap; }
 .list .group { padding: 8px var(--pad) 4px; font-size: 0.8em; font-weight: 700; color: var(--muted); cursor: default; background: var(--surface-2); }
 .list .group:hover { background: var(--surface-2); }
 .empty { padding: 24px var(--pad); text-align: center; color: var(--muted); }
@@ -704,7 +708,7 @@ a.ai-ref:hover { background: var(--accent); color: var(--accent-ink); }
 @media (hover: none) { .ai-x { opacity: 0.8; } }
 section.card + .cards, .cards { margin-top: 12px; }
 /* 브리핑: 위 '오늘' 줄(카드들이 내용 높이만큼 나란히) · 아래 본문(왼쪽 AI 요약, 오른쪽 새로 받은 자료) */
-.brief-today > .cards { margin-top: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; align-items: start; }
+.brief-today > .cards { margin-top: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr)); gap: 12px; align-items: start; }
 .brief-today > .cards > .card { margin: 0; }
 .brief-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 12px; }
 .brief-main > .card, .brief-side > .card { margin: 0; }
@@ -1108,3 +1112,20 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
     .tt-class-print { break-inside: avoid; }
     .tt-class-print .tt td { height: 13mm; }
 }
+
+/* ---------- UI·사용성 (0.5.67): 화면 폭별 글자 크기·브리핑 줄 배치 ----------
+   노트북(1366~1536)은 15px, 큰 모니터(1700~)는 16px, 매우 큰 화면(2300~)은 18px.
+   모바일(약 700px 이하)은 쓰지 않으므로 따로 맞추지 않음. */
+@media (min-width: 1700px) { :root { --base-fs: 16px; } }
+@media (min-width: 2300px) { :root { --base-fs: 18px; } }
+.pane { line-height: 1.55; }
+/* 브리핑 카드의 일정 줄: 날짜·분류가 첫 줄, 제목은 다음 줄 전체 폭 (제목이 한두 글자씩 끊기지 않게).
+   '할 일로' 단추는 줄 자리를 차지하지 않고 오른쪽 위에 겹쳐 뜸 */
+.cards .ev { flex-wrap: wrap; align-items: center; gap: 0 8px; padding: 6px 0; position: relative; }
+.cards .ev + .ev { border-top: 1px solid var(--line); }
+.cards .ev .when { min-width: 0; font-size: var(--fs-small); }
+.cards .ev > a, .cards .ev > span:last-child { flex: 1 1 100%; order: 3; min-width: 0; margin-top: 2px; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
+.cards .ev.movable > .to-todo { position: absolute; right: 0; top: 4px; margin: 0; }
+/* 수신함 목록·브리핑 새 자료: 제목은 최대 두 줄, 날짜·출처는 그 아래 */
+.list .ttl { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
+.list.compact .ttl { -webkit-line-clamp: 1; }
