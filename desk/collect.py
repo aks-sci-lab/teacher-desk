@@ -44,6 +44,8 @@ def add_text_item(db, source, text, title=None, received_at=None, file_path=None
         analysis = {**analysis, "events": []}   # 내가 쓴 글의 날짜는 일정이 아님
     item_id = db.add_item(source, analysis["title"], text, received_at, analysis,
                           content_hash=h, file_path=file_path, images=images)
+    if item_id is None:
+        return None
     if source == "cool_sent":
         db.execute("UPDATE items SET status = 'read' WHERE id = ?", (item_id,))
     return {"id": item_id, "events": len(analysis["events"]),

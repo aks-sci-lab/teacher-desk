@@ -2,10 +2,14 @@ import os
 import tempfile
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from threading import Barrier
+from unittest.mock import patch
 
-from desk.collect import Collector, diagnose
+from desk import collect
+from desk.collect import Collector, add_text_item, diagnose
 from desk.config import Config
 from desk.db import DB
 from desk.scheduler import Scheduler, due_slots, next_slot
@@ -55,6 +59,51 @@ class CollectTests(unittest.TestCase):
         # 다시 수집해도 그대로
         self.assertEqual(e.collector.run("manual")["items"], 0)
         self.assertEqual(len(e.notified), 2)
+
+    def test_simultaneous_identical_items_from_separate_connections_are_deduplicated(self):
+        e = self.env
+        other_db = DB(e.config.data_dir / "desk.db")
+        barrier = Barrier(2)
+        analyze = collect.extract.analyze
+
+        def synchronized_analyze(*args, **kwargs):
+            result = analyze(*args, **kwargs)
+            barrier.wait(timeout=5)
+            return result
+
+        try:
+            with patch("desk.collect.extract.analyze", synchronized_analyze):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    results = list(pool.map(
+                        lambda db: add_text_item(db, "paste", "동시에 들어온 같은 자료 11월 3일 회의"),
+                        (e.db, other_db)))
+            self.assertEqual(sum(result is not None for result in results), 1)
+            self.assertEqual(e.db.one("SELECT COUNT(*) AS n FROM items")["n"], 1)
+        finally:
+            other_db.close()
+
+    def test_failed_item_insert_rolls_back_item_and_events(self):
+        e = self.env
+        analysis = {"summary": [], "category": "참고", "doc_numbers": [],
+                    "events": [{"date": "2026-11-03", "kind": "event"}]}
+        with self.assertRaises(KeyError):
+            e.db.add_item("paste", "시험", "내용", "2026-11-02 12:00:00", analysis)
+        e.db.set_meta("after_failure", True)
+        self.assertEqual(e.db.one("SELECT COUNT(*) AS n FROM items")["n"], 0)
+        self.assertEqual(e.db.one("SELECT COUNT(*) AS n FROM events")["n"], 0)
+
+    def test_failed_event_replacement_preserves_existing_events(self):
+        e = self.env
+        analysis = {"summary": [], "category": "참고", "doc_numbers": [],
+                    "events": [{"date": "2026-11-03", "end_date": None, "time": None,
+                                "kind": "event", "category": "행사", "text": "회의"}]}
+        item_id = e.db.add_item("paste", "시험", "내용", "2026-11-02 12:00:00", analysis)
+        before = e.db.query("SELECT * FROM events WHERE item_id = ?", (item_id,))
+        with self.assertRaises(KeyError):
+            e.db.replace_events(item_id, [{"date": "2026-11-04", "kind": "event"}])
+        e.db.set_meta("after_failure", True)
+        after = e.db.query("SELECT * FROM events WHERE item_id = ?", (item_id,))
+        self.assertEqual(after, before)
 
     def test_file_vanishing_during_scan_does_not_stop_collect(self):
         e = self.env
