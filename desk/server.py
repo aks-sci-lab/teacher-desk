@@ -1351,6 +1351,7 @@ def timetable_get(app, q, body):
         "loaded": True, "file": tt.get("file"), "sheet": tt.get("sheet"), "sheets": tt.get("sheets") or [], "at": tt.get("at"),
         "days": tt["days"], "slots": tt["slots"], "lock_words": tt.get("lock_words") or [],
         "teachers": [teacher_brief(t) for t in tt["teachers"]],
+        "classes": timetable.class_list(tt), "default_class": _default_class(app, tt),
         "me": app.db.get_meta("timetable_me"),
         "swaps": app.db.get_meta("timetable_swaps") or [],
         "periods": app.db.get_meta("timetable_periods"), "default_periods": bell.DEFAULT_PERIODS,
@@ -1421,6 +1422,53 @@ def timetable_week(app, q, body):
         d = mon + timedelta(days=int(k.split("-")[0]))
         grid[k] = {**l, "block": timetable.block_reason(evs, d, timetable.grade_of(l["cls"]), today)}
     return {"monday": mon.isoformat(), "days": days, "grid": grid, "teacher": tid}
+
+
+def _default_class(app, tt):
+    return timetable.find_class(tt, f"{app.config['grade']}-{app.config['class_no']}")
+
+
+def _timetable_view_week(app, tt, q, grade=None):
+    mon = timetable.monday(date.fromisoformat(check_date(q.get("week") or date.today().isoformat())))
+    evs = queries.school_day_events(app.db, mon, mon + timedelta(days=4))
+    days = []
+    for i in range(5):
+        d = mon + timedelta(days=i)
+        note = (timetable.day_note(evs, d, grade) if grade is not None
+                else timetable._school_note(tt, evs, d))
+        days.append({"date": d.isoformat(), "name": timetable.DAYNAMES[i],
+                     "events": evs.get(d.isoformat(), []), "note": note, "past": d < date.today()})
+    return mon, evs, {"monday": mon.isoformat(), "days": days,
+                      "slots": [s for s in tt["slots"] if 0 <= s["d"] < 5],
+                      "periods": app.db.get_meta("timetable_periods"), "default_periods": bell.DEFAULT_PERIODS}
+
+
+@api("GET", "/api/timetable/class")
+def timetable_class(app, q, body):
+    tt = _tt(app)
+    classes = timetable.class_list(tt)
+    default = _default_class(app, tt)
+    cls = timetable.find_class(tt, q["cls"]) if q.get("cls") else default or next(iter(classes), None)
+    need(cls is not None, "시간표에 없는 학급입니다", 404)
+    mon, _, result = _timetable_view_week(app, tt, q, timetable.grade_of(cls))
+    return {**result, "cls": cls, "classes": classes, "default_class": default,
+            "week": timetable.class_week(tt, cls, mon, app.db.get_meta("timetable_swaps") or [])}
+
+
+@api("GET", "/api/timetable/free")
+def timetable_free(app, q, body):
+    tt = _tt(app)
+    raw = (q.get("tids") or "").strip()
+    values = [value.strip() for value in raw.split(",")] if raw else []
+    need(all(value.isascii() and value.isdigit() and len(value) <= 10 for value in values),
+         "선생님 번호가 잘못되었습니다")
+    tids = list(dict.fromkeys(int(value) for value in values))
+    known = {t["id"] for t in tt["teachers"]}
+    need(all(tid in known for tid in tids), "시간표에 없는 선생님입니다")
+    mon, evs, result = _timetable_view_week(app, tt, q)
+    return {**result, "tids": tids,
+            "teachers": [teacher_brief(t) for t in tt["teachers"] if t["id"] in tids],
+            "slots": timetable.common_free(tt, tids, mon, app.db.get_meta("timetable_swaps") or [], evs)}
 
 
 @api("GET", "/api/timetable/candidates")

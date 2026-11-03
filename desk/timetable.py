@@ -425,3 +425,86 @@ def find_teacher(tt, name):
         if t["name"].replace(" ", "") == name:
             return t["id"]
     return None
+
+
+def _class_key(value):
+    text = re.sub(r"\s+", "", str(value or ""))
+    match = re.fullmatch(r"(\d{1,2})(?:-|학년)(\d{1,2})반?", text)
+    if not match and re.fullmatch(r"\d{3}", text):
+        return f"{int(text[0])}-{int(text[1:])}" if int(text[0]) and int(text[1:]) else None
+    if match and all(int(x) > 0 for x in match.groups()):
+        return "-".join(str(int(x)) for x in match.groups())
+    return None
+
+
+def class_list(tt):
+    """시간표에 적힌 학급을 학년·반 번호 순으로 돌려줌."""
+    classes = {_class_key(l.get("cls")) for t in tt["teachers"] for l in t["lessons"].values()}
+    return sorted(classes - {None}, key=lambda cls: tuple(map(int, cls.split("-"))))
+
+
+def find_class(tt, q):
+    """2-3·2학년 3반·203처럼 적은 학급을 찾음. 없으면 None."""
+    cls = _class_key(q)
+    return cls if cls in class_list(tt) else None
+
+
+def class_lessons_on(tt, cls, d, swaps=()):
+    """그날 학급 수업 목록 (교체 반영, 함께 가르치는 교사도 모두 유지)."""
+    cls = find_class(tt, cls)
+    if cls is None or d.weekday() >= 5:
+        return []
+    cur = week_state(tt, monday(d), swaps)
+    slots = {s["key"]: s for s in tt["slots"] if s["d"] == d.weekday()}
+    out = []
+    for t in tt["teachers"]:
+        for key, lesson in cur[t["id"]].items():
+            if key in slots and _class_key(lesson.get("cls")) == cls:
+                out.append({"period": slots[key]["p"], "subj": lesson["subj"], "tid": t["id"],
+                            "teacher": t["name"], "moved": bool(lesson.get("moved")),
+                            "locked": bool(lesson.get("locked"))})
+    return sorted(out, key=lambda l: (l["period"], l["tid"]))
+
+
+def class_week(tt, cls, mon, swaps=()):
+    """월~금 날짜별 학급 수업 목록."""
+    mon = monday(mon)
+    return {d.isoformat(): class_lessons_on(tt, cls, d, swaps)
+            for d in (mon + timedelta(days=i) for i in range(5))}
+
+
+def _school_note(tt, day_events, d):
+    # 일부 학년만 쉬는 날을 전교 공강으로 오해하지 않게 함.
+    grades = {grade_of(cls) for cls in class_list(tt)} or {1, 2, 3}
+    notes = [day_note(day_events, d, grade) for grade in sorted(grades)]
+    present = [note for note in notes if note]
+    if not present:
+        return None
+    level = "off" if all(note and note["level"] == "off" for note in notes) else "maybe"
+    return {"level": level, "text": " · ".join(dict.fromkeys(note["text"] for note in present))}
+
+
+def common_free(tt, tids, mon, swaps=(), day_events=None):
+    """실제 월~금 교시마다 선택 교사의 공강·수업 중 ID와 학사일정 판정."""
+    tids = list(dict.fromkeys(tids))
+    known = {t["id"] for t in tt["teachers"]}
+    if any(tid not in known for tid in tids):
+        raise TimetableError("공강을 확인할 선생님을 골라 주세요.")
+    if not tids:
+        return []
+    mon = monday(mon)
+    cur = week_state(tt, mon, swaps)
+    out = []
+    notes = {}
+    for slot in sorted(tt["slots"], key=lambda s: (s["d"], s["p"])):
+        if not 0 <= slot["d"] < 5:
+            continue
+        d = mon + timedelta(days=slot["d"])
+        if slot["d"] not in notes:
+            notes[slot["d"]] = _school_note(tt, day_events or {}, d)
+        note = notes[slot["d"]]
+        off = note and note["level"] == "off"
+        out.append({"date": d.isoformat(), "day": DAYNAMES[slot["d"]], "period": slot["p"],
+                    "free": [] if off else [tid for tid in tids if slot["key"] not in cur[tid]],
+                    "busy": [] if off else [tid for tid in tids if slot["key"] in cur[tid]], "note": note})
+    return out
