@@ -84,7 +84,7 @@ function render(pane, tab) {
 }
 
 export function openWeek() {
-    openTab({ id: 'week', title: '주간 계획', wide: true, render });
+    openTab({ id: 'week', title: '주간 계획', menu: true, wide: true, render });
 }
 
 registerView({ id: 'week', icon: '🗓', label: '주간 계획', noSide: true, renderSide() {}, open: openWeek });

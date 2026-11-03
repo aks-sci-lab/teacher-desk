@@ -7,6 +7,7 @@ const $ = id => document.getElementById(id);
 const app = $('app');
 const views = new Map();
 const tabs = new Map();
+const MENU_TAB_ID = 'menu';
 let currentView = null;
 let activeTab = null;
 let defaultViewOrder = [];
@@ -176,32 +177,64 @@ export function sideButton(label, title, onclick) {
 const P_LEAD_ICON = /^(?:\p{Extended_Pictographic}|[＋✎⚙☑✔↺])\uFE0F?\s*/u;
 const plainTitle = t => String(t).replace(P_LEAD_ICON, '');
 
-// openTab({ id, title, render(pane, tab), wide? }) — 같은 id 가 열려 있으면 그 탭으로 이동
+// openTab({ id, title, render(pane, tab), wide?, menu? }) — 메뉴는 공용 탭 하나를 씀
 export function openTab(spec) {
-    let tab = tabs.get(spec.id);
+    const id = spec.menu ? MENU_TAB_ID : spec.id;
+    let tab = tabs.get(id);
     if (!tab) {
         const pane = el('div.pane', { role: 'tabpanel' });
         if (spec.wide) pane.classList.add('wide');
         const label = el('span.t', plainTitle(spec.title));
-        const head = el('button.tab', { role: 'tab', title: plainTitle(spec.title), onclick: () => activate(spec.id) },
-            label, el('span.x', { title: '닫기', onclick: e => { e.stopPropagation(); closeTab(spec.id); } }, '✕'));
-        head.addEventListener('auxclick', e => { if (e.button === 1) closeTab(spec.id); });
+        const head = el('button.tab', { role: 'tab', title: plainTitle(spec.title), onclick: () => activate(tab.id) },
+            label, el('span.x', { title: '닫기', onclick: e => { e.stopPropagation(); closeTab(tab.id); } }, '✕'));
+        head.addEventListener('auxclick', e => { if (e.button === 1) closeTab(tab.id); });
         $('tab-list').append(head);
         $('editor').append(pane);
         tab = {
-            id: spec.id, pane, head, spec,
+            id, pane, head, spec, itemId: spec.itemId,
             setTitle(t) { label.textContent = plainTitle(t); head.title = plainTitle(t); },
-            close: () => closeTab(spec.id),
+            setPreview(on) { head.classList.toggle('preview', !!on); },
+            close: () => closeTab(tab.id),
             rerender: () => { clear(pane); tab.spec.render(pane, tab); },
         };
-        tabs.set(spec.id, tab);
+        tab.setPreview(spec.preview);
+        tabs.set(id, tab);
         spec.render(pane, tab);
+    } else if (spec.menu && tab.spec.id !== spec.id) {
+        tab.spec.onClose?.();
+        tab.spec = spec;
+        tab.itemId = spec.itemId;
+        tab.setTitle(spec.title);
+        tab.setPreview(spec.preview);
+        tab.pane.classList.toggle('wide', !!spec.wide);
+        tab.rerender();
     } else if (spec.refresh) {
         tab.spec = spec;
+        tab.itemId = spec.itemId;
         tab.setTitle(spec.title);
+        tab.setPreview(spec.preview);
+        tab.pane.classList.toggle('wide', !!spec.wide);
         tab.rerender();
     }
-    activate(spec.id);
+    activate(id);
+    return tab;
+}
+
+export function pinTab(id, pinnedId) {
+    const tab = tabs.get(id);
+    if (!tab) return null;
+    const pinned = tabs.get(pinnedId);
+    if (pinned && pinned !== tab) {
+        closeTab(id);
+        activate(pinnedId);
+        return pinned;
+    }
+    tabs.delete(id);
+    tab.id = pinnedId;
+    tabs.set(pinnedId, tab);
+    tab.setPreview(false);
+    if (activeTab === id) activeTab = pinnedId;
+    activate(pinnedId);
     return tab;
 }
 
@@ -266,11 +299,20 @@ export function closeTab(id) {
 }
 
 export function findTab(id) {
-    return tabs.get(id);
+    const tab = tabs.get(id);
+    if (tab) return tab;
+    const menu = tabs.get(MENU_TAB_ID);
+    if (menu?.spec.menu && menu.spec.id === id) return menu;
+    if (id.startsWith('item-')) {
+        const preview = tabs.get('item-preview');
+        if (preview && String(preview.itemId) === id.slice(5)) return preview;
+    }
 }
 
 export function rerenderTabs(prefix) {
-    for (const t of tabs.values()) if (t.id.startsWith(prefix)) t.rerender();
+    for (const t of tabs.values()) {
+        if (t.id.startsWith(prefix) || (t.spec.menu && t.spec.id.startsWith(prefix))) t.rerender();
+    }
 }
 
 $('back').addEventListener('click', () => app.classList.remove('show-main'));

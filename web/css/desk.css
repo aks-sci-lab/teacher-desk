@@ -215,6 +215,7 @@ body.layout-edit .act { cursor: grab; }
     white-space: nowrap;
 }
 .tab .t { overflow: hidden; text-overflow: ellipsis; }
+.tab.preview .t { font-style: italic; }
 .tab:hover { color: var(--ink); background: var(--surface-2); }
 .tab.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
 .tab .x {
@@ -1074,4 +1075,3 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .tt-find-item { display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 7px 10px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
 .tt-find-item:hover, .tt-find-item.on { background: var(--accent-soft); }
 .tt-find-item .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-

@@ -19,6 +19,7 @@ function openAttendance() {
     const selected = SECTIONS.find(item => item.id === section);
     openTab({
         id: 'attendance',
+        menu: true,
         title: selected.label,
         refresh: true,
         render(pane) {

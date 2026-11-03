@@ -91,7 +91,7 @@ function formBox(form, tab) {
 }
 
 export function openNeisFill() {
-    openTab({ id: 'neis-fill', title: '나이스 입력', refresh: true, render: renderNeis });
+    openTab({ id: 'neis-fill', title: '나이스 입력', menu: true, refresh: true, render: renderNeis });
 }
 
 registerView({ id: 'neis-fill', icon: '✍', label: '나이스 입력', noSide: true, renderSide() {}, open: openNeisFill });

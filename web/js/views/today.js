@@ -573,7 +573,7 @@ function renderToday(pane) {
 }
 
 export function openToday() {
-    openTab({ id: 'today', title: '브리핑', wide: true, refresh: true, render: renderToday });
+    openTab({ id: 'today', title: '브리핑', menu: true, wide: true, refresh: true, render: renderToday });
 }
 
 registerView({
