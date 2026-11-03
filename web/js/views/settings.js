@@ -344,7 +344,7 @@ function renderSettings(pane, tab) {
                 el('li', '아래에 토큰을 넣고 저장합니다.'),
                 el('li', '만든 봇에게 연결 코드를 보내면 선생님 계정만 연결됩니다.')),
             el('label.field', el('span', '봇 토큰'), token),
-            el('p', '상태: ', el('b', tg.status || '-'),
+            el('p', '상태: ', el('b', tg.status || '-'), tg.last_poll ? ` · 마지막 확인 ${tg.last_poll}` : '', tg.linked && s.telegram_token_set && tg.alive === false ? ' · ⚠ 수신이 멈춤 (앱을 다시 켜 보세요)' : '', tg.last_error ? el('div.small.muted', `최근 오류: ${tg.last_error}`) : null,
                 tg.linked ? ' · ✅ 연결됨' : (s.telegram_token_set ? ` · 봇에게 보낼 연결 코드: ` : ''),
                 !tg.linked && s.telegram_token_set ? el('code', { style: 'font-size: 1.3em; font-weight: 800' }, `/start ${tg.pair_code}`) : null),
             el('label.field', el('span', '수집 알림에 담을 내용'), detail,
