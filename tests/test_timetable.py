@@ -209,3 +209,163 @@ class TelegramLessonTests(unittest.TestCase):
             self.assertIn("내 수업 (시간표):\n- 11/2(월) 1교시 2-1 국어, 2교시 2-2 국어", prompt)
         finally:
             env.close()
+
+
+class ClassAndFreeTests(unittest.TestCase):
+    def setUp(self):
+        self.tt, _ = T.parse_file(sample_xlsx())
+        self.mon = date(2026, 11, 2)
+
+    def test_class_names_and_numerical_order(self):
+        lessons = self.tt["teachers"][0]["lessons"]
+        for i, cls in enumerate(["2-10", "1-12", "2-", "", "2-03"]):
+            lessons[f"3-{i + 2}"] = {"cls": cls}
+        self.assertEqual(T.class_list(self.tt), ["1-12", "2-1", "2-2", "2-3", "2-10"])
+        for value in ["2-3", "2학년 3반", "203", " 2 - 03 "]:
+            self.assertEqual(T.find_class(self.tt, value), "2-3")
+        for value in ["", "2-", "2-0", "000", "299", "2학년"]:
+            self.assertIsNone(T.find_class(self.tt, value))
+
+    def test_class_week_swaps_locks_and_purity(self):
+        import copy
+        before = copy.deepcopy(self.tt)
+        candidate = T.find_candidates(self.tt, 0, "0-1", self.mon, today=self.mon)[0]
+        swaps = [{"moves": candidate["moves"]}]
+        lessons = T.class_lessons_on(self.tt, "201", self.mon, swaps)
+        self.assertEqual(lessons, [
+            {"period": 1, "subj": "영어", "tid": 1, "teacher": "박영어", "moved": True, "locked": False},
+            {"period": 3, "subj": "국어", "tid": 0, "teacher": "김국어", "moved": True, "locked": False},
+        ])
+        week = T.class_week(self.tt, "2학년 1반", date(2026, 11, 4), swaps)
+        self.assertEqual(list(week), ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"])
+        self.assertTrue(week["2026-11-03"][1]["locked"])
+        self.assertFalse(T.class_week(self.tt, "2-1", date(2026, 11, 9), swaps)["2026-11-09"][0]["moved"])
+        self.assertEqual(T.class_lessons_on(self.tt, "2-1", date(2026, 11, 7)), [])
+        self.assertEqual(T.class_lessons_on(self.tt, "9-9", self.mon), [])
+        self.assertEqual(self.tt, before)
+
+    def test_team_teaching_and_real_slots(self):
+        self.tt["teachers"][2]["lessons"]["0-1"]["cls"] = "2-1"
+        self.assertEqual([l["tid"] for l in T.class_lessons_on(self.tt, "2-1", self.mon)][:2], [0, 2])
+        self.tt["slots"] = [s for s in self.tt["slots"] if s["key"] != "0-3"]
+        self.tt["slots"].append({"key": "5-1", "d": 5, "p": 1})
+        self.assertEqual([l["period"] for l in T.class_lessons_on(self.tt, "2-1", self.mon)], [1, 1])
+        rows = T.common_free(self.tt, [0, 1], self.mon)
+        self.assertEqual(len(rows), 14)
+        self.assertNotIn(("월", 3), [(r["day"], r["period"]) for r in rows])
+        self.assertNotIn("토", [r["day"] for r in rows])
+
+    def test_free_uses_swaps_and_does_not_mutate_inputs(self):
+        import copy
+        candidate = T.find_candidates(self.tt, 0, "0-1", self.mon, today=self.mon)[0]
+        swaps = [{"moves": candidate["moves"]}]
+        original = copy.deepcopy((self.tt, swaps))
+        rows = T.common_free(self.tt, [0, 0, 1], self.mon, swaps)
+        self.assertEqual((rows[0]["free"], rows[0]["busy"]), ([0], [1]))
+        self.assertEqual((rows[2]["free"], rows[2]["busy"]), ([1], [0]))
+        self.assertIsNone(rows[0]["note"])
+        self.assertEqual((self.tt, swaps), original)
+        self.assertEqual(T.common_free(self.tt, [], self.mon), [])
+        with self.assertRaises(T.TimetableError):
+            T.common_free(self.tt, [99], self.mon)
+
+    def test_partial_grade_off_is_not_school_off(self):
+        evs = {"2026-11-02": ["2학년 현장체험학습"]}
+        self.assertEqual(T.common_free(self.tt, [0, 1], self.mon, day_events=evs)[0]["note"]["level"], "off")
+        self.tt["teachers"][2]["lessons"]["0-1"]["cls"] = "1-1"
+        row = T.common_free(self.tt, [0, 1], self.mon, day_events=evs)[0]
+        self.assertEqual(row["note"], {"level": "maybe", "text": "2학년 현장체험학습"})
+        self.assertEqual((row["free"], row["busy"]), ([1], [0]))
+        evs["2026-11-02"].append("1학년 현장체험학습")
+        row = T.common_free(self.tt, [0, 1], self.mon, day_events=evs)[0]
+        self.assertEqual(row["note"]["level"], "off")
+        self.assertEqual((row["free"], row["busy"]), ([], []))
+        for text, expected in [("공휴일", "off"), ("체육대회", "maybe"), ("3학년 현장체험학습", None)]:
+            row = T.common_free(self.tt, [0, 1], self.mon, day_events={"2026-11-02": [text]})[0]
+            self.assertEqual(row["note"]["level"] if row["note"] else None, expected)
+
+
+class ClassAndFreeApiTests(unittest.TestCase):
+    setUpClass = classmethod(test_server.ServerTests.setUpClass.__func__)
+    tearDownClass = classmethod(test_server.ServerTests.tearDownClass.__func__)
+    req = test_server.ServerTests.req
+
+    def test_class_and_free_routes(self):
+        from urllib.parse import quote
+        self.assertEqual(self.req("GET", "/api/timetable/class")[0], 404)
+        self.assertEqual(self.req("GET", "/api/timetable/free?tids=0")[0], 404)
+        tt, _ = T.parse_file(sample_xlsx())
+        self.env.db.set_meta("timetable", tt)
+        self.env.config.values.update(grade="2", class_no="3")
+        info = self.req("GET", "/api/timetable")[1]
+        self.assertEqual((info["classes"], info["default_class"]), (["2-1", "2-2", "2-3"], "2-3"))
+        status, wk = self.req("GET", "/api/timetable/class?week=2026-11-04")
+        self.assertEqual(status, 200, wk)
+        self.assertEqual((wk["monday"], wk["cls"]), ("2026-11-02", "2-3"))
+        self.assertEqual(wk["week"]["2026-11-02"][0]["teacher"], "최수학")
+        self.assertIsInstance(wk["days"][0]["past"], bool)
+        for alias in ["203", "2-3", quote("2학년 3반")]:
+            status, alias_week = self.req("GET", f"/api/timetable/class?cls={alias}&week=2026-11-02")
+            self.assertEqual(status, 200, alias_week)
+            self.assertEqual(alias_week["cls"], "2-3")
+            self.assertEqual(alias_week["week"], wk["week"])
+        self.env.db.execute("INSERT INTO events(item_id, date, kind, category, text) VALUES(NULL, ?, 'event', '학사', ?)",
+                            ("2026-11-02", "2학년 현장체험학습"))
+        status, wk = self.req("GET", f"/api/timetable/class?cls={quote('2학년 1반')}&week=2026-11-02")
+        self.assertEqual(status, 200, wk)
+        self.assertEqual(wk["cls"], "2-1")
+        self.assertEqual(wk["days"][0]["note"]["level"], "off")
+        status, free = self.req("GET", "/api/timetable/free?tids=0,1&week=2026-11-04")
+        self.assertEqual(status, 200, free)
+        self.assertEqual(free["tids"], [0, 1])
+        self.assertEqual(len(free["slots"]), 15)
+        self.assertEqual(free["days"][0]["note"], free["slots"][0]["note"])
+        self.assertEqual(free["slots"][0]["free"], [])
+        for path, code in [
+            ("/class?cls=299", 404), ("/class?week=2026-02-30", 400),
+            ("/free?tids=99", 400), ("/free?tids=a", 400), ("/free?tids=0,", 400),
+            ("/free?tids=%C2%B2", 400),
+            ("/free?tids=0&week=no", 400),
+        ]:
+            self.assertEqual(self.req("GET", "/api/timetable" + path)[0], code, path)
+        for path in ["/free", "/free?tids=", "/free?tids=%20"]:
+            separator = "&" if "?" in path else "?"
+            status, empty = self.req("GET", "/api/timetable" + path + separator + "week=2026-11-02")
+            self.assertEqual(status, 200, empty)
+            self.assertEqual(empty["slots"], [])
+            self.assertEqual(empty["monday"], "2026-11-02")
+            self.assertEqual(len(empty["days"]), 5)
+        self.assertEqual(self.req("GET", "/api/timetable/free?tids=0", token=False)[0], 401)
+        self.env.config.values.update(grade="", class_no="")
+        self.assertEqual(self.req("GET", "/api/timetable/class")[1]["cls"], "2-1")
+        self.assertIsNone(self.req("GET", "/api/timetable")[1]["default_class"])
+
+    def test_swapped_class_and_free_queries_are_read_only(self):
+        from unittest.mock import patch
+        mon = date(2026, 11, 2)
+        tt, _ = T.parse_file(sample_xlsx())
+        self.env.db.set_meta("timetable", tt)
+        self.env.db.execute("DELETE FROM events")
+        candidate = T.find_candidates(tt, 0, "0-1", mon, today=mon)[0]
+        swaps = [{"moves": candidate["moves"]}]
+        self.env.db.set_meta("timetable_swaps", swaps)
+        before = self.env.db.conn.total_changes
+        with patch.object(self.env.db, "set_meta", wraps=self.env.db.set_meta) as save, \
+                patch.object(self.env.db, "execute", wraps=self.env.db.execute) as write:
+            status, cls = self.req("GET", "/api/timetable/class?cls=201&week=2026-11-02")
+            self.assertEqual(status, 200, cls)
+            self.assertEqual([(l["period"], l["teacher"], l["moved"]) for l in cls["week"]["2026-11-02"]],
+                             [(1, "박영어", True), (3, "김국어", True)])
+            status, free = self.req("GET", "/api/timetable/free?tids=0,1&week=2026-11-02")
+            self.assertEqual(status, 200, free)
+            self.assertEqual((free["slots"][0]["free"], free["slots"][0]["busy"]), ([0], [1]))
+            self.assertEqual((free["slots"][2]["free"], free["slots"][2]["busy"]), ([1], [0]))
+            status, next_week = self.req("GET", "/api/timetable/class?cls=201&week=2026-11-09")
+            self.assertEqual(status, 200, next_week)
+            self.assertEqual(next_week["week"]["2026-11-09"][0]["teacher"], "김국어")
+            self.assertFalse(next_week["week"]["2026-11-09"][0]["moved"])
+            save.assert_not_called()
+            write.assert_not_called()
+        self.assertEqual(self.env.db.conn.total_changes, before)
+        self.assertEqual(self.env.db.get_meta("timetable"), tt)
+        self.assertEqual(self.env.db.get_meta("timetable_swaps"), swaps)
