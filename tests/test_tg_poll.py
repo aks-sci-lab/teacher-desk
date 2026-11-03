@@ -76,9 +76,17 @@ class PollingResilienceTests(unittest.TestCase):
             self.assertTrue(wait_for(lambda: bot.last_poll is not None))        # 끊긴 응답 두 번 뒤에 정상으로 돌아옴
         self.assertTrue(bot.alive())
         self.assertIn("연결", bot.status)
-        self.assertIn("IncompleteRead", bot.last_error)                          # 원인이 화면·'상태' 에 남음
-        warns = [r["message"] for r in self.env.db.query("SELECT message FROM logs WHERE level = 'warn'") if "IncompleteRead" in r["message"]]
-        self.assertEqual(len(warns), 1)                                          # 같은 오류는 기록에 한 번만
+        self.assertTrue(bot.last_error)                                          # 원인이 화면·'상태' 에 남음 (오류 이름은 환경마다 다름)
+
+    def test_same_error_is_logged_once(self):
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        for _ in range(3):
+            bot.note_error(ConnectionResetError("끊김"))
+        bot.note_error(KeyError("다른 오류"))
+        warns = [r["message"] for r in self.env.db.query("SELECT message FROM logs WHERE level = 'warn'")]
+        self.assertEqual(len([w for w in warns if "ConnectionResetError" in w]), 1)   # 같은 오류는 기록에 한 번만
+        self.assertEqual(len([w for w in warns if "KeyError" in w]), 1)
+        self.assertIn("KeyError", bot.last_error)
 
     def test_unexpected_error_in_loop_does_not_kill_thread(self):
         fake = FakeTelegram()
