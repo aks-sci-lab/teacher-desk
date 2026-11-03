@@ -199,9 +199,12 @@ class DB:
                      (key, json.dumps(value, ensure_ascii=False)))
 
     def log(self, message, level="info"):
-        self.execute("INSERT INTO logs(at, level, message) VALUES(?, ?, ?)", (now_str(), level, message))
-        # 기록이 끝없이 늘지 않게 최근 500개만 남김
-        self.execute("DELETE FROM logs WHERE id <= (SELECT MAX(id) - 500 FROM logs)")
+        with self.lock, self.conn:
+            self.conn.execute(
+                "INSERT INTO logs(at, level, message) VALUES(?, ?, ?)",
+                (now_str(), level, message),
+            )
+            self.conn.execute("DELETE FROM logs WHERE id <= (SELECT MAX(id) - 500 FROM logs)")
 
     # ---- 학생 명단 ----
     def students(self):
@@ -210,13 +213,19 @@ class DB:
     def replace_students(self, rows):
         """명단을 통째로 바꿈. 연락처를 주지 않은 줄은 같은 번호·이름의 예전 연락처를 이어 받음."""
         with self.lock:
-            old = {(r[0], r[1]): r[2] for r in self.conn.execute("SELECT number, name, parent_phone FROM students")}
-            self.conn.execute("DELETE FROM students")
-            self.conn.executemany(
-                "INSERT INTO students(number, name, parent_phone) VALUES(?, ?, ?)",
-                [(r["number"], r["name"], r["parent_phone"] if r.get("parent_phone") is not None
-                  else old.get((r["number"], r["name"]))) for r in rows])
-            self.conn.commit()
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                old = {(r[0], r[1]): r[2] for r in self.conn.execute(
+                    "SELECT number, name, parent_phone FROM students")}
+                self.conn.execute("DELETE FROM students")
+                self.conn.executemany(
+                    "INSERT INTO students(number, name, parent_phone) VALUES(?, ?, ?)",
+                    [(r["number"], r["name"], r["parent_phone"] if r.get("parent_phone") is not None
+                      else old.get((r["number"], r["name"]))) for r in rows])
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
 
     # ---- 수신 항목 ----
     def add_item(self, source, title, body, received_at, analysis, content_hash=None, file_path=None,
@@ -228,30 +237,44 @@ class DB:
         if registered is None:
             registered = source in ("paste", "school")
         with self.lock:
-            cur = self.conn.execute(
-                "INSERT INTO items(source, title, body, received_at, created_at, content_hash, summary, "
-                "category, doc_numbers, file_path, registered, images) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (source, title, body, received_at, now_str(), content_hash,
-                 json.dumps(analysis["summary"], ensure_ascii=False), analysis["category"],
-                 json.dumps(analysis["doc_numbers"], ensure_ascii=False), file_path, int(bool(registered)),
-                 json.dumps(images, ensure_ascii=False) if images is not None else None))
-            item_id = cur.lastrowid
-            self.conn.executemany(
-                "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",
-                [(item_id, e["date"], e.get("end_date"), e.get("time"), e["kind"], e["category"], e["text"])
-                 for e in analysis["events"]])
-            self.conn.commit()
-            return item_id
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if content_hash and self.conn.execute(
+                        "SELECT 1 FROM items WHERE content_hash = ? LIMIT 1", (content_hash,)).fetchone():
+                    self.conn.rollback()
+                    return None
+                cur = self.conn.execute(
+                    "INSERT INTO items(source, title, body, received_at, created_at, content_hash, summary, "
+                    "category, doc_numbers, file_path, registered, images) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (source, title, body, received_at, now_str(), content_hash,
+                     json.dumps(analysis["summary"], ensure_ascii=False), analysis["category"],
+                     json.dumps(analysis["doc_numbers"], ensure_ascii=False), file_path, int(bool(registered)),
+                     json.dumps(images, ensure_ascii=False) if images is not None else None))
+                item_id = cur.lastrowid
+                self.conn.executemany(
+                    "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",
+                    [(item_id, e["date"], e.get("end_date"), e.get("time"), e["kind"], e["category"], e["text"])
+                     for e in analysis["events"]])
+                self.conn.commit()
+                return item_id
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def replace_events(self, item_id, events):
         """한 항목의 일정을 새로 찾은 것으로 바꿈."""
         with self.lock:
-            self.conn.execute("DELETE FROM events WHERE item_id = ?", (item_id,))
-            self.conn.executemany(
-                "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",
-                [(item_id, e["date"], e.get("end_date"), e.get("time"), e["kind"], e["category"], e["text"])
-                 for e in events])
-            self.conn.commit()
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                self.conn.execute("DELETE FROM events WHERE item_id = ?", (item_id,))
+                self.conn.executemany(
+                    "INSERT INTO events(item_id, date, end_date, time, kind, category, text) VALUES(?,?,?,?,?,?,?)",
+                    [(item_id, e["date"], e.get("end_date"), e.get("time"), e["kind"], e["category"], e["text"])
+                     for e in events])
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def item(self, item_id):
         it = self.one("SELECT * FROM items WHERE id = ?", (item_id,))
