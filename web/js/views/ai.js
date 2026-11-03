@@ -12,7 +12,7 @@ const LINKS = { openai: 'https://platform.openai.com/api-keys', anthropic: 'http
 
 export function openAI() {
     let controller;
-    return openTab({ id: 'ai', title: 'AI 질문', onClose: () => controller?.abort(), render(pane) {
+    return openTab({ id: 'ai', title: 'AI 질문', menu: true, onClose: () => controller?.abort(), render(pane) {
         const mode = el('select', MODES.map(([value, name]) =>
             el('option', { value, selected: store.settings.ai_provider === value }, name)));
         const model = el('input', { type: 'text', maxLength: 120, autocomplete: 'off' });

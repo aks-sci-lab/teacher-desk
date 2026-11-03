@@ -120,7 +120,7 @@ function renderMonth(pane, tab) {
 }
 
 export function openCalendar() {
-    openTab({ id: 'calendar', title: '달력', wide: true, render: renderMonth });
+    openTab({ id: 'calendar', title: '달력', menu: true, wide: true, render: renderMonth });
 }
 
 async function loadUpcoming() {

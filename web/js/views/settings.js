@@ -429,7 +429,7 @@ function renderSettings(pane, tab) {
 }
 
 export function openSettings() {
-    openTab({ id: 'settings', title: '설정', render: renderSettings });
+    openTab({ id: 'settings', title: '설정', menu: true, render: renderSettings });
 }
 
 registerView({
