@@ -70,6 +70,27 @@
 - 머지는 여전히 사용자가 "머지해" 라고 직접 말한 PR 에 대해서만 한다 (머지 = 배포).
 - **한 대화는 한 저장소만 다룬다.** 업무 데스크(`teacher-desk`)·실험실(`arduino_experiments`)·문항 그림 도구(`figure-maker`) 일을 한 대화에 섞지 않는다. 다른 저장소 일이 생기면 그 프로젝트의 대화에 PR 설명이나 메시지로 넘긴다 (사용자 결정 2026-10-30).
 
+## 세션(대화) 담당 영역 (사용자 결정 2026-11-03)
+
+개발 내용별로 대화를 나눈다. 한 대화는 자기 영역의 파일만 고치고, 다른 영역 일이 생기면 총괄 대화에 넘긴다.
+
+| 대화 | 맡는 일 | 주로 고치는 파일 |
+|---|---|---|
+| 총괄 | 요청을 받아 담당 대화에 나눠 줌, 대화 사이 조율, 영역에 안 맞는 작은 문서 일 | `AGENTS.md`·`docs/HANDOFF.md` |
+| 머지 전용 | PR 검토·머지(사용자 승인 후)·배포 확인, 충돌 정리 | (코드 안 고침) |
+| 수신함·수집 | 쿨메신저·에듀파인 수집, hwp/hwpx/pdf 읽기, 날짜·마감 찾기, 수신함·검색 화면 | `collect.py` `coolmsg.py` `docs.py` `cfb.py` `preview.py` `extract.py` `watcher.py` `scheduler.py` · `views/inbox.js` `views/search.js` |
+| AI | 브리핑 AI 요약(지난 접속 이후), 수신 항목 자동 요약, 일반 질문 AI | `ai.py` `localai.py` `providers.py` `visits.py` · `views/ai.js` `browser-ai.js` · `views/today.js` 의 AI 카드 |
+| 출결·증 발급 | 조퇴·외출증, 결석계, 월별 통계, 인쇄, 학생 공유 페이지 | `absence.py` `printing.py` `passlink.py` `queries.py`(출결) · `views/passes.js` `views/absence.js` `views/attendance.js` · `pass/` |
+| 일정·시간표·주간 계획 | 달력·일정, 학사일정(파일·나이스), 시간표·교체·수업 알림, 주간 계획, 브리핑 일정 카드 | `schoolcal.py` `xlsx.py` `neis.py` `timetable.py` `bell.py` `weekplan.py` `ics.py` · `views/calendar.js` `views/schoolcal.js` `views/timetable.js` `views/week.js` `views/today.js`(일정 카드) |
+| 텔레그램 | 봇 명령·알림·대화형 입력 | `telegram.py` `assist.py` |
+| 브라우저 확장·외부 연동 | 에듀파인·나이스 화면 보내기, 나이스 입력 칸 채우기(**보류**) | `browser-extension/` `capture.py` `neisfill.py` · `views/neisfill.js` |
+| 앱 기반·설정·배포·품질 | 화면 틀(탭·팝업·메뉴), 설정 화면, 전용 창, 업데이트, 윈도우 ZIP·CI, 성능·무결성 점검(코파일럿 계획 검토 포함) | `server.py`(공통 부분) `config.py` `db.py` `window.py` `background.py` `updater.py` `desk.py` · `shell.js` `ui.js` `api.js` `store.js` `singleton.js` `update.js` `main.js` `views/settings.js` · `tools/` `.github/` |
+
+- **같이 쓰는 파일**(`desk/server.py` API, `web/css/desk.css`, `web/js/main.js`)은 자기 영역 부분만 작게 고친다. CSS 는 맨 아래 자기 영역 묶음에 덧붙인다. 큰 구조 변경(예: `server.py` 를 영역별 파일로 나누기)은 '앱 기반' 대화가 **열린 PR 이 없을 때** 한다.
+- 대화마다 **PR 은 한 번에 하나**. 시작 전에 열린 PR 이 같은 파일을 고치는지 보고, 겹치면 PR 설명에 머지 순서를 적는다 (위 '충돌 줄이기').
+- 여러 영역에 걸친 일은 총괄 대화가 나눠서 각 대화에 맡기거나, 한 대화가 맡고 나머지에 알린다.
+- GitHub Copilot 도 같은 나눔을 따른다: 맡은 일이 어느 영역인지 PR 설명 첫 줄에 적고(예: `영역: 출결·증 발급`), 그 영역의 파일 위주로 고친다.
+
 ## 충돌 줄이기 (사용자 결정 2026-10-30)
 
 버전 번호(`desk/__init__.py`)와 `docs/CHANGELOG.md`·`docs/DESIGN.md` 끝줄은 PR 마다 같은 자리를 고쳐서, PR 이 동시에 둘 이상이면 거의 항상 충돌한다 (예: #38 0.5.41 과 #39 0.5.42).
