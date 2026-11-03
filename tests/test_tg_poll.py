@@ -149,6 +149,78 @@ class PollingResilienceTests(unittest.TestCase):
         self.assertIsNone(Bot(self.env.db, self.env.config).saved_offset("OTHER:TOKEN"))  # 토큰이 바뀌면 처음부터
 
 
+class BacklogAndWatchdogTests(unittest.TestCase):
+    def setUp(self):
+        self.env = Env()
+        self.fake = FakeTelegram()
+        self.env.config.values.update(telegram_token="T:T", telegram_api_base=self.fake.base)
+        self.env.db.set_meta("telegram_chat_id", 111)
+        self.bot = Bot(self.env.db, self.env.config, self.env.collector)
+
+    def tearDown(self):
+        self.bot.stop()
+        if self.bot.thread:
+            self.bot.thread.join(3)
+        self.fake.close()
+        self.env.close()
+
+    def test_commands_piled_up_while_pc_was_off_are_not_run(self):
+        """PC 가 꺼져 있던 동안 쌓인 명령(텔레그램은 24시간 보관)이 켜지자마자 한꺼번에 실행되던 것 — 발급·업데이트 명령이 뜻하지 않게 실행될 수 있음."""
+        self.env.db.replace_students([{"number": 7, "name": "한가람"}])
+        now = time.time()
+        self.fake.push("조퇴 7 13:30", date=now - 3600)          # 1시간 전 (실행하지 않음)
+        self.fake.push_button("pr:abc123:0")                      # 보낸 시각을 알 수 없는 단추: 켠 뒤 첫 묶음이라 실행하지 않음
+        self.fake.push("상태", date=now - 5)                      # 방금 보낸 명령은 처리
+        self.bot.start()
+        self.assertTrue(wait_for(lambda: self.bot.last_handled))
+        self.assertTrue(wait_for(lambda: any("실행하지 않았습니다" in m["text"] for m in self.fake.sent)))
+        texts = "\n".join(m["text"] for m in self.fake.sent)
+        self.assertIn("업무 데스크 상태", texts)                    # '상태' 는 답함
+        self.assertNotIn("사유를 고르면", texts)                    # 1시간 전 '조퇴' 는 시작하지 않음
+        self.assertIn("2개는 실행하지 않았습니다", texts)
+        self.assertEqual(self.fake.edited, [])                    # 오래된 단추도 처리하지 않음 (낡은 글 편집 없음)
+        self.assertEqual(len(self.env.db.get_meta("telegram_pending") or {}), 0)
+
+    def test_stale_rule(self):
+        now = 1_000_000
+        fresh = {"message": {"date": now - 30, "chat": {"id": 1}}}
+        old = {"message": {"date": now - 700, "chat": {"id": 1}}}
+        undated = {"message": {"chat": {"id": 1}}}
+        button = {"callback_query": {"data": "x", "message": {"chat": {"id": 1}}}}
+        stale = lambda u, backlog: Bot.is_stale(u, backlog, now)
+        self.assertFalse(stale(fresh, True))
+        self.assertTrue(stale(old, False))                      # 글은 오래되면 언제나
+        self.assertFalse(stale(undated, True))
+        self.assertTrue(stale(button, True))                    # 단추는 오래 끊겼다 돌아온 첫 묶음에서만
+        self.assertFalse(stale(button, False))
+        self.assertEqual(Bot.update_chat(button), 1)
+
+    def test_live_button_is_still_handled_after_start(self):
+        self.bot.start()
+        self.assertTrue(wait_for(lambda: self.bot.last_poll))
+        self.fake.push_button("uc:0")                             # 앱이 켜져 있는 동안 누른 단추는 처리
+        self.assertTrue(wait_for(lambda: self.fake.edited))
+        self.assertIn("업데이트", self.fake.edited[-1]["text"])
+
+    def test_watchdog_restarts_a_dead_polling_thread(self):
+        class Kill(BaseException):
+            pass
+        calls = []
+        real = self.bot._loop
+
+        def flaky():
+            calls.append(1)
+            if len(calls) == 1:
+                raise Kill()                      # 어떤 예외로도 스레드가 끝나는 경우를 흉내
+            return real()
+        self.bot._loop = flaky
+        with patch.object(telegram, "WATCH_EVERY", 0.05), patch("threading.excepthook", lambda args: None):
+            self.bot.start()
+            self.assertTrue(wait_for(lambda: len(calls) >= 2 and self.bot.alive() and self.bot.last_poll))
+        warns = [r["message"] for r in self.env.db.query("SELECT message FROM logs") if "수신이 멈춰 있어" in r["message"]]
+        self.assertEqual(len(warns), 1)
+
+
 class RefreshInBackgroundTests(unittest.TestCase):
     def test_refresh_does_not_block_polling_thread(self):
         env = Env()

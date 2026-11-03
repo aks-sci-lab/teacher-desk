@@ -60,10 +60,20 @@ class FakeTelegram:
         self.base = f"http://127.0.0.1:{self.port}"
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
-    def push(self, text, chat_id=111, chat_type="private"):
+    def push(self, text, chat_id=111, chat_type="private", date=None):
         with self.cond:
-            self.updates.append({"update_id": self.next_id, "message": {
-                "message_id": self.next_id, "text": text, "chat": {"id": chat_id, "type": chat_type}}})
+            msg = {"message_id": self.next_id, "text": text, "chat": {"id": chat_id, "type": chat_type}}
+            if date is not None:
+                msg["date"] = date   # 보낸 시각 (epoch 초)
+            self.updates.append({"update_id": self.next_id, "message": msg})
+            self.next_id += 1
+            self.cond.notify_all()
+
+    def push_button(self, data, chat_id=111, message_id=1):
+        with self.cond:
+            self.updates.append({"update_id": self.next_id, "callback_query": {
+                "id": f"q{self.next_id}", "data": data, "from": {"id": chat_id},
+                "message": {"message_id": message_id, "chat": {"id": chat_id, "type": "private"}}}})
             self.next_id += 1
             self.cond.notify_all()
 
