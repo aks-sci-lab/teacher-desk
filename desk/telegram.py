@@ -18,7 +18,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import VERSION, absence, ai, assist, passlink, printing, providers, queries
+from . import VERSION, absence, ai, assist, passlink, printing, providers, queries, timetable
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -28,6 +28,9 @@ HELP = (
     "마감 — 7일 안의 마감\n"
     "브리핑 — 오늘 + 지난 1주일 AI 요약\n"
     "내일 수업 · 금요일 시간표 — 내 수업\n"
+    "2-3 시간표 · 2-3 내일 · 2학년 3반 목요일 — 그 학급 시간표(과목·선생님)\n"
+    "2-3 지금 — 지금(쉬는 시간이면 다음) 그 반 수업\n"
+    "빈 시간 김철수 이영희 [다음주] — 나와 같이 비는 시간\n"
     "\n■ 학생\n"
     "조퇴 7 [13:30] · 외출 7 [13:30] [14:30] — 사유는 단추로, 발급 뒤 인쇄·웹 링크 선택\n"
     "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
@@ -355,6 +358,10 @@ class Bot:
             if cmd == "brief":
                 return self.send_brief(cid)
             return self.send_answer(cid, cmd)
+        found_tt = assist.timetable_intent(text)   # '2-3 시간표'·'빈 시간 …' 처럼 뚜렷한 모양일 때만
+        if found_tt:
+            self.dialog = None
+            return self.timetable_command(cid, *found_tt)
         if self.dialog and not text.startswith("/"):
             return self.dialog_input(cid, text)
         if text.startswith("/"):
@@ -419,6 +426,8 @@ class Bot:
                 return self.reply(cid, "검색어를 100자 안쪽으로 보내세요. 그만하려면 '취소'.")
             self.dialog = None
             return self.send_search(cid, text)
+        if kind == "free":
+            return self.free_pick(cid, dialog, text.strip())
         if step == "number":
             if not text.isdigit() or len(text) > 5:
                 return self.reply(cid, "학생 번호만 보내세요. 예: 7. 그만하려면 '취소'.")
@@ -837,6 +846,173 @@ class Bot:
                       + (" (교체)" if l["moved"] else "") + queries.note_text(l) for l in ls] or ["  없음"]
         return "\n".join(lines)
 
+    # ---- 시간표: 학급 시간표·지금 수업·같이 비는 시간 (0.5.65, 선생님 이름·학급·과목·교시만, 학생 이름 없음) ----
+    def timetable_command(self, cid, kind, args, today=None, now=None):
+        today = today or date.today()
+        tt = self.db.get_meta("timetable")
+        if not tt:
+            return self.reply(cid, "불러온 시간표가 없습니다. 업무 데스크 → 시간표에서 학교 시간표 엑셀을 불러오세요.")
+        if kind == "free":
+            return self.begin_free(cid, tt, args, today)
+        cls = timetable.find_class(tt, args["cls"])
+        if not cls:
+            return self.reply(cid, f"시간표에 {args['cls']} 학급이 없습니다. 예: 2-3 시간표 (학급: {', '.join(timetable.class_list(tt)[:8])}…)")
+        if kind == "class_now":
+            return self.reply(cid, self.mask(self.class_now_text(tt, cls, now or datetime.now())))
+        days = assist.lesson_days(args["text"], today)[:5]
+        weekend = not days
+        if weekend:   # 주말이라 수업일이 없으면 다음 월요일
+            days = [today + timedelta(days=7 - today.weekday())]
+        text = "\n".join(self.class_day_text(tt, cls, d, today) for d in days)
+        if weekend:
+            text = "주말이라 다음 월요일을 보여 드립니다.\n" + text
+        return self.reply(cid, self.mask(text))
+
+    def period_span(self, p):
+        t = (self.db.get_meta("timetable_periods") or {}).get(str(p)) or {}
+        return f" {t['start']}~{t.get('end', '')}" if t.get("start") else ""
+
+    def class_day_text(self, tt, cls, d, today):
+        swaps = self.db.get_meta("timetable_swaps") or []
+        lessons = timetable.class_lessons_on(tt, cls, d, swaps)
+        note = timetable.day_note(queries.school_day_events(self.db, d, d), d, timetable.grade_of(cls))
+        lines = [f"📚 {fmt_day(d.isoformat(), today)} {cls} 시간표 {len({l['period'] for l in lessons})}시간"]
+        if note:
+            lines.append((f"⛔ 수업 없음({note['text'][:30]})" if note["level"] == "off" else f"⚠ 학사일정 확인({note['text'][:30]})"))
+        lines += [f"  {l['period']}교시{self.period_span(l['period'])} {l['subj']} {l['teacher']}" + (" (교체)" if l["moved"] else "")
+                  for l in lessons] or ["  없음"]
+        return "\n".join(lines)
+
+    def class_now_text(self, tt, cls, now):
+        """지금(쉬는 시간이면 다음) 교시의 과목·선생님. 교시 시간은 시간표 화면에서 정한 것(meta.timetable_periods)."""
+        periods = self.db.get_meta("timetable_periods") or {}
+        if not periods:
+            return "교시 시간이 정해져 있지 않습니다. 업무 데스크 → 시간표에서 교시 시간을 정하세요. (시간표는 '2-3 시간표' 로 볼 수 있습니다)"
+        today = now.date()
+        if today.weekday() >= len(tt["days"]) or today.weekday() >= 5:
+            return f"오늘은 주말이라 {cls} 수업이 없습니다."
+        lessons = timetable.class_lessons_on(tt, cls, today, self.db.get_meta("timetable_swaps") or [])
+        note = timetable.day_note(queries.school_day_events(self.db, today, today), today, timetable.grade_of(cls))
+        if note and note["level"] == "off":
+            return f"⛔ 오늘은 {cls} 수업이 없는 날입니다 ({note['text'][:30]})."
+        spans = []
+        for p, t in periods.items():
+            try:
+                start = datetime.combine(today, datetime.strptime(t["start"], "%H:%M").time())
+                end = datetime.combine(today, datetime.strptime(t["end"], "%H:%M").time())
+            except (KeyError, ValueError, TypeError):
+                continue
+            spans.append((int(p), start, end))
+        spans.sort()
+
+        def who(p):
+            rows = [l for l in lessons if l["period"] == p]
+            return " · ".join(f"{l['subj']} {l['teacher']}" + (" (교체)" if l["moved"] else "") for l in rows) or "수업 없음"
+        warn = f"\n⚠ 학사일정 확인({note['text'][:30]})" if note else ""
+        for p, start, end in spans:
+            if start <= now < end:
+                return f"🔔 지금 {cls} {p}교시 ({start:%H:%M}~{end:%H:%M})\n  {who(p)}{warn}"
+        upcoming = [x for x in spans if x[1] > now]
+        if upcoming:
+            p, start, end = upcoming[0]
+            lead = "아직 수업 전입니다" if now < spans[0][1] else "지금은 쉬는 시간입니다"
+            return f"⏳ {lead}. 다음은 {cls} {p}교시 ({start:%H:%M}~{end:%H:%M})\n  {who(p)}{warn}"
+        return f"오늘 {cls} 수업이 모두 끝났습니다."
+
+    def free_candidates(self, tt, name):
+        """이름에 맞는 선생님 번호들 (이름이 정확히 같은 사람이 있으면 그들, 없으면 이름에 낱말이 든 사람)."""
+        exact = [t["id"] for t in tt["teachers"] if t["name"].replace(" ", "") == name]
+        return exact or [t["id"] for t in tt["teachers"] if name in t["name"].replace(" ", "")]
+
+    def teacher_label(self, tt, tid):
+        from collections import Counter
+        t = tt["teachers"][tid]
+        subj = Counter(l["subj"] for l in t["lessons"].values() if l.get("subj")).most_common(1)
+        return t["name"] + (f" ({subj[0][0]})" if subj else "")
+
+    def begin_free(self, cid, tt, args, today):
+        if not args["names"]:
+            return self.reply(cid, "같이 비는 시간을 볼 선생님 이름을 함께 보내세요. 예: 빈 시간 김철수 이영희 (나는 자동으로 들어갑니다)")
+        groups = []
+        for name in args["names"]:
+            found = self.free_candidates(tt, name)
+            if not found:
+                return self.reply(cid, f"시간표에서 '{name}' 선생님을 찾지 못했습니다. 이름을 다시 확인하세요.")
+            groups.append(found[:9])
+        dialog = {"id": secrets.token_hex(6), "kind": "free", "step": "pick", "names": args["names"], "groups": groups,
+                  "chosen": [g[0] if len(g) == 1 else None for g in groups], "next": args["next"],
+                  "expires": time.monotonic() + DIALOG_TTL}
+        if None not in dialog["chosen"]:
+            return self.reply(cid, self.mask(self.free_text(tt, dialog["chosen"], args["next"], today)))
+        self.dialog = dialog
+        return self.free_ask(cid, tt, dialog, None)
+
+    def free_ask(self, cid, tt, dialog, message_id):
+        idx = dialog["chosen"].index(None)
+        cands = dialog["groups"][idx]
+        text = (f"'{dialog['names'][idx]}' 이(가) 여러 명입니다. 번호를 보내거나 단추를 누르세요.\n"
+                + "\n".join(f"{n}. {self.teacher_label(tt, tid)}" for n, tid in enumerate(cands, 1)))
+        buttons = [[{"text": f"{n}", "callback_data": f"dlg:{dialog['id']}:fp:{n}"} for n in range(1, len(cands) + 1)],
+                   [{"text": "취소", "callback_data": f"dlg:{dialog['id']}:cancel"}]]
+        return self.show(cid, message_id, text, buttons)
+
+    def free_pick(self, cid, dialog, choice, message_id=None):
+        tt = self.db.get_meta("timetable")
+        if not tt or dialog["step"] != "pick" or None not in dialog["chosen"]:
+            return self.reply(cid, "이미 처리했거나 오래된 선택입니다. 다시 보내 주세요.")
+        idx = dialog["chosen"].index(None)
+        cands = dialog["groups"][idx]
+        if not choice.isdigit() or not 1 <= int(choice) <= len(cands):
+            return self.reply(cid, f"1~{len(cands)} 번호를 보내거나 단추를 눌러 주세요. 그만하려면 '취소'.")
+        dialog["chosen"][idx] = cands[int(choice) - 1]
+        if None in dialog["chosen"]:
+            return self.free_ask(cid, tt, dialog, message_id)
+        self.dialog = None
+        return self.show(cid, message_id, self.mask(self.free_text(tt, dialog["chosen"], dialog["next"], date.today())), [])
+
+    def free_text(self, tt, tids, nxt, today):
+        """'나' 와 고른 선생님들이 모두 비는 교시 (이번 주는 남은 날만, 다음 주는 월~)."""
+        me = self.db.get_meta("timetable_me")
+        notes = []
+        if me is not None and 0 <= me < len(tt["teachers"]):
+            tids = [me] + [t for t in tids if t != me]
+        else:
+            notes.append("(내 이름이 시간표에 정해져 있지 않아 '나' 는 빼고 계산했습니다)")
+        tids = list(dict.fromkeys(tids))
+        mon = timetable.monday(today)
+        if nxt or today.weekday() >= 5:
+            mon += timedelta(days=7)
+            if not nxt:
+                notes.append("(이번 주는 끝나서 다음 주로 계산했습니다)")
+        evs = queries.school_day_events(self.db, mon, mon + timedelta(days=6))
+        periods = self.db.get_meta("timetable_periods") or {}
+        cells = [c for c in timetable.common_free(tt, tids, mon, self.db.get_meta("timetable_swaps") or [], evs)
+                 if c["date"] >= today.isoformat() and not (c["note"] and c["note"]["level"] == "off")]
+        names = {t: ("나" if t == me else tt["teachers"][t]["name"]) for t in tids}
+
+        def span(p):
+            t = periods.get(str(p)) or {}
+            return f" {t['start']}~{t.get('end', '')}" if t.get("start") else ""
+        week = f"{'다음' if mon > timetable.monday(today) else '이번'} 주 {mon.month}/{mon.day}~{(mon + timedelta(days=6)).month}/{(mon + timedelta(days=6)).day}"
+        lines = [f"🕒 같이 비는 시간 · {' · '.join(names[t] for t in tids)} · {week}"]
+        allfree = [c for c in cells if len(c["free"]) == len(tids)]
+        if allfree:
+            by_day = {}
+            for c in allfree:
+                by_day.setdefault((c["date"], c["day"], bool(c["note"])), []).append(c)
+            for (d, day, maybe), cs in by_day.items():
+                dd = date.fromisoformat(d)
+                lines.append(f"  {day}({dd.month}/{dd.day}) " + ", ".join(f"{c['period']}교시{span(c['period'])}" for c in cs)
+                             + (" ⚠ 학사일정 확인" if maybe else ""))
+        else:
+            best = sorted((c for c in cells if c["free"]), key=lambda c: (-len(c["free"]), c["date"], c["period"]))[:5]
+            lines.append("모두 비는 시간이 없습니다." + (" 가장 많이 비는 시간:" if best else ""))
+            for c in best:
+                dd = date.fromisoformat(c["date"])
+                lines.append(f"  {c['day']}({dd.month}/{dd.day}) {c['period']}교시{span(c['period'])} · "
+                             f"{len(c['free'])}/{len(tids)}명 비어 있음 (수업 중: {', '.join(names[t] for t in c['busy'])})")
+        return "\n".join(lines + notes)
+
     # ---- 단추 ----
     def handle_button(self, cq):
         msg = cq.get("message") or {}
@@ -877,6 +1053,8 @@ class Bot:
             if action == "cancel":
                 self.dialog = None
                 return self.reply(cid, "입력을 취소했습니다. 저장하지 않았습니다.")
+            if action.startswith("fp:") and dialog["kind"] == "free" and dialog["step"] == "pick":
+                return self.free_pick(cid, dialog, action[3:], msg.get("message_id"))
             if action.startswith("type:") and dialog["kind"] == "absence" and dialog["step"] == "type":
                 n = action[5:]
                 if n not in ("0", "1", "2", "3"):
