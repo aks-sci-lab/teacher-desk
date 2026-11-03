@@ -703,14 +703,19 @@ a.ai-ref:hover { background: var(--accent); color: var(--accent-ink); }
 .ai-hidden-toggle { margin: 0 0 8px; }
 @media (hover: none) { .ai-x { opacity: 0.8; } }
 section.card + .cards, .cards { margin-top: 12px; }
-/* 브리핑: 넓은 화면은 왼쪽 AI 요약 · 오른쪽 카드 한 줄 (화면 폭을 다 씀) */
-.brief { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-.brief > .card { margin: 0; }
+/* 브리핑: 위 '오늘' 줄(카드들이 내용 높이만큼 나란히) · 아래 본문(왼쪽 AI 요약, 오른쪽 새로 받은 자료) */
+.brief-today > .cards { margin-top: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; align-items: start; }
+.brief-today > .cards > .card { margin: 0; }
+.brief-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 12px; }
+.brief-main > .card, .brief-side > .card { margin: 0; }
+.brief-side > .card { max-height: 70vh; overflow: auto; }
+.status-chip { font-variant-numeric: tabular-nums; color: var(--muted); }
+.status-chip.warn { color: var(--danger); border-color: var(--danger); }
+@media (min-width: 1000px) {
+    .brief-main { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
+}
 @media (min-width: 1400px) {
-    .brief { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
-    .brief > .cards { margin-top: 0; grid-template-columns: 1fr; }
-    .brief.no-ai { grid-template-columns: minmax(0, 1fr); }
-    .brief.no-ai > .cards { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+    .brief-main { grid-template-columns: minmax(0, 1fr) minmax(420px, 520px); }
 }
 
 /* 쿨메신저 사진 */
