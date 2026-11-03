@@ -85,8 +85,10 @@ Claude Code·GitHub Copilot 대화는 먼저 **개발**과 **머지** 역할로 
 | 일정·시간표·주간 계획 | 달력·일정, 학사일정(파일·나이스), 시간표·교체·수업 알림, 주간 계획, 브리핑 일정 카드 | `schoolcal.py` `xlsx.py` `neis.py` `timetable.py` `bell.py` `weekplan.py` `ics.py` · `views/calendar.js` `views/schoolcal.js` `views/timetable.js` `views/week.js` `views/today.js`(일정 카드) |
 | 텔레그램 | 봇 명령·알림·대화형 입력 | `telegram.py` `assist.py` |
 | 브라우저 확장·외부 연동 | 에듀파인·나이스 화면 보내기, 나이스 입력 칸 채우기(**보류**) | `browser-extension/` `capture.py` `neisfill.py` · `views/neisfill.js` |
+| UI·사용성 | 화면 흐름·탐색·가독성·정보 밀도·접근성·반응형 배치·화면 간 일관성. 기능 동작은 해당 기능 담당과 조율 | `web/css/desk.css` `web/js/shell.js` `web/js/ui.js` · 기능 화면의 표현·상호작용 부분 |
 | 앱 기반·설정·배포·품질 | 화면 틀(탭·팝업·메뉴), 설정 화면, 전용 창, 업데이트, 윈도우 ZIP·CI, 성능·무결성 점검(코파일럿 계획 검토 포함) | `server.py`(공통 부분) `config.py` `db.py` `window.py` `background.py` `updater.py` `desk.py` · `shell.js` `ui.js` `api.js` `store.js` `singleton.js` `update.js` `main.js` `views/settings.js` · `tools/` `.github/` |
 
+- **UI·사용성 대화와 기능 대화의 경계**: 기능 담당은 해당 화면의 자료·업무 동작을 책임지고, UI·사용성 담당은 화면의 배치·표현·조작 흐름을 책임진다. 같은 화면 파일을 함께 고칠 때는 변경 범위와 열린 PR을 먼저 맞춘다.
 - **같이 쓰는 파일**(`desk/server.py` API, `web/css/desk.css`, `web/js/main.js`)은 다른 열린 PR 과 겹치지 않는지 먼저 보고, 필요한 부분만 작게 고친다. CSS 는 맨 아래 자기 영역 묶음에 덧붙인다. 큰 구조 변경(예: `server.py` 를 영역별 파일로 나누기)은 '앱 기반' 대화가 **열린 PR 이 없을 때** 한다.
 - 대화마다 **PR 은 한 번에 하나**. 시작 전에 열린 PR 이 같은 파일을 고치는지 보고, 겹치면 PR 설명에 머지 순서를 적는다 (위 '충돌 줄이기').
 - 여러 영역에 걸친 큰 일은 총괄 대화가 나눠서 각 대화에 맡기거나, 한 대화가 맡고 나머지에 알린다.
