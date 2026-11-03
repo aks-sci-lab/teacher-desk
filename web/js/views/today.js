@@ -580,7 +580,8 @@ function renderToday(pane) {
                             p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
                     : el('p.muted.small', '없음'))))),
             // 본문: 왼쪽 AI 요약(넓게), 오른쪽 새로 받은 자료 (넓은 화면에서)
-            el('div.brief-main', aiCard(todoCard, s.since_visit), el('div.brief-side', newCard)));
+            // AI 를 끄면 요약 칸이 짧으니 새 자료를 넓게 (칸 여러 개가 나란히)
+            el(store.settings.ai_enabled ? 'div.brief-main' : 'div.brief-main.no-ai', aiCard(todoCard, s.since_visit), el('div.brief-side', newCard)));
     })();
 }
 

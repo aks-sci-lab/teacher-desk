@@ -717,6 +717,10 @@ section.card + .cards, .cards { margin-top: 12px; }
 @media (min-width: 1400px) {
     .brief-main { grid-template-columns: minmax(0, 1fr) minmax(420px, 520px); }
 }
+/* AI 를 끈 경우: 요약 칸이 짧으니 새로 받은 자료를 넓게 (항목을 여러 칸으로) */
+.brief-main.no-ai { grid-template-columns: minmax(0, 1fr); }
+.brief-main.no-ai .brief-side > .card { max-height: none; }
+.brief-main.no-ai .brief-side ul.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); column-gap: 18px; }
 
 /* 쿨메신저 사진 */
 .img-grid { display: flex; flex-wrap: wrap; gap: 8px; }
