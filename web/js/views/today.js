@@ -1,6 +1,6 @@
 // 📋 브리핑: 지난 마감 · 오늘 일정 · 7일 안 마감 · 오늘 조퇴/외출 · 새로 받은 자료 · 수집 상태
 import { api } from '../api.js';
-import { el, clear, guarded, toast, longDate, todayIso, dayLabel, ddayInfo, eventLine, catBadge, srcBadge } from '../ui.js';
+import { el, clear, guarded, toast, longDate, todayIso, dayLabel, ddayInfo, eventLine, catBadge, srcBadge, modal } from '../ui.js';
 import { registerView, openTab, findTab, on } from '../shell.js';
 import { store } from '../store.js';
 import { icon } from '../icons.js';
@@ -506,6 +506,21 @@ function withEmptyStrip(cards) {
     return cards;
 }
 
+// 자동 수집 상태: 머리 줄에 한 줄 요약 (연결 안 된 것이 있으면 빨갛게), 누르면 자세히
+function statusChip(s, st) {
+    const S = store.settings;
+    const warn = !st?.telegram.linked || !(S.coolmessenger_path || S.coolmessenger_name) || !S.edufine_folder;
+    const last = s.last_run ? s.last_run.finished_at.slice(11, 16) : '아직 없음';
+    const detail = () => modal({ title: '자동 수집 상태', body: el('dl.kvs',
+        el('dt', '마지막'), el('dd', s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'),
+        el('dt', '다음'), el('dd', `${st?.next_collect || '-'} (${(S.collect_times || []).join(' · ') || '예약 없음'})`),
+        el('dt', '쿨메신저'), el('dd', S.coolmessenger_path || S.coolmessenger_name ? '연결' : '미설정'),
+        el('dt', '에듀파인'), el('dd', S.edufine_folder ? '폴더 지정됨' : '미설정'),
+        el('dt', '텔레그램'), el('dd', st?.telegram.linked ? '연결됨' : '연결 안 됨')) });
+    return el(`button.btn.small.status-chip${warn ? '.warn' : ''}`, { title: '자동 수집 상태 자세히 보기', onclick: detail },
+        `${last} 수집 · 다음 ${st?.next_collect || '-'}`);
+}
+
 function renderToday(pane) {
     pane.append(el('p.muted', '불러오는 중…'));
     guarded(async () => {
@@ -525,8 +540,13 @@ function renderToday(pane) {
         const todoCard = dropZone(card('꼭 할 일', todos.filter(t => !t.done).length, todoBox(), { cls: 'todo-card' }));
         todoCard.classList.remove('empty-card');   // 비어도 놓을 자리는 보이게
         todoCard.hidden = true;
+        const newCard = card('새로 받은 자료', s.new_items.length, s.new_items.length
+            ? el('ul.list', s.new_items.map(it => movable(el('li', { onclick: () => openItem(it.id) },
+                el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16))),
+                { text: it.title, item_id: it.id, origin: 'item' })))
+            : el('p.muted.small', '없음'));
         pane.append(
-            // 머리: 날짜 · 오늘 숫자 · 단추를 한 줄에 (빈 곳 없이)
+            // 머리: 날짜 · 오늘 숫자 · 수집 한 줄 요약 · 단추를 한 줄에 (빈 곳 없이)
             el('div.brief-head',
                 el('h1', longDate(todayIso())),
                 el('div.brief-stats', [
@@ -535,12 +555,13 @@ function renderToday(pane) {
                 ].filter(([, n]) => n > 0).map(([label, n, cls]) => el('span', { className: `stat${cls ? ' ' + cls : ''}` }, el('b', n), label))),   // 0 인 것은 아래 '없음' 줄에
                 el('span.spacer'),
                 el('div.row.brief-actions',
+                    statusChip(s, st),
                     el('button.btn.small', { onclick: () => openForm({ kind: 'early' }) }, icon('passes'), '조퇴증'),
                     el('button.btn.small', { onclick: () => openForm({ kind: 'out' }) }, icon('passes'), '외출증'),
                     el('button.btn.small', { onclick: openPaste }, icon('plus'), '붙여넣기'),
                     el('button.btn.small', { onclick: collectNow }, icon('refresh'), '지금 수집'))),
-            // 넓은 화면: 왼쪽 AI 요약, 오른쪽 오늘·마감·조퇴 카드 (빈 곳 없이)
-            el('div.brief', aiCard(todoCard, s.since_visit), withEmptyStrip(el('div.cards',
+            // 오늘 줄: 마감·꼭 할 일·오늘 수업·일정·조퇴/외출·7일 안 (빈 것은 한 줄로 모음)
+            el('div.brief-today', withEmptyStrip(el('div.cards',
                 todoCard,
                 s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                 s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
@@ -557,18 +578,10 @@ function renderToday(pane) {
                         el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
                         el('span.meta', KIND[p.kind], p.time_out || '', p.time_return ? `~${p.time_return}` : '',
                             p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
-                    : el('p.muted.small', '없음')),
-                card('새로 받은 자료', s.new_items.length, s.new_items.length
-                    ? el('ul.list', s.new_items.map(it => movable(el('li', { onclick: () => openItem(it.id) },
-                        el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16))),
-                        { text: it.title, item_id: it.id, origin: 'item' })))
-                    : el('p.muted.small', '없음')),
-                card('자동 수집', null, el('dl.kvs',
-                    el('dt', '마지막'), el('dd', s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'),
-                    el('dt', '다음'), el('dd', `${st?.next_collect || '-'} (${(store.settings.collect_times || []).join(' · ') || '예약 없음'})`),
-                    el('dt', '쿨메신저'), el('dd', store.settings.coolmessenger_path || store.settings.coolmessenger_name ? '연결' : '미설정'),
-                    el('dt', '에듀파인'), el('dd', store.settings.edufine_folder ? '폴더 지정됨' : '미설정'),
-                    el('dt', '텔레그램'), el('dd', st?.telegram.linked ? '연결됨' : '연결 안 됨')), { cls: 'status-card' })))));
+                    : el('p.muted.small', '없음'))))),
+            // 본문: 왼쪽 AI 요약(넓게), 오른쪽 새로 받은 자료 (넓은 화면에서)
+            // AI 를 끄면 요약 칸이 짧으니 새 자료를 넓게 (칸 여러 개가 나란히)
+            el(store.settings.ai_enabled ? 'div.brief-main' : 'div.brief-main.no-ai', aiCard(todoCard, s.since_visit), el('div.brief-side', newCard)));
     })();
 }
 
