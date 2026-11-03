@@ -187,7 +187,7 @@ function todoBox(aiNodes = [], more = null) {
         const dd = t.date && ddayInfo(t.date);
         const node = el('li', { className: `todo${t.done ? ' done' : ''}`, dataset: { todo: t.id } },
             !t.done && el('span.todo-grip', { title: '끌어서 순서 바꾸기' }, '⠿'),
-            el('input', { type: 'checkbox', checked: !!t.done, title: '끝냄', onchange: e => patch(t, { done: e.target.checked }) }),
+            el('input', { type: 'checkbox', checked: !!t.done, title: '업무 완료로 표시', 'aria-label': '업무 완료', onchange: e => patch(t, { done: e.target.checked }) }),
             t.date ? el('span.ai-when', dayLabel(t.date, false) + (t.time ? ` ${t.time}` : ''),
                 !t.done && el('span', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
             el('span.ai-txt', t.item_id
@@ -201,7 +201,7 @@ function todoBox(aiNodes = [], more = null) {
             !t.done && el('span.todo-move',
                 el('button', { title: '위로', onclick: () => step(t, -1) }, '▲'),
                 el('button', { title: '아래로', onclick: () => step(t, 1) }, '▼')),
-            el('button.ai-x', { title: t.hide_key ? '지우기 (AI 요약의 원래 칸으로 되돌림)' : '지우기', onclick: () => del(t) }, '✕'),
+            el('button.ai-x', { title: t.hide_key ? '꼭 할 일에서 지우기 (AI 요약의 원래 칸으로 되돌림)' : '꼭 할 일에서 지우기', onclick: () => del(t) }, '✕'),
             (openNotes.has(t.id) || (t.notes || []).length) && !t.done ? notesBox(t) : null);
         if (!t.done) {
             node.draggable = true;
@@ -324,7 +324,7 @@ function aiText(blocks, hiddenList = [], opts = {}) {
             el('span.ai-txt', r.fresh && el('span.ai-fresh', { title: `${r.fresh} 에 새로 들어온 자료` }, '새'), r.text),
             r.refs.length ? el('span.ai-refs', r.refs.map(n => refChip(r, n))) : null,
             gone ? el('button.ai-x', { title: '되돌리기', onclick: () => setHidden(key, false) }, '↺')
-                 : el('button.ai-x', { title: '이 줄 지우기 (끝났거나 필요 없음)', onclick: () => setHidden(key, true) }, '✕'));
+                 : el('button.ai-x', { title: '요약에서 숨기기 (끝났거나 필요 없음. 자료·일정은 지워지지 않고, 숨긴 줄 보기에서 되돌릴 수 있음)', 'aria-label': '요약에서 숨기기', onclick: () => setHidden(key, true) }, '✕'));
         const payload = { text: r.text, ...whenToDate(r.when), item_id: r.ids[r.refs[0] - 1] ?? null, origin: 'ai', hide_key: key };
         // 행사·회의·알아 둘 내용의 줄은 꼭 할 일로 끌어서 옮길 수 있음
         if (s.cls !== 'todo' && !gone) movable(li, payload);
@@ -364,9 +364,9 @@ function aiText(blocks, hiddenList = [], opts = {}) {
             return mine ? dropZone(sec) : sec;
         }).filter(Boolean);
         clear(wrap,
-            el('div.ai-sections', secs.length ? secs : el('p.muted.small', '모두 지웠습니다.')),
+            el('div.ai-sections', secs.length ? secs : el('p.muted.small', '모두 숨겼습니다.')),
             hiddenHere ? el('button.btn.small.ai-hidden-toggle', { onclick: () => { showHidden = !showHidden; draw(); } },
-                showHidden ? '지운 줄 감추기' : `지운 줄 ${hiddenHere}개 보기`) : '');
+                showHidden ? '숨긴 줄 감추기' : `숨긴 줄 ${hiddenHere}개 보기`) : '');
     };
     draw();
     return wrap;
@@ -509,15 +509,26 @@ function withEmptyStrip(cards) {
 // 자동 수집 상태: 머리 줄에 한 줄 요약 (연결 안 된 것이 있으면 빨갛게), 누르면 자세히
 function statusChip(s, st) {
     const S = store.settings;
-    const warn = !st?.telegram.linked || !(S.coolmessenger_path || S.coolmessenger_name) || !S.edufine_folder;
+    // 빨간 경고는 '설정했는데 실제로 실패한 것'만. 안 쓰는 것(미설정·연결 전)은 차분하게 '사용 안 함' 으로 둠 (0.5.68)
+    let runErrors = [];
+    try { runErrors = JSON.parse(s.last_run?.stats || '{}').errors || []; } catch (e) { /* 모양이 다르면 없는 것으로 */ }
+    const tgError = /^오류/.test(st?.telegram.status || '');
+    const warn = tgError || !!s.last_run?.error || runErrors.length > 0;
     const last = s.last_run ? s.last_run.finished_at.slice(11, 16) : '아직 없음';
-    const detail = () => modal({ title: '자동 수집 상태', body: el('dl.kvs',
-        el('dt', '마지막'), el('dd', s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'),
-        el('dt', '다음'), el('dd', `${st?.next_collect || '-'} (${(S.collect_times || []).join(' · ') || '예약 없음'})`),
-        el('dt', '쿨메신저'), el('dd', S.coolmessenger_path || S.coolmessenger_name ? '연결' : '미설정'),
-        el('dt', '에듀파인'), el('dd', S.edufine_folder ? '폴더 지정됨' : '미설정'),
-        el('dt', '텔레그램'), el('dd', st?.telegram.linked ? '연결됨' : '연결 안 됨')) });
-    return el(`button.btn.small.status-chip${warn ? '.warn' : ''}`, { title: '자동 수집 상태 자세히 보기', onclick: detail },
+    const coolOn = !!(S.coolmessenger_path || S.coolmessenger_name);
+    const tgText = st?.telegram.linked ? '연결됨' : tgError ? st.telegram.status : S.telegram_token_set ? '연결 대기 (설정에서 연결 코드 보내기)' : '사용 안 함';
+    const problem = [...(s.last_run?.error ? [s.last_run.error] : []), ...runErrors];
+    const detail = () => modal({ title: '자동 수집 상태', body: el('div',
+        el('dl.kvs',
+            el('dt', '마지막'), el('dd', s.last_run ? s.last_run.finished_at.slice(5, 16) : '아직 없음'),
+            el('dt', '다음'), el('dd', `${st?.next_collect || '-'} (${(S.collect_times || []).join(' · ') || '예약 없음'})`),
+            el('dt', '쿨메신저'), el('dd', coolOn ? '연결' : '사용 안 함'),
+            el('dt', '에듀파인'), el('dd', S.edufine_folder ? '폴더 지정됨' : '사용 안 함'),
+            el('dt', '텔레그램'), el('dd', tgText)),
+        problem.length ? el('div', el('h3', { style: 'margin: 12px 0 4px; color: var(--danger)' }, '마지막 수집에서 문제가 있었습니다'),
+            el('ul.small', problem.slice(0, 8).map(t => el('li', String(t))))) : null) });
+    return el(`button.btn.small.status-chip${warn ? '.warn' : ''}`,
+        { title: warn ? '문제가 있습니다. 눌러서 자세히 보기' : '자동 수집 상태 자세히 보기', onclick: detail },
         `${last} 수집 · 다음 ${st?.next_collect || '-'}`);
 }
 

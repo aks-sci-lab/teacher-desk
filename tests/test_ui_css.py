@@ -3,7 +3,8 @@ import re
 import unittest
 from pathlib import Path
 
-CSS = (Path(__file__).resolve().parent.parent / "web" / "css" / "desk.css").read_text(encoding="utf-8")
+WEB = Path(__file__).resolve().parent.parent / "web"
+CSS = (WEB / "css" / "desk.css").read_text(encoding="utf-8")
 
 
 class UiCssTests(unittest.TestCase):
@@ -23,6 +24,24 @@ class UiCssTests(unittest.TestCase):
         self.assertRegex(CSS, r"\.cards \.ev \{[^}]*flex-wrap: wrap")
         self.assertRegex(CSS, r"\.cards \.ev > a[^{]*\{[^}]*flex: 1 1 100%")
         self.assertRegex(CSS, r"\.cards \.ev\.movable > \.to-todo \{ position: absolute")
+
+    def test_activity_bar_scrolls_instead_of_overflowing(self):   # 0.5.68
+        self.assertRegex(CSS, r"#activity-top \{[^}]*overflow-y: auto")
+        self.assertRegex(CSS, r"#activity-bottom \{ flex: none; \}")
+
+    def test_modal_confirms_only_after_user_input(self):          # 0.5.68
+        js = (WEB / "js" / "ui.js").read_text(encoding="utf-8")
+        self.assertIn("e.isTrusted", js)                           # 프로그램이 바꾼 값은 입력으로 안 침
+        self.assertIn("requestClose", js)
+        self.assertNotIn("localStorage", js)                       # 입력 내용을 브라우저에 저장하지 않음
+        self.assertNotIn("sessionStorage", js)
+
+    def test_status_chip_warns_only_on_real_errors(self):          # 0.5.68
+        js = (WEB / "js" / "views" / "today.js").read_text(encoding="utf-8")
+        body = js[js.index("function statusChip"):js.index("function renderToday")]
+        self.assertNotIn("!st?.telegram.linked ||", body)          # 안 쓰는 것은 경고 아님
+        self.assertIn("tgError", body)
+        self.assertIn("사용 안 함", body)
 
 
 if __name__ == "__main__":
