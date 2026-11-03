@@ -18,8 +18,9 @@ Claude Code 가 쓰는 세션과 **같은 이름·같은 영역**으로 Copilot 
 | 브라우저 확장·외부 연동 | 에듀파인·나이스 화면 보내기, 나이스 입력 칸 채우기(**보류**: 사용자가 다시 하자고 하기 전에는 오류 수정만) | `browser-extension/` `desk/capture.py` `neisfill.py` · `web/js/views/neisfill.js` |
 | 앱 기반·설정·배포·품질 | 화면 틀(탭·팝업·메뉴), 설정 화면, 전용 창, 업데이트, 윈도우 ZIP·CI, 성능·무결성 점검·경량화 | `desk/server.py`(공통) `config.py` `db.py` `window.py` `background.py` `updater.py` `desk.py` · `web/js/shell.js` `ui.js` `api.js` `store.js` `singleton.js` `update.js` `main.js` `views/settings.js` · `tools/` `.github/` |
 
-- 한 채팅은 **자기 영역 파일만** 고칩니다. 다른 영역 일이 생기면 직접 하지 말고 사용자에게 "○○ 채팅(또는 Claude 의 ○○ 세션)에 맡기세요"라고 알립니다.
-- 같이 쓰는 파일(`desk/server.py`, `web/css/desk.css`, `web/js/main.js`)은 자기 영역 부분만 작게 고칩니다. CSS 는 맨 아래 자기 영역 묶음에 덧붙입니다.
+- 담당 영역은 **기본 책임 범위**입니다. 한 기능을 완성하는 데 꼭 필요한 작은 교차 영역 변경은 열린 PR과 파일 충돌을 확인한 뒤 함께 고칠 수 있습니다. 큰 교차 영역 작업은 총괄 채팅에 나눠 맡기도록 알립니다.
+- 같이 쓰는 파일(`desk/server.py`, `web/css/desk.css`, `web/js/main.js`)은 다른 열린 PR과 충돌하지 않는지 먼저 확인하고, 필요한 부분만 작게 고칩니다. CSS 는 맨 아래 자기 영역 묶음에 덧붙입니다.
 - 채팅마다 **PR 은 한 번에 하나**. PR 설명 첫 줄에 영역을 적습니다 (예: `영역: 출결·증 발급`). 버전·기록 충돌은 `AGENTS.md` 의 '충돌 줄이기'를 따릅니다.
 - **개발 채팅은 머지하지 않습니다** (머지 = 배포). 머지는 '머지 전용' 채팅이 사용자의 "머지해" 뒤에만 합니다.
 - Claude Code 세션과 같은 영역 일을 동시에 하지 않도록, 시작할 때 `git fetch origin main`·`git status` 와 열린 PR 을 보고 같은 파일을 고치는 PR 이 있으면 사용자에게 먼저 알립니다.
+- 이 안내는 채팅을 자동으로 만들거나 이름을 강제하지 않습니다. 사용자가 Copilot 에서 표의 영역 이름으로 채팅을 직접 만들고, 작업할 때 해당 채팅을 선택합니다.
