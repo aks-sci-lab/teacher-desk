@@ -1084,3 +1084,27 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .tt-find-item { display: flex; gap: 8px; align-items: baseline; width: 100%; padding: 7px 10px; border: 0; background: none; text-align: left; cursor: pointer; font: inherit; }
 .tt-find-item:hover, .tt-find-item.on { background: var(--accent-soft); }
 .tt-find-item .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 학급 시간표·같이 비는 시간 (0.5.64) */
+.tt-side-views { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+.tt-class-lesson { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; }
+.tt-class-lesson + .tt-class-lesson { border-top: 1px solid var(--line); }
+.tt-class-lesson.locked { background: var(--surface-2); }
+.tt-class-lesson.moved { box-shadow: inset 3px 0 var(--accent); }
+.tt .tt-class-lesson .mv, .tt .tt-class-lesson .lk { position: static; }
+.tt-teacher-link { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
+.tt-free-teachers { margin: 10px 0; flex-wrap: wrap; }
+.tt-chip { border-radius: 20px; }
+.tt td.tt-all-free { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.tt td.tt-past { opacity: .4; }
+.tt-free-table td.dblk { background: var(--surface-2); color: var(--muted); }
+.tt-class-table th.p, .tt-free-table th.p { width: 90px; }
+.tt-class-print { color: #000; background: #fff; font-size: 11pt; }
+.tt-class-print .tt { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.tt-class-print .tt th, .tt-class-print .tt td { border: 1px solid #888; padding: 5px; background: #fff; color: #000; }
+.tt-class-print .tt small, .tt-class-print .tt em { display: block; font-size: 9pt; }
+.tt-class-print .tt-teacher-link { color: #000; text-decoration: none; }
+@media print {
+    .tt-class-print { break-inside: avoid; }
+    .tt-class-print .tt td { height: 13mm; }
+}

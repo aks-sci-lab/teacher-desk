@@ -95,6 +95,50 @@ def lesson_days(text, today):
     return [start + timedelta(days=i) for i in range((end - start).days + 1) if (start + timedelta(days=i)).weekday() < 5]
 
 
+# ---- 시간표 텔레그램 명령 (0.5.65): 뚜렷한 모양일 때만 ----
+P_FREE = re.compile(r"^\s*(?:같이\s*)?(?:빈|비는)\s*시간")
+P_CLASS_A = re.compile(r"(?<![\d./-])(\d)\s*-\s*(\d{1,2})(?![\d./-])")
+P_CLASS_B = re.compile(r"(?<!\d)(\d)\s*학년\s*(\d{1,2})\s*반")
+P_TT_WORD = re.compile(r"시간표|수업|오늘|내일|모레|[월화수목금]요일|지금|현재|누구|몇\s*교시|(?:이번|다음|차|금)\s*주|차주|"
+                       r"알려\s*줘|보여\s*줘|뭐야|뭐예요|이야|인가요|입니까|이에요|예요|은|는|야|좀|[?？!]")
+P_TT_NOW = re.compile(r"지금|현재|누구|몇\s*교시")
+P_TT_DAY = re.compile(r"시간표|오늘|내일|모레|[월화수목금]요일|(?:이번|다음|차|금)\s*주|차주")
+P_TT_FREE_STRIP = re.compile(r"다음\s*주|차주|이번\s*주|금주|같이|비는|빈|시간|공강|알려\s*줘|보여\s*줘|좀|[,，]")
+
+
+def timetable_intent(text):
+    """시간표 말 → ('free', {names, next}) · ('class_now', {cls}) · ('class_day', {cls, text}) 또는 None.
+    '빈 시간'으로 시작하거나, 학급 표기('2-3'·'2학년 3반')에 시간표·요일·오늘·내일·지금이 함께 있고 다른 말이 없을 때만.
+    그 밖은 None 이라 지금처럼 검색·질문으로 간다."""
+    t = (text or "").strip()
+    if not t or len(t) > 40 or t.startswith("/"):
+        return None
+    m = P_FREE.match(t)
+    if m:
+        rest = t[m.end():]
+        nxt = bool(re.search(r"다음\s*주|차주", rest))
+        names = []
+        for w in P_TT_FREE_STRIP.sub(" ", rest).split():
+            w = re.sub(r"(선생님|쌤|님)$", "", w) if len(w) > 3 else w
+            if len(w) >= 4 and w.endswith(("이랑", "하고")):
+                w = w[:-2]
+            elif len(w) >= 4 and w.endswith("랑"):
+                w = w[:-1]
+            if w:
+                names.append(w)
+        return "free", {"names": names[:6], "next": nxt}
+    m = P_CLASS_A.search(t) or P_CLASS_B.search(t)
+    if not m or re.search(r"교체|바꾸|바꿀|변경", t):
+        return None
+    rest = (t[:m.start()] + " " + t[m.end():]).strip()
+    if not P_TT_WORD.search(rest) or P_TT_WORD.sub("", rest).strip():
+        return None   # 알아듣는 낱말 말고 다른 말이 있으면 명령이 아님 ('2-3 오늘 급식 뭐야')
+    cls = f"{m.group(1)}-{m.group(2)}"
+    if P_TT_NOW.search(rest) and not P_TT_DAY.search(rest):
+        return "class_now", {"cls": cls}
+    return "class_day", {"cls": cls, "text": rest}
+
+
 def intent(text):
     """자연스러운 말 → (명령, 인자) 또는 None. 예) '7번 학생 조퇴 1시 30분' → ('early', ['7', '13:30'])."""
     m = P_PASS.search(text)
