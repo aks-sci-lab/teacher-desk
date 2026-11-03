@@ -1,7 +1,7 @@
 // 시간표: 학교 시간표 엑셀 → 내 시간표(주마다, 교체 반영) · 내 수업 교체 후보 · 교체 부탁 글 · 교체 기록(달력)
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { el, clear, toast, guarded, todayIso, addDays, parseIso, modal } from '../ui.js';
+import { el, clear, toast, guarded, todayIso, addDays, parseIso, modal, nowHm } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, emit, on } from '../shell.js';
 import { store } from '../store.js';
 
@@ -11,6 +11,9 @@ let info = null;          // GET /api/timetable
 let week = todayIso();    // 보고 있는 주 (그 주의 아무 날)
 let viewTid = null;       // 보고 있는 선생님 (기본: 나)
 let picked = null;        // { key, date, cands }
+let mode = 'teacher';     // 보기: 'teacher' 선생님 · 'class' 학급 · 'free' 같이 비는 시간 (0.5.64)
+let viewCls = null;       // 학급 보기에서 고른 학급 (기본: 설정의 담임 학급)
+let freeTids = null;      // 같이 비는 시간에서 고른 선생님들 (기본: 나)
 
 export async function loadTimetable() {
     info = await api.get('/api/timetable');
@@ -135,6 +138,8 @@ function renderWeek(pane, tab) {
                 importBox(() => tab.rerender()));
             return;
         }
+        if (mode === 'class') return renderClass(pane, tab);
+        if (mode === 'free') return renderFree(pane, tab);
         const tid = viewTid ?? 0;
         const wk = await api.get(`/api/timetable/week?teacher=${tid}&date=${week}`);
         const mon = wk.monday;
@@ -206,6 +211,7 @@ function renderWeek(pane, tab) {
         const move = n => () => { week = addDays(mon, n); picked = null; tab.rerender(); };
         // pane.append 는 false·null 을 글자로 넣으므로 빈 것은 거름
         pane.append(...[
+            modeBar(tab),
             el('div.tt-head',
                 el('h1', mine ? '내 시간표' : `${teacherName(tid)} 선생님 시간표`),
                 el('div.row',
@@ -256,6 +262,138 @@ function renderWeek(pane, tab) {
                     tab.rerender();
                 }) }, '시간표 지우기'))].filter(Boolean));
     })();
+}
+
+// ---------------------------------------------------------------- 보기 바꾸기: 선생님 · 학급 · 같이 비는 시간 (0.5.64)
+const MODES = [['teacher', '선생님'], ['class', '학급'], ['free', '같이 비는 시간']];
+function modeBar(tab) {
+    return el('div.tt-modes', { role: 'group', 'aria-label': '보기' }, MODES.map(([id, label]) =>
+        el('button', { className: `btn small${mode === id ? ' primary' : ''}`, onclick: () => { mode = id; picked = null; tab.rerender(); } }, label)));
+}
+
+function weekNav(tab, mon) {
+    const move = n => () => { week = addDays(mon, n); tab.rerender(); };
+    return el('div.row',
+        el('button.btn.small', { onclick: move(-7), title: '지난주' }, '◀'),
+        el('b.tt-week', `${md(mon)} ~ ${md(addDays(mon, info.days.length - 1))}`),
+        el('button.btn.small', { onclick: move(7), title: '다음 주' }, '▶'),
+        el('button.btn.small', { onclick: () => { week = todayIso(); tab.rerender(); } }, '이번 주'));
+}
+
+const copyText = guarded(async text => { await navigator.clipboard.writeText(text); toast('복사했습니다'); });
+const noteBadge = n => n && el('em', { className: n.level, title: n.text }, n.level === 'off' ? `수업 없음 · ${n.text}` : `확인 필요 · ${n.text}`);
+
+// ---------------------------------------------------------------- 학급 시간표
+function classText(r) {
+    const lines = [`${r.cls} 시간표 (${md(r.monday)}~${md(addDays(r.monday, r.days.length - 1))})`];
+    for (const d of r.days) {
+        const body = d.lessons.length ? d.lessons.map(l => `${l.period} ${l.subj}(${l.teacher})${l.moved ? '[교체]' : ''}`).join('  ') : '수업 없음';
+        lines.push(`${d.name} ${body}${d.note ? ` ※${d.note.level === 'off' ? '수업 없음' : '확인 필요'}: ${d.note.text}` : ''}`);
+    }
+    return lines.join('\n');
+}
+
+function classTable(r, tab, printing = false) {
+    const slotSet = new Set(r.slots);
+    const head = el('tr', el('th.p'), r.days.map(d => el('th', { className: [!printing && d.date === todayIso() && 'today', !printing && d.past && 'past'].filter(Boolean).join(' ') },
+        d.name, el('small', md(d.date)), noteBadge(d.note))));
+    const rows = [];
+    for (let p = 1; p <= r.periods; p++) {
+        const pt = (info.periods || {})[String(p)];
+        rows.push(el('tr', el('th.p', p, pt && el('small', pt.start)), r.days.map((d, di) => {
+            if (!slotSet.has(`${di}-${p}`)) return el('td.cell.na');
+            const ls = d.lessons.filter(l => l.period === p);
+            if (!ls.length) return el('td', { className: `cell${d.note?.level === 'off' ? ' dblk' : ''}` });
+            return el('td', { className: ['cell', 'les', ls.some(l => l.locked) && 'locked', ls.some(l => l.moved) && 'moved', d.note?.level === 'off' && 'dblk'].filter(Boolean).join(' '), style: 'cursor: default' },
+                ls.map(l => el('div.cl', el('span.s.subj', l.subj),
+                    printing ? el('span.s', l.teacher)
+                        : el('button.tt-tch', { title: `${l.teacher} 선생님 시간표 보기`, onclick: () => { viewTeacher(l.tid); mode = 'teacher'; tab.rerender(); } }, l.teacher),
+                    l.moved && el('span.mv', '교체'), l.locked && el('span.lk', '잠금'))));
+        })));
+    }
+    return el('table', { className: printing ? 'tt-print' : 'tt' }, el('thead', head), el('tbody', rows));
+}
+
+const printClass = r => {
+    const area = document.getElementById('print-area');
+    clear(area, el('h2', `${r.cls} 시간표`), el('p.small', `${md(r.monday)} ~ ${md(addDays(r.monday, r.days.length - 1))}`), classTable(r, null, true));
+    window.print();
+};
+
+async function renderClass(pane, tab) {
+    const r = await api.get(`/api/timetable/class?week=${week}${viewCls ? `&cls=${encodeURIComponent(viewCls)}` : ''}`);
+    viewCls = r.cls;
+    clear(pane);
+    const sel = el('select', { title: '볼 학급', onchange: e => { viewCls = e.target.value; tab.rerender(); } },
+        r.classes.map(c => el('option', { value: c, selected: c === r.cls }, c)));
+    pane.append(modeBar(tab),
+        el('div.tt-head', el('h1', `${r.cls} 시간표`), weekNav(tab, r.monday), el('span.spacer'),
+            el('label.tt-view', '학급 ', sel),
+            el('button.btn.small', { onclick: () => copyText(classText(r)) }, icon('copy'), '글로 복사'),
+            el('button.btn.small', { onclick: () => printClass(r) }, icon('printer'), '인쇄')),
+        el('div.tt-bar', '칸마다 과목과 들어오는 선생님입니다. 선생님 이름을 누르면 그 선생님 시간표로 갑니다. 교체 기록이 반영되어 있습니다.'),
+        el('div.tt-wrap', classTable(r, tab)));
+}
+
+// ---------------------------------------------------------------- 같이 비는 시간
+const nameOf = id => info.teachers[id]?.name || '';
+
+function freeText(r) {
+    const names = r.teachers.map(t => t.name).join(', ');
+    const hit = r.cells.filter(c => !c.note?.level && !c.busy.length && !isPast(c));
+    const lines = [`${names} 선생님이 모두 비는 시간 (${md(r.monday)}~${md(addDays(r.monday, info.days.length - 1))})`];
+    lines.push(...(hit.length ? hit.map(c => `- ${md(c.date)}(${c.day}) ${c.period}교시${c.start ? ` ${c.start}~${c.end || ''}` : ''}`) : ['- 모두 비는 시간이 없습니다']));
+    return lines.join('\n');
+}
+
+function isPast(c) {
+    return c.date < todayIso() || (c.date === todayIso() && !!c.end && c.end < nowHm());
+}
+
+async function renderFree(pane, tab) {
+    if (freeTids == null) freeTids = info.me != null ? [info.me] : [];
+    const mon = (await api.get(`/api/timetable/week?teacher=${info.me ?? 0}&date=${week}`)).monday;
+    const drawBase = () => pane.append(modeBar(tab),
+        el('div.tt-head', el('h1', '같이 비는 시간'), weekNav(tab, mon), el('span.spacer'),
+            teacherSearch(id => { if (!freeTids.includes(id)) freeTids = [...freeTids, id]; tab.rerender(); }, '선생님 더하기 (이름·과목·반)')),
+        el('div.tt-chips', freeTids.map(id => el('span.tt-chip', nameOf(id) + (id === info.me ? ' (나)' : ''),
+            el('button', { title: '빼기', 'aria-label': `${nameOf(id)} 빼기`, onclick: () => { freeTids = freeTids.filter(x => x !== id); tab.rerender(); } }, '✕')))));
+    if (!freeTids.length) {
+        clear(pane);
+        drawBase();
+        pane.append(el('div.empty', '위에서 선생님을 찾아 더하세요.'));
+        return;
+    }
+    const r = await api.get(`/api/timetable/free?week=${mon}&tids=${freeTids.join(',')}`);
+    clear(pane);
+    drawBase();
+    const total = r.teachers.length;
+    const byKey = new Map(r.cells.map(c => [`${c.day}-${c.period}`, c]));
+    const periods = Math.max(...info.slots.map(s => s.p));
+    const days = new Map(r.days.map(d => [d.name, d]));
+    const head = el('tr', el('th.p'), r.days.map(d => el('th', { className: [d.date === todayIso() && 'today', d.past && 'past'].filter(Boolean).join(' ') }, d.name, el('small', md(d.date)))));
+    const rows = [];
+    for (let p = 1; p <= periods; p++) {
+        const pt = (info.periods || {})[String(p)];
+        rows.push(el('tr', el('th.p', p, pt && el('small', pt.start)), info.days.map(dn => {
+            const c = byKey.get(`${dn}-${p}`);
+            if (!c) return el('td.cell.na');
+            const past = isPast(c);
+            const when = `${dn} ${p}교시${c.start ? ` ${c.start}~${c.end || ''}` : ''}`;
+            if (c.note?.level === 'off') return el('td', { className: `cell fr off${past ? ' past' : ''}`, title: c.note.text }, el('span.s', '수업 없는 날'));
+            const all = !c.busy.length;
+            return el('td', { className: ['cell', 'fr', all && 'all', past && 'past'].filter(Boolean).join(' '),
+                title: all ? `${when} · 모두 빔` : `${when} · 수업 있음: ${c.busy.map(nameOf).join(', ')}` },
+                el('span.c', all ? '모두 빔' : total === 1 ? '수업 있음' : `${c.free.length}/${total} 빔`),
+                !all && total > 1 && el('span.s', c.busy.map(nameOf).join(', ')),
+                c.note?.level === 'maybe' && el('span.cs-w', { title: c.note.text }, '확인 필요'));
+        })));
+    }
+    pane.append(
+        el('div.tt-bar', '초록 칸은 고른 선생님 모두 비는 시간입니다. 다른 칸은 "몇 명 빔"이고 칸에 마우스를 올리면 수업이 있는 선생님이 나옵니다. 교체 기록이 반영되어 있습니다.',
+            el('button.btn.small', { onclick: () => copyText(freeText(r)) }, icon('copy'), '모두 비는 시간 복사')),
+        el('div.tt-wrap', el('table.tt', el('thead', head), el('tbody', rows))),
+        el('p.small.muted', '점심시간·방과후는 시간표에 없어 다루지 않습니다. 지난 시간은 흐리게 보입니다.'));
 }
 
 // ---------------------------------------------------------------- 선생님 찾기 (0.5.60)
@@ -322,6 +460,11 @@ function renderSide(body, actions) {
         return;
     }
     body.append(el('div', { style: 'padding: 8px 12px' }, teacherSearch(id => { viewTeacher(id); openTimetable(); refreshSide(); }, '선생님 찾아 시간표 보기')));
+    if (info.classes?.length) {
+        body.append(el('div', { style: 'padding: 0 12px 8px' }, el('label.tt-view', '학급 시간표 ', el('select', {
+            onchange: e => { if (e.target.value) { viewCls = e.target.value; mode = 'class'; openTimetable(); findTab('timetable')?.rerender(); } } },
+        el('option', { value: '' }, '— 학급 고르기 —'), info.classes.map(c => el('option', { value: c }, c))))));
+    }
     const list = el('ul.list');
     const swaps = [...info.swaps].reverse();
     if (!swaps.length) list.append(el('li.empty', '아직 기록한 교체가 없습니다. 내 시간표에서 바꿀 수업을 누르세요.'));

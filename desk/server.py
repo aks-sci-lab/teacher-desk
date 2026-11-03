@@ -1350,7 +1350,7 @@ def timetable_get(app, q, body):
     return {
         "loaded": True, "file": tt.get("file"), "sheet": tt.get("sheet"), "sheets": tt.get("sheets") or [], "at": tt.get("at"),
         "days": tt["days"], "slots": tt["slots"], "lock_words": tt.get("lock_words") or [],
-        "teachers": [teacher_brief(t) for t in tt["teachers"]],
+        "teachers": [teacher_brief(t) for t in tt["teachers"]], "classes": timetable.class_list(tt),
         "me": app.db.get_meta("timetable_me"),
         "swaps": app.db.get_meta("timetable_swaps") or [],
         "periods": app.db.get_meta("timetable_periods"), "default_periods": bell.DEFAULT_PERIODS,
@@ -1421,6 +1421,69 @@ def timetable_week(app, q, body):
         d = mon + timedelta(days=int(k.split("-")[0]))
         grid[k] = {**l, "block": timetable.block_reason(evs, d, timetable.grade_of(l["cls"]), today)}
     return {"monday": mon.isoformat(), "days": days, "grid": grid, "teacher": tid}
+
+
+def _week_arg(q):
+    return timetable.monday(date.fromisoformat(check_date(q.get("week") or date.today().isoformat(), "주")))
+
+
+def _week_days(app, tt, mon, grade=None, all_grades=False):
+    """그 주 요일별 날짜·학사일정 글·판정(note)·지난 날 여부."""
+    evs = queries.school_day_events(app.db, mon, mon + timedelta(days=6))
+    today = date.today()
+    out = []
+    for i, name in enumerate(tt["days"]):
+        d = mon + timedelta(days=i)
+        note = timetable.all_grades_note(evs, d) if all_grades else timetable.day_note(evs, d, grade)
+        out.append({"date": d.isoformat(), "name": name, "events": evs.get(d.isoformat(), []), "note": note, "past": d < today})
+    return out, evs
+
+
+@api("GET", "/api/timetable/class")
+def timetable_class(app, q, body):
+    """한 학급의 그 주 시간표: 요일별 수업(과목·선생님, 교체·잠금 표시) + 학사일정 판정."""
+    tt = _tt(app)
+    classes = timetable.class_list(tt)
+    need(classes, "학급이 적힌 수업이 없습니다", 404)
+    cls = q.get("cls")
+    if cls:
+        cls = timetable.find_class(tt, cls)
+        need(cls, "시간표에 없는 학급입니다", 404)
+    else:   # 기본은 설정의 담임 학급
+        cls = timetable.find_class(tt, f"{app.config['grade']}-{app.config['class_no']}") if app.config["grade"] and app.config["class_no"] else None
+        cls = cls or classes[0]
+    mon = _week_arg(q)
+    swaps = app.db.get_meta("timetable_swaps") or []
+    days, _ = _week_days(app, tt, mon, timetable.grade_of(cls))
+    week = timetable.class_week(tt, cls, mon, swaps)
+    for d in days:
+        d["lessons"] = week[d["date"]]
+    return {"cls": cls, "classes": classes, "monday": mon.isoformat(), "days": days,
+            "periods": max(s["p"] for s in tt["slots"]), "slots": [s["key"] for s in tt["slots"]]}
+
+
+@api("GET", "/api/timetable/free")
+def timetable_free(app, q, body):
+    """고른 선생님들이 같이 비는 시간 (요일 × 교시, 교체 반영, 학사일정 판정·교시 시각 포함)."""
+    tt = _tt(app)
+    raw = q.get("tids")
+    if raw:
+        need(all(x.isdigit() for x in raw.split(",")) and raw.count(",") < 40, "선생님 번호가 잘못되었습니다")
+        tids = list(dict.fromkeys(int(x) for x in raw.split(",")))
+    else:
+        me = app.db.get_meta("timetable_me")
+        tids = [me] if me is not None else []
+    need(tids, "선생님을 고르세요")
+    need(all(0 <= t < len(tt["teachers"]) for t in tids), "없는 선생님입니다", 404)
+    mon = _week_arg(q)
+    days, evs = _week_days(app, tt, mon, all_grades=True)
+    periods = app.db.get_meta("timetable_periods") or {}
+    cells = timetable.common_free(tt, tids, mon, app.db.get_meta("timetable_swaps") or [], evs)
+    for c in cells:
+        t = periods.get(str(c["period"])) or {}
+        c["start"], c["end"] = t.get("start"), t.get("end")
+    return {"monday": mon.isoformat(), "days": days, "cells": cells,
+            "teachers": [{"id": t, "name": tt["teachers"][t]["name"]} for t in tids]}
 
 
 @api("GET", "/api/timetable/candidates")
