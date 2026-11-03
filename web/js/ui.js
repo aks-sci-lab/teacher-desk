@@ -193,12 +193,22 @@ export function modal({ title, body, actions = [], wide = false, onClose, backdr
         onClose?.();
         prev?.focus?.();
     };
-    const onKey = e => { if (e.key === 'Escape') close(); };
+    // 입력 보호 (0.5.68): 사용자가 직접 입력·선택을 바꾼 팝업은 Esc·✕·바깥으로 닫을 때 한 번 확인.
+    // 저장 뒤 프로그램이 부르는 close() 와 입력 없는 조회 팝업은 그대로. 입력 내용은 어디에도 저장하지 않음
+    let dirty = false;
+    const requestClose = () => {
+        if (dirty && !window.confirm('입력한 내용이 있습니다. 저장하지 않고 닫을까요?\n(닫으면 입력한 내용이 사라집니다)')) return;
+        close();
+    };
+    const onKey = e => { if (e.key === 'Escape') requestClose(); };
     const box = el('div.modal', { role: 'dialog', ariaModal: 'true', tabIndex: -1, className: `modal${wide ? ' wide' : ''}` },
         el('header.modal-head', el('h2', title), el('div.modal-actions', actions,
-            el('button.icon-btn', { title: '닫기 (Esc)', onclick: () => close() }, '✕'))),
+            el('button.icon-btn', { title: '닫기 (Esc)', onclick: () => requestClose() }, '✕'))),
         el('div.modal-body', body));
-    const back = el('div.modal-back', { onclick: e => { if (backdropClose && e.target === back) close(); } }, box);
+    const back = el('div.modal-back', { onclick: e => { if (backdropClose && e.target === back) requestClose(); } }, box);
+    const markDirty = e => { if (e.isTrusted && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) dirty = true; };
+    box.addEventListener('input', markDirty);
+    box.addEventListener('change', markDirty);
     document.body.append(back);
     document.addEventListener('keydown', onKey);
     box.focus();

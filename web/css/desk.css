@@ -1129,3 +1129,14 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 /* 수신함 목록·브리핑 새 자료: 제목은 최대 두 줄, 날짜·출처는 그 아래 */
 .list .ttl { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
 .list.compact .ttl { -webkit-line-clamp: 1; }
+
+/* ---------- UI·사용성 (0.5.68) ---------- */
+/* 낮은 화면(노트북 1280×720 등)에서 글자를 키워도 설정 단추가 화면 밖으로 나가지 않게:
+   위쪽 메뉴 묶음이 남는 높이 안에서 스크롤되고, 아래쪽(설정)은 항상 보임. 단추 간격도 낮은 화면에서는 조금 줄임 */
+#activity-top { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+#activity-top::-webkit-scrollbar { display: none; }
+#activity-bottom { flex: none; }
+@media (max-height: 800px) {
+    .act { padding: 5px 0; }
+    .act .ico { height: 26px; }
+}
