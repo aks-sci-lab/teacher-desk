@@ -32,7 +32,7 @@ jobs:
         with:
           node-version: '22'
       - name: 학생 공유 링크·브라우저 AI 시험
-        run: node --test tests/pass-codec.test.cjs tests/browser-ai.test.cjs tests/capture-extension.test.cjs
+        run: node --test tests/pass-codec.test.cjs tests/browser-ai.test.cjs tests/capture-extension.test.cjs tests/timetable-view.test.cjs
 
   windows-zip:
     needs: tests
