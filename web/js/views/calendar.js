@@ -101,7 +101,18 @@ function renderMonth(pane, tab) {
         grid,
         el('p.small.muted', '날짜 칸을 두 번 누르면 일정을 추가합니다. 일정을 누르면 원래 메시지·공문이 열립니다.'));
     guarded(async () => {
-        const evs = await api.get(`/api/events?from=${days[0]}&to=${days[41]}`);
+        const [evs, holidayNames] = await Promise.all([
+            api.get(`/api/events?from=${days[0]}&to=${days[41]}`),
+            api.get(`/api/holidays?from=${days[0]}&to=${days[41]}`),
+        ]);
+        for (const [d, name] of Object.entries(holidayNames)) {
+            const cell = cells.get(d);
+            if (!cell) continue;
+            cell.classList.add('holiday');
+            const hasMatchingEvent = evs.some(e => e.date <= d && (!e.end_date || e.end_date >= d)
+                && e.text === name);
+            if (!hasMatchingEvent) cell.append(el('div.holiday-name', { title: name }, name));
+        }
         for (const e of evs) {
             // 기간 일정은 기간 안의 모든 날에 표시
             const last = e.end_date && e.end_date < days[41] ? e.end_date : (e.end_date ? days[41] : e.date);
