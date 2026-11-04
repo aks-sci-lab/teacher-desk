@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, datetime
+from unittest.mock import patch
 
 from desk import holidays
 
@@ -75,50 +76,6 @@ YEARLY_HOLIDAYS = {
         2028-10-09|한글날
         2028-12-25|성탄절
     """,
-    2029: """
-        2029-01-01|신정
-        2029-02-12|설날
-        2029-02-13|설날
-        2029-02-14|설날
-        2029-03-01|삼일절
-        2029-05-01|노동절
-        2029-05-05|어린이날
-        2029-05-07|대체공휴일(어린이날)
-        2029-05-20|부처님오신날
-        2029-05-21|대체공휴일(부처님오신날)
-        2029-06-06|현충일
-        2029-07-17|제헌절
-        2029-08-15|광복절
-        2029-09-21|추석
-        2029-09-22|추석
-        2029-09-23|추석
-        2029-09-24|대체공휴일(추석)
-        2029-10-03|개천절
-        2029-10-09|한글날
-        2029-12-25|성탄절
-    """,
-    2030: """
-        2030-01-01|신정
-        2030-02-02|설날
-        2030-02-03|설날
-        2030-02-04|설날
-        2030-02-05|대체공휴일(설날)
-        2030-03-01|삼일절
-        2030-05-01|노동절
-        2030-05-05|어린이날
-        2030-05-06|대체공휴일(어린이날)
-        2030-05-09|부처님오신날
-        2030-06-05|지방선거일
-        2030-06-06|현충일
-        2030-07-17|제헌절
-        2030-08-15|광복절
-        2030-09-11|추석
-        2030-09-12|추석
-        2030-09-13|추석
-        2030-10-03|개천절
-        2030-10-09|한글날
-        2030-12-25|성탄절
-    """,
 }
 
 
@@ -146,6 +103,31 @@ class HolidayTests(unittest.TestCase):
     def test_maximum_date_range(self):
         self.assertEqual(holidays.holidays_between(date.max, date.max), {})
         self.assertEqual(holidays.holidays_between(date(9999, 12, 30), date.max), {})
+
+    def test_unverified_years_are_not_predicted(self):
+        for year in (2025, 2029, 2030):
+            with self.subTest(year=year):
+                self.assertEqual(holidays.holidays_between(date(year, 1, 1), date(year, 12, 31)), {})
+
+    def test_same_day_overlap_matches_kasi_2028_calendar(self):
+        self.assertEqual(holidays.holiday_name(date(2028, 10, 5)), "대체공휴일(개천절·추석)")
+        self.assertIsNone(holidays.holiday_name(date(2028, 10, 6)))
+
+    def test_substitutes_for_different_dates_do_not_merge(self):
+        with patch.object(holidays, "_FIXED", ((5, 1, "노동절"), (5, 2, "어린이날"))), \
+                patch.object(holidays, "_LUNAR", {2027: ()}), \
+                patch.object(holidays, "_ELECTIONS", {}):
+            result = holidays._build_holidays()
+        self.assertEqual(result[date(2027, 5, 3)], "대체공휴일(노동절)")
+        self.assertEqual(result[date(2027, 5, 4)], "대체공휴일(어린이날)")
+
+    def test_saturday_lunar_overlap_does_not_create_an_extra_substitute(self):
+        with patch.object(holidays, "_FIXED", ((5, 1, "노동절"),)), \
+                patch.object(holidays, "_LUNAR", {2027: ((5, 1, "추석"),)}), \
+                patch.object(holidays, "_ELECTIONS", {}):
+            result = holidays._build_holidays()
+        self.assertEqual(result[date(2027, 5, 3)], "대체공휴일(노동절)")
+        self.assertNotIn(date(2027, 5, 4), result)
 
     def test_invalid_input(self):
         for value in ("2026-03-01", datetime(2026, 3, 1)):

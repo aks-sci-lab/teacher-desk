@@ -99,6 +99,7 @@ function renderMonth(pane, tab) {
             el('button.btn.small', { onclick: openSchoolCal, title: '학교 학사일정을 한꺼번에 넣기' }, '학사일정 가져오기'),
             el('button.btn.small', { onclick: exportIcs, title: '구글 캘린더 가져오기용' }, '.ics 내보내기')),
         grid,
+        el('p.small.muted', '공휴일 표: 2026~2028년. 2028년은 한국천문연구원의 공식 발표 전 자료입니다. 그 밖의 연도와 임시공휴일은 직접 확인해 주세요.'),
         el('p.small.muted', '날짜 칸을 두 번 누르면 일정을 추가합니다. 일정을 누르면 원래 메시지·공문이 열립니다.'));
     guarded(async () => {
         const [evs, holidayNames] = await Promise.all([

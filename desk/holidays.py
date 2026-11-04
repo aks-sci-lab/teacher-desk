@@ -27,18 +27,11 @@ _LUNAR = {
     2028: ((1, 26, "설날"), (1, 27, "설날"), (1, 28, "설날"),
            (5, 2, "부처님오신날"),
            (10, 2, "추석"), (10, 3, "추석"), (10, 4, "추석")),
-    2029: ((2, 12, "설날"), (2, 13, "설날"), (2, 14, "설날"),
-           (5, 20, "부처님오신날"),
-           (9, 21, "추석"), (9, 22, "추석"), (9, 23, "추석")),
-    2030: ((2, 2, "설날"), (2, 3, "설날"), (2, 4, "설날"),
-           (5, 9, "부처님오신날"),
-           (9, 11, "추석"), (9, 12, "추석"), (9, 13, "추석")),
 }
 
 _ELECTIONS = {
     date(2026, 6, 3): "지방선거일",
     date(2028, 4, 12): "국회의원선거일",
-    date(2030, 6, 5): "지방선거일",
 }
 
 _SUBSTITUTE_TARGETS = {
@@ -58,18 +51,23 @@ def _build_holidays():
     for day, name in _ELECTIONS.items():
         original[day].append(name)
 
-    substitutes = defaultdict(set)
+    substitutes = {}
     for day, names in sorted(original.items()):
-        targets = [name for name in names if name in _SUBSTITUTE_TARGETS]
-        for name in targets:
-            overlaps = any(other != name for other in names)
-            weekend = day.weekday() == 6 if name in _LUNAR_HOLIDAYS else day.weekday() >= 5
-            if not (weekend or overlaps):
+        targets = set()
+        for name in names:
+            if name not in _SUBSTITUTE_TARGETS:
                 continue
-            next_day = day + timedelta(days=1)
-            while next_day.weekday() >= 5 or next_day in original:
-                next_day += timedelta(days=1)
-            substitutes[next_day].add(name)
+            overlaps = day.weekday() < 5 and any(other != name for other in names)
+            weekend = day.weekday() == 6 if name in _LUNAR_HOLIDAYS else day.weekday() >= 5
+            if weekend or overlaps:
+                targets.add(name)
+        if not targets:
+            continue
+        # KASI 2028 달력자료: 같은 날 겹친 추석·개천절은 10/5 하루만 대체.
+        next_day = day + timedelta(days=1)
+        while next_day.weekday() >= 5 or next_day in original or next_day in substitutes:
+            next_day += timedelta(days=1)
+        substitutes[next_day] = targets
 
     result = {day: "·".join(dict.fromkeys(names)) for day, names in original.items()}
     for day, names in substitutes.items():
