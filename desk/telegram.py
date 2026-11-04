@@ -533,7 +533,7 @@ class Bot:
                  {"text": "▶", "callback_data": f"dlg:{did}:cm:{next_y:04d}{next_m:02d}"}],
                 [{"text": w, "callback_data": f"dlg:{did}:nop"} for w in "일월화수목금토"]]
         last = calendar.monthrange(year, month)[1]
-        # 일정 추가 달력에는 아직 휴업일·공휴일을 표시하지 않음 (공휴일 목록 `desk/holidays.py` 가 생기면 day_label 한 곳에서 붙임)
+        # 학사일정 휴업일은 결석계·조퇴·외출에서만 사용하고, 일정 추가는 법정공휴일 표로 표시.
         closed = set() if dialog["kind"] == "event" else absence.closed_days(self.db, date(year, month, 1), date(year, month, last))
         for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
             row = []

@@ -319,6 +319,7 @@ class TelegramAddEventTests(unittest.TestCase):
         ))
 
         january_2029, calendar = labels(2029, 1)
+        self.assertEqual(january_2029[date(2029, 1, 1)], "1")  # 표 밖의 신정도 추측하지 않음
         self.assertEqual(january_2029[date(2029, 1, 6)], "🔵6")
         self.assertEqual(january_2029[date(2029, 1, 7)], "🔴7")
         self.assertEqual(january_2029[date(2029, 1, 8)], "8")
@@ -327,6 +328,41 @@ class TelegramAddEventTests(unittest.TestCase):
             for row in calendar["reply_markup"]["inline_keyboard"]
             for button in row
         ))
+
+    def test_calendar_button_shape_and_callbacks_are_unchanged(self):
+        did = self.start()
+        dialog = self.bot.dialog
+        rows = self.bot.calendar_buttons(dialog, 2026, 10)
+        self.assertEqual(rows[0][0]["callback_data"], f"dlg:{did}:cm:202609")
+        self.assertEqual(rows[0][2]["callback_data"], f"dlg:{did}:cm:202611")
+        self.assertEqual([b["text"] for b in rows[1]], list("일월화수목금토"))
+        day_buttons = [b for row in rows[2:-1] for b in row if ":cd:" in b["callback_data"]]
+        self.assertTrue(all(len(row) == 7 for row in rows[1:-1]))
+        self.assertEqual([b["callback_data"] for b in day_buttons],
+                         [f"dlg:{did}:cd:202610{day:02d}" for day in range(1, 32)])
+        self.assertTrue(all(len(b["text"]) <= 3 for b in day_buttons))
+        for kind in ("absence", "early", "out"):
+            with self.subTest(kind=kind):
+                other = self.bot.calendar_buttons({"id": did, "kind": kind}, 2026, 10)
+                self.assertEqual([b["callback_data"] for row in other[2:-1] for b in row],
+                                 [b["callback_data"] for row in rows[2:-1] for b in row])
+                self.assertTrue(all(not b["text"].startswith(("🔴", "🔵"))
+                                    for row in other[2:-1] for b in row))
+
+    def test_changing_holiday_to_weekday_removes_warning_and_keeps_text(self):
+        did = self.start()
+        self.pick(did, date(2026, 10, 5))
+        self.bot.handle_update(msg("학년 협의회"))
+        confirm = self.fake.sent[-1]
+        self.assertIn("⚠ 공휴일(대체공휴일(개천절))입니다", confirm["text"])
+        self.bot.handle_update(press(self.buttons(confirm)["날짜 바꾸기"]))
+        self.pick(did, date(2026, 10, 6))
+        changed = self.fake.edited[-1]
+        self.assertIn("학년 협의회 — 등록할까요?", changed["text"])
+        self.assertNotIn("⚠", changed["text"])
+        self.bot.handle_update(press(self.buttons(changed)["마감으로 등록"]))
+        self.assertEqual((self.events()[-1]["date"], self.events()[-1]["kind"]),
+                         ("2026-10-06", "deadline"))
 
     def test_event_confirmation_warns_about_holidays_and_weekends(self):
         cases = (
