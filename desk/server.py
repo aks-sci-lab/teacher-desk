@@ -1085,6 +1085,7 @@ def update_event(app, q, body, eid):
 @api("DELETE", r"/api/events/(\d+)")
 def delete_event(app, q, body, eid):
     app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+    queries.forget_added_event(app.db, int(eid))
     return {"ok": True}
 
 

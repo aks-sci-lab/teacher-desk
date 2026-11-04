@@ -251,6 +251,16 @@ class ServerTests(unittest.TestCase):
         self.req("POST", "/api/items", {"text": "협의록 제출\n2099년 1월 5일(월)까지 제출 바랍니다", "source": "paste"})
         self.assertEqual(sig(), before)                                                # 항목에 딸린 일정은 세지 않음
 
+    def test_deleting_an_event_also_drops_its_telegram_undo_entry(self):
+        """화면에서 지운 번호를 새 일정이 이어받아도 텔레그램의 옛 [방금 등록 취소] 가 그것을 지우지 못하게 목록에서 뺌."""
+        st, ev = self.req("POST", "/api/events", {"date": "2099-01-06", "text": "취소 단추 시험"})
+        self.assertEqual(st, 200)
+        self.env.db.set_meta("telegram_added_events", [{"id": ev["id"], "date": "2099-01-06", "key": "취소 단추 시험"},
+                                                       {"id": 424242, "date": "2099-01-07", "key": "다른 일정"}, ev["id"]])
+        self.assertEqual(self.req("DELETE", f"/api/events/{ev['id']}")[0], 200)
+        self.assertEqual(self.env.db.get_meta("telegram_added_events"), [{"id": 424242, "date": "2099-01-07", "key": "다른 일정"}])
+        self.assertEqual(self.req("DELETE", "/api/events/999999")[0], 200)              # 없는 번호를 지워도 오류 없음
+
     def test_items_events_ics(self):
         st, it = self.req("POST", "/api/items", {"text": "협의록 제출\n2099년 1월 5일(월)까지 제출 바랍니다", "source": "paste"})
         self.assertEqual(st, 200, it)

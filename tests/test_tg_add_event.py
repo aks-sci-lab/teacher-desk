@@ -78,6 +78,53 @@ class TelegramAddEventTests(unittest.TestCase):
         self.bot.handle_update(press(undo))                                          # 이미 취소한 뒤 다시 눌러도 안전
         self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
 
+    def add_from_telegram(self, text, day=None):
+        did = self.start()
+        self.pick(did, day)
+        self.bot.handle_update(msg(text))
+        self.bot.handle_update(press(self.buttons(self.fake.sent[-1])["등록"]))
+        return self.events()[-1]
+
+    def test_undo_does_not_delete_a_new_event_that_reused_the_number(self):
+        """화면에서 지운 번호를 새 일정이 이어받은 뒤 옛 [방금 등록 취소] 를 눌러도 새 일정이 지워지면 안 됨."""
+        row = self.add_from_telegram("학년 협의회")
+        undo = f"evu:{row['id']}"
+        self.env.db.execute("DELETE FROM events WHERE id = ?", (row["id"],))          # 선생님이 화면에서 지움
+        new = queries.insert_event(self.env.db, {"date": self.day.isoformat(), "kind": "event", "text": "교직원 회의", "category": "참고"})
+        self.assertEqual(new["id"], row["id"])                                        # 같은 번호를 이어받음 (재현 조건)
+        self.bot.handle_update(press(undo))
+        self.assertEqual([e["text"] for e in self.events()], ["교직원 회의"])            # 화면에서 만든 새 일정은 그대로
+        self.assertIn("이미 지워졌거나 바뀐 일정", self.fake.edited[-1]["text"])
+        self.bot.handle_update(press(undo))                                           # 목록에서 빠져 다시 눌러도 안전
+        self.assertEqual(len(self.events()), 1)
+        self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
+
+    def test_undo_checks_date_too_and_long_text_matches_by_first_twenty_chars(self):
+        long_text = "  학년   협의회   및   교과   협의회   일정   조율   안건   정리  "
+        row = self.add_from_telegram(long_text)
+        entry = self.env.db.get_meta("telegram_added_events")[0]
+        self.assertEqual(set(entry), {"id", "date", "key"})
+        self.assertEqual(len(entry["key"]), 20)
+        self.assertNotIn("정리", entry["key"])                                          # 앞 20자만 저장 (meta 는 이 PC 안)
+        self.env.db.execute("UPDATE events SET date = ? WHERE id = ?", ((self.day + timedelta(days=1)).isoformat(), row["id"]))
+        self.bot.handle_update(press(f"evu:{row['id']}"))                            # 날짜가 바뀌었으면 지우지 않음
+        self.assertEqual(len(self.events()), 1)
+        self.assertIn("바뀐 일정", self.fake.edited[-1]["text"])
+        row2 = self.add_from_telegram(long_text, self.day + timedelta(days=3))        # 정상 취소: 띄어쓰기가 달라도 같은 일정
+        self.bot.handle_update(press(f"evu:{row2['id']}"))
+        self.assertEqual([e["id"] for e in self.events()], [row["id"]])
+        self.assertIn("취소했습니다", self.fake.edited[-1]["text"])
+
+    def test_old_format_number_only_list_is_read_without_error_and_not_deleted(self):
+        row = queries.insert_event(self.env.db, {"date": self.day.isoformat(), "kind": "event", "text": "예전 등록", "category": "참고"})
+        self.env.db.set_meta("telegram_added_events", [row["id"], 999])               # 예전 형식 (번호만)
+        self.bot.handle_update(press(f"evu:{row['id']}"))
+        self.assertEqual(len(self.events()), 1)
+        self.assertIn("확인할 수 없어 취소하지 않았습니다", self.fake.edited[-1]["text"])
+        self.assertEqual(self.env.db.get_meta("telegram_added_events"), [999])
+        self.add_from_telegram("새로 등록")                                              # 새 형식과 섞여 있어도 동작
+        self.assertEqual(len(self.env.db.get_meta("telegram_added_events")), 2)
+
     def test_register_as_deadline_and_it_appears_in_deadlines(self):
         did = self.start()
         self.pick(did)

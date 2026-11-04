@@ -640,20 +640,31 @@ class Bot:
         self.dialog = None   # 중복 클릭으로 두 번 등록하지 않음
         row = queries.insert_event(self.db, {"date": d.isoformat(), "kind": kind, "text": text,
                                              "category": "제출·마감" if kind == "deadline" else "참고"})
-        ids = (self.db.get_meta("telegram_added_events") or [])[-19:] + [row["id"]]
-        self.db.set_meta("telegram_added_events", ids)   # 텔레그램에서 더한 것만 [방금 등록 취소] 로 지울 수 있음
+        # 텔레그램에서 더한 것만 [방금 등록 취소] 로 지울 수 있음. 번호는 지우면 새 일정이 이어받을 수 있어 날짜·내용 앞 20자도 함께 적어 둠
+        entries = (self.db.get_meta("telegram_added_events") or [])[-19:] + [
+            {"id": row["id"], "date": row["date"], "key": queries.added_event_key(text)}]
+        self.db.set_meta("telegram_added_events", entries)
         self.db.log(f"텔레그램에서 일정 추가 ({self.plain_day(d)} {'마감' if kind == 'deadline' else '일정'})")
         return self.show(cid, message_id,
                          f"✅ {self.plain_day(d)} {self.mask(text)} 등록했습니다 ({'마감' if kind == 'deadline' else '일정'}). 달력에서 볼 수 있습니다.",
                          [[{"text": "방금 등록 취소", "callback_data": f"evu:{row['id']}"}]])
 
     def undo_event(self, cid, eid, message_id):
-        ids = self.db.get_meta("telegram_added_events") or []
-        row = self.db.one("SELECT * FROM events WHERE id = ?", (eid,)) if eid in ids else None
-        if not row or row["item_id"] is not None:
+        entries = self.db.get_meta("telegram_added_events") or []
+        entry = next((e for e in entries if (e.get("id") if isinstance(e, dict) else e) == eid), None)
+        if entry is None:
             return self.show(cid, message_id, "이미 취소했거나 지울 수 없는 일정입니다.", [])
+        row = self.db.one("SELECT * FROM events WHERE id = ?", (eid,))
+        if not isinstance(entry, dict):   # 예전 형식(번호만): 같은 일정인지 확인할 수 없어 지우지 않음
+            self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
+            return self.show(cid, message_id, "예전 방식으로 등록한 일정이라 같은 일정인지 확인할 수 없어 취소하지 않았습니다. 달력에서 직접 지워 주세요.", [])
+        # 그 번호의 지금 행이 등록한 그 일정(날짜·내용 앞 20자)일 때만 지움 — 화면에서 지운 번호를 새 일정이 이어받았을 수 있음
+        if not row or row["item_id"] is not None or row["date"] != entry.get("date") \
+                or queries.added_event_key(row["text"]) != entry.get("key"):
+            self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
+            return self.show(cid, message_id, "이미 지워졌거나 바뀐 일정이라 취소하지 않았습니다.", [])
         self.db.execute("DELETE FROM events WHERE id = ?", (eid,))
-        self.db.set_meta("telegram_added_events", [i for i in ids if i != eid])
+        self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
         self.db.log("텔레그램에서 등록한 일정을 취소")
         return self.show(cid, message_id,
                          f"↩ 등록을 취소했습니다 ({self.plain_day(date.fromisoformat(row['date']))} {self.mask(row['text'] or '')}).", [])

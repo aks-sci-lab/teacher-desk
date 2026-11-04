@@ -27,6 +27,19 @@ def insert_event(db, f):
     return db.one("SELECT * FROM events WHERE id = ?", (eid,))
 
 
+def added_event_key(text):
+    """텔레그램으로 더한 일정을 나중에 알아보는 표시: 내용 앞 20자(띄어쓰기 정리). 이 PC 의 meta 에만 둠."""
+    return " ".join((text or "").split())[:20]
+
+
+def forget_added_event(db, eid):
+    """화면에서 일정을 지우면 텔레그램 [방금 등록 취소] 목록에서도 뺌 (지운 번호를 새 일정이 이어받는 일 방지). 예전 형식(숫자만)도 읽음."""
+    entries = db.get_meta("telegram_added_events") or []
+    kept = [e for e in entries if (e.get("id") if isinstance(e, dict) else e) != eid]
+    if len(kept) != len(entries):
+        db.set_meta("telegram_added_events", kept)
+
+
 def today_summary(db, today=None):
     today = today or date.today()
     week_end = today + timedelta(days=7)
