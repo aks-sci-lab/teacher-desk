@@ -106,5 +106,7 @@ def holidays_between(start, end):
         name = holiday_name(day)
         if name:
             result[day.isoformat()] = name
+        if day == end:
+            break
         day += timedelta(days=1)
     return result

@@ -143,6 +143,10 @@ class HolidayTests(unittest.TestCase):
         )
         self.assertIsNone(holidays.holiday_name(date(2026, 3, 3)))
 
+    def test_maximum_date_range(self):
+        self.assertEqual(holidays.holidays_between(date.max, date.max), {})
+        self.assertEqual(holidays.holidays_between(date(9999, 12, 30), date.max), {})
+
     def test_invalid_input(self):
         for value in ("2026-03-01", datetime(2026, 3, 1)):
             with self.subTest(value=value), self.assertRaises(TypeError):

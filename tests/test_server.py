@@ -66,6 +66,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req(
             "GET", "/api/holidays?from=2026-01-01&to=2027-02-05",
         )[0], 200)
+        self.assertEqual(self.req(
+            "GET", "/api/holidays?from=9999-12-31&to=9999-12-31",
+        ), (200, {}))
         for path in (
             "/api/holidays?from=2026-02-30&to=2026-03-02",
             "/api/holidays?from=2026-03-02&to=2026-03-01",
