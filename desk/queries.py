@@ -21,6 +21,35 @@ def events_between(db, start, end, include_done=True):
     return db.query(sql + " ORDER BY e.date, COALESCE(e.time, '99'), e.id", (end.isoformat(), start.isoformat()))
 
 
+def bump_events_rev(db):
+    """따로 넣은 일정이 더해지거나 지워질 때마다 올라가는 변경 번호 (`/api/state.counts.manual_events`).
+    개수·마지막 번호는 '지우고 다시 넣으면' 같은 값으로 돌아가 화면이 못 알아채서 늘 증가하는 번호를 씀."""
+    with db.lock:
+        rev = (db.get_meta("events_rev") or 0) + 1
+        db.set_meta("events_rev", rev)
+    return rev
+
+
+def insert_event(db, f):
+    """따로 넣는 일정 한 건 저장 (화면의 POST /api/events 와 텔레그램 '일정 추가' 가 같이 씀). f 는 검사한 칸들."""
+    eid = db.execute(f"INSERT INTO events({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
+    bump_events_rev(db)
+    return db.one("SELECT * FROM events WHERE id = ?", (eid,))
+
+
+def added_event_key(text):
+    """텔레그램으로 더한 일정을 나중에 알아보는 표시: 내용 앞 20자(띄어쓰기 정리). 이 PC 의 meta 에만 둠."""
+    return " ".join((text or "").split())[:20]
+
+
+def forget_added_event(db, eid):
+    """화면에서 일정을 지우면 텔레그램 [방금 등록 취소] 목록에서도 뺌 (지운 번호를 새 일정이 이어받는 일 방지). 예전 형식(숫자만)도 읽음."""
+    entries = db.get_meta("telegram_added_events") or []
+    kept = [e for e in entries if (e.get("id") if isinstance(e, dict) else e) != eid]
+    if len(kept) != len(entries):
+        db.set_meta("telegram_added_events", kept)
+
+
 def today_summary(db, today=None):
     today = today or date.today()
     week_end = today + timedelta(days=7)

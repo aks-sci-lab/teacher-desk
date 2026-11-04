@@ -238,6 +238,35 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("PUT", "/api/students", {"rows": [{"number": "1", "name": "x"}]})[0], 400)
 
     # ---- 수신함·일정 ----
+    def test_state_signals_manually_added_events_so_screens_refresh(self):
+        """텔레그램 '일정 추가'(따로 넣은 일정)가 더해지거나 취소되면 화면이 알아채고 새로 고침. 신호는 늘 증가하는 변경 번호라
+        가장 큰 번호의 일정을 지우고 다시 넣어 번호가 재사용돼도 이전 값으로 돌아가지 않음. 수집한 자료의 일정은 세지 않음."""
+        sig = lambda: self.req("GET", "/api/state")[1]["counts"]["manual_events"]
+        seen = [sig()]
+        st, ev = self.req("POST", "/api/events", {"date": "2099-01-05", "text": "학년 협의회"})
+        self.assertEqual(st, 200)
+        seen.append(sig())
+        self.assertEqual(self.req("DELETE", f"/api/events/{ev['id']}")[0], 200)
+        seen.append(sig())
+        st, ev2 = self.req("POST", "/api/events", {"date": "2099-01-05", "text": "학년 협의회"})   # 같은 번호·같은 내용으로 다시
+        self.assertEqual(ev2["id"], ev["id"])
+        seen.append(sig())
+        self.assertEqual(len(set(seen)), 4)                                              # 매번 다른 값 (개수·마지막 번호만으로는 같아짐)
+        self.assertEqual(seen, sorted(seen))
+        self.req("POST", "/api/items", {"text": "협의록 제출\n2099년 1월 5일(월)까지 제출 바랍니다", "source": "paste"})
+        self.assertEqual(sig(), seen[-1])                                                # 항목에 딸린 일정은 세지 않음
+        self.req("DELETE", f"/api/events/{ev2['id']}")
+
+    def test_deleting_an_event_also_drops_its_telegram_undo_entry(self):
+        """화면에서 지운 번호를 새 일정이 이어받아도 텔레그램의 옛 [방금 등록 취소] 가 그것을 지우지 못하게 목록에서 뺌."""
+        st, ev = self.req("POST", "/api/events", {"date": "2099-01-06", "text": "취소 단추 시험"})
+        self.assertEqual(st, 200)
+        self.env.db.set_meta("telegram_added_events", [{"id": ev["id"], "date": "2099-01-06", "key": "취소 단추 시험"},
+                                                       {"id": 424242, "date": "2099-01-07", "key": "다른 일정"}, ev["id"]])
+        self.assertEqual(self.req("DELETE", f"/api/events/{ev['id']}")[0], 200)
+        self.assertEqual(self.env.db.get_meta("telegram_added_events"), [{"id": 424242, "date": "2099-01-07", "key": "다른 일정"}])
+        self.assertEqual(self.req("DELETE", "/api/events/999999")[0], 200)              # 없는 번호를 지워도 오류 없음
+
     def test_items_events_ics(self):
         st, it = self.req("POST", "/api/items", {"text": "협의록 제출\n2099년 1월 5일(월)까지 제출 바랍니다", "source": "paste"})
         self.assertEqual(st, 200, it)
