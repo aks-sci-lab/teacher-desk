@@ -338,6 +338,10 @@ class Bot:
         if cid != self.chat_id:
             return None  # 연결되지 않은 사람에게는 답하지 않음
         head = words[0].split("@")[0].lower()
+        event_dialog = self.dialog and self.dialog.get("kind") == "event"
+        if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
+            # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
+            return self.dialog_input(cid, text)
         added = P_ADD_EVENT.match(text)
         if added:   # '일정 추가' 또는 메뉴 단추로만 시작
             return self.begin_event(cid, added.group(1))
@@ -641,17 +645,20 @@ class Bot:
         row = queries.insert_event(self.db, {"date": d.isoformat(), "kind": kind, "text": text,
                                              "category": "제출·마감" if kind == "deadline" else "참고"})
         # 텔레그램에서 더한 것만 [방금 등록 취소] 로 지울 수 있음. 번호는 지우면 새 일정이 이어받을 수 있어 날짜·내용 앞 20자도 함께 적어 둠
+        token = secrets.token_hex(3)   # 등록마다 하나 — 번호가 재사용돼도 옛 단추가 다른 일정을 지우지 못하게 단추에 함께 넣음
         entries = (self.db.get_meta("telegram_added_events") or [])[-19:] + [
-            {"id": row["id"], "date": row["date"], "key": queries.added_event_key(text)}]
+            {"id": row["id"], "date": row["date"], "key": queries.added_event_key(text), "tok": token}]
         self.db.set_meta("telegram_added_events", entries)
         self.db.log(f"텔레그램에서 일정 추가 ({self.plain_day(d)} {'마감' if kind == 'deadline' else '일정'})")
         return self.show(cid, message_id,
                          f"✅ {self.plain_day(d)} {self.mask(text)} 등록했습니다 ({'마감' if kind == 'deadline' else '일정'}). 달력에서 볼 수 있습니다.",
-                         [[{"text": "방금 등록 취소", "callback_data": f"evu:{row['id']}"}]])
+                         [[{"text": "방금 등록 취소", "callback_data": f"evu:{row['id']}:{token}"}]])
 
-    def undo_event(self, cid, eid, message_id):
+    def undo_event(self, cid, eid, message_id, token=""):
         entries = self.db.get_meta("telegram_added_events") or []
         entry = next((e for e in entries if (e.get("id") if isinstance(e, dict) else e) == eid), None)
+        if isinstance(entry, dict) and entry.get("tok") and entry["tok"] != token:
+            entry = None   # 같은 번호를 이어받은 다른 등록의 단추가 아님 (이 단추는 이미 지워진 옛 등록의 것)
         if entry is None:
             return self.show(cid, message_id, "이미 취소했거나 지울 수 없는 일정입니다.", [])
         row = self.db.one("SELECT * FROM events WHERE id = ?", (eid,))
@@ -664,6 +671,7 @@ class Bot:
             self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
             return self.show(cid, message_id, "이미 지워졌거나 바뀐 일정이라 취소하지 않았습니다.", [])
         self.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+        queries.bump_events_rev(self.db)
         self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
         self.db.log("텔레그램에서 등록한 일정을 취소")
         return self.show(cid, message_id,
@@ -1276,8 +1284,10 @@ class Bot:
             return self.show(cid, msg.get("message_id"),
                              f"🎫 {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 {self.pass_when(p)}\n"
                              "사유를 고르면 발급합니다.", buttons)
-        if kind == "evu" and rest.isdigit():
-            return self.undo_event(cid, int(rest), msg.get("message_id"))
+        if kind == "evu":
+            eid, _, token = rest.partition(":")
+            if eid.isdigit():
+                return self.undo_event(cid, int(eid), msg.get("message_id"), token)
         if kind in ("up", "ua", "uf", "uc"):
             return self.update_button(cid, kind, rest, msg.get("message_id"))
         if kind == "pp":

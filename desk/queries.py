@@ -21,9 +21,19 @@ def events_between(db, start, end, include_done=True):
     return db.query(sql + " ORDER BY e.date, COALESCE(e.time, '99'), e.id", (end.isoformat(), start.isoformat()))
 
 
+def bump_events_rev(db):
+    """따로 넣은 일정이 더해지거나 지워질 때마다 올라가는 변경 번호 (`/api/state.counts.manual_events`).
+    개수·마지막 번호는 '지우고 다시 넣으면' 같은 값으로 돌아가 화면이 못 알아채서 늘 증가하는 번호를 씀."""
+    with db.lock:
+        rev = (db.get_meta("events_rev") or 0) + 1
+        db.set_meta("events_rev", rev)
+    return rev
+
+
 def insert_event(db, f):
     """따로 넣는 일정 한 건 저장 (화면의 POST /api/events 와 텔레그램 '일정 추가' 가 같이 씀). f 는 검사한 칸들."""
     eid = db.execute(f"INSERT INTO events({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
+    bump_events_rev(db)
     return db.one("SELECT * FROM events WHERE id = ?", (eid,))
 
 

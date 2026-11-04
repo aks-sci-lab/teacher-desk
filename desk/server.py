@@ -366,8 +366,7 @@ def get_state(app, q, body):
             "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
             "absences": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM absences")["last"],
             # 텔레그램 '일정 추가'(따로 넣은 일정)가 더해지거나 취소되면 화면이 알아채고 새로 고침
-            "manual_events": (lambda r: f"{r['n']}:{r['last']}")(
-                db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM events WHERE item_id IS NULL")),
+            "manual_events": db.get_meta("events_rev") or 0,
         },
         "print_requests": [db.one("SELECT * FROM passes WHERE id = ?", (pid,))
                            for pid in printing.queue(db)],
@@ -1086,6 +1085,7 @@ def update_event(app, q, body, eid):
 def delete_event(app, q, body, eid):
     app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
     queries.forget_added_event(app.db, int(eid))
+    queries.bump_events_rev(app.db)
     return {"ok": True}
 
 

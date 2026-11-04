@@ -64,13 +64,14 @@ class TelegramAddEventTests(unittest.TestCase):
         row = self.events()[0]
         self.assertEqual((row["date"], row["kind"], row["text"], row["item_id"]), (self.day.isoformat(), "event", "학년 협의회", None))
         self.assertIn("등록했습니다", self.fake.edited[-1]["text"])
-        self.assertEqual(self.buttons(self.fake.edited[-1]), {"방금 등록 취소": f"evu:{row['id']}"})
+        undo = self.buttons(self.fake.edited[-1])["방금 등록 취소"]
+        self.assertRegex(undo, rf"^evu:{row['id']}:[0-9a-f]{{6}}$")                  # 번호와 등록마다 다른 토큰
+        self.assertLessEqual(len(undo.encode()), 64)
         # 웹 화면(달력·브리핑)이 읽는 같은 질의에 바로 나옴
         shown = queries.events_between(self.env.db, self.day, self.day)
         self.assertEqual([e["text"] for e in shown], ["학년 협의회"])
         self.assertIn("오래된", self.bot.handle_update(press(self.buttons(confirm)["등록"])))   # 두 번 눌러도 한 번만
         self.assertEqual(len(self.events()), 1)
-        undo = f"evu:{row['id']}"
         self.assertIsNone(self.bot.handle_update(press(undo, chat=6)))
         self.bot.handle_update(press(undo))
         self.assertEqual(self.events(), [])
@@ -85,10 +86,13 @@ class TelegramAddEventTests(unittest.TestCase):
         self.bot.handle_update(press(self.buttons(self.fake.sent[-1])["등록"]))
         return self.events()[-1]
 
+    def undo_button(self):
+        return self.buttons(self.fake.edited[-1])["방금 등록 취소"]
+
     def test_undo_does_not_delete_a_new_event_that_reused_the_number(self):
         """화면에서 지운 번호를 새 일정이 이어받은 뒤 옛 [방금 등록 취소] 를 눌러도 새 일정이 지워지면 안 됨."""
         row = self.add_from_telegram("학년 협의회")
-        undo = f"evu:{row['id']}"
+        undo = self.undo_button()
         self.env.db.execute("DELETE FROM events WHERE id = ?", (row["id"],))          # 선생님이 화면에서 지움
         new = queries.insert_event(self.env.db, {"date": self.day.isoformat(), "kind": "event", "text": "교직원 회의", "category": "참고"})
         self.assertEqual(new["id"], row["id"])                                        # 같은 번호를 이어받음 (재현 조건)
@@ -99,26 +103,43 @@ class TelegramAddEventTests(unittest.TestCase):
         self.assertEqual(len(self.events()), 1)
         self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
 
+    def test_old_undo_button_cannot_delete_a_later_telegram_event_that_reused_the_number(self):
+        """A 등록 → 화면에서 A 삭제 → 텔레그램으로 B 등록(같은 번호) 뒤 A 의 옛 단추가 B 를 지우면 안 됨 (등록마다 토큰이 다름)."""
+        a = self.add_from_telegram("학년 협의회")
+        undo_a = self.undo_button()
+        self.env.db.execute("DELETE FROM events WHERE id = ?", (a["id"],))
+        queries.forget_added_event(self.env.db, a["id"])                               # 화면 DELETE 가 하는 일
+        b = self.add_from_telegram("학년 협의회")                                        # 날짜·내용까지 같은 일정
+        self.assertEqual(b["id"], a["id"])
+        undo_b = self.undo_button()
+        self.assertNotEqual(undo_a, undo_b)
+        self.bot.handle_update(press(undo_a))
+        self.assertEqual(len(self.events()), 1)                                       # B 는 그대로
+        self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
+        self.bot.handle_update(press(undo_b))                                         # B 의 단추로는 정상 취소
+        self.assertEqual(self.events(), [])
+
     def test_undo_checks_date_too_and_long_text_matches_by_first_twenty_chars(self):
         long_text = "  학년   협의회   및   교과   협의회   일정   조율   안건   정리  "
         row = self.add_from_telegram(long_text)
+        undo_first = self.undo_button()
         entry = self.env.db.get_meta("telegram_added_events")[0]
-        self.assertEqual(set(entry), {"id", "date", "key"})
+        self.assertEqual(set(entry), {"id", "date", "key", "tok"})
         self.assertEqual(len(entry["key"]), 20)
         self.assertNotIn("정리", entry["key"])                                          # 앞 20자만 저장 (meta 는 이 PC 안)
         self.env.db.execute("UPDATE events SET date = ? WHERE id = ?", ((self.day + timedelta(days=1)).isoformat(), row["id"]))
-        self.bot.handle_update(press(f"evu:{row['id']}"))                            # 날짜가 바뀌었으면 지우지 않음
+        self.bot.handle_update(press(undo_first))                                    # 날짜가 바뀌었으면 지우지 않음
         self.assertEqual(len(self.events()), 1)
         self.assertIn("바뀐 일정", self.fake.edited[-1]["text"])
         row2 = self.add_from_telegram(long_text, self.day + timedelta(days=3))        # 정상 취소: 띄어쓰기가 달라도 같은 일정
-        self.bot.handle_update(press(f"evu:{row2['id']}"))
+        self.bot.handle_update(press(self.undo_button()))
         self.assertEqual([e["id"] for e in self.events()], [row["id"]])
         self.assertIn("취소했습니다", self.fake.edited[-1]["text"])
 
     def test_old_format_number_only_list_is_read_without_error_and_not_deleted(self):
         row = queries.insert_event(self.env.db, {"date": self.day.isoformat(), "kind": "event", "text": "예전 등록", "category": "참고"})
         self.env.db.set_meta("telegram_added_events", [row["id"], 999])               # 예전 형식 (번호만)
-        self.bot.handle_update(press(f"evu:{row['id']}"))
+        self.bot.handle_update(press(f"evu:{row['id']}"))                             # 예전 단추(토큰 없음)
         self.assertEqual(len(self.events()), 1)
         self.assertIn("확인할 수 없어 취소하지 않았습니다", self.fake.edited[-1]["text"])
         self.assertEqual(self.env.db.get_meta("telegram_added_events"), [999])
@@ -137,7 +158,7 @@ class TelegramAddEventTests(unittest.TestCase):
 
     def test_undo_only_removes_events_added_from_telegram(self):
         web = queries.insert_event(self.env.db, {"date": self.day.isoformat(), "kind": "event", "text": "웹에서 넣음", "category": "참고"})
-        self.bot.handle_update(press(f"evu:{web['id']}"))
+        self.bot.handle_update(press(f"evu:{web['id']}:abcdef"))
         self.assertEqual(len(self.events()), 1)                                      # 화면에서 만든 일정은 텔레그램으로 못 지움
         self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
 
@@ -149,7 +170,7 @@ class TelegramAddEventTests(unittest.TestCase):
         self.assertEqual(self.events()[0]["text"], "한가람 학부모 상담")                # 저장은 그대로
         self.assertNotIn("한가람", self.all_text())                                   # 텔레그램 글은 모두 가림
         self.assertIn("○○○ 학부모 상담", self.all_text())          # 이름 자리는 ○ 로 가려짐
-        self.bot.handle_update(press(f"evu:{self.events()[0]['id']}"))
+        self.bot.handle_update(press(self.undo_button()))
         self.assertNotIn("한가람", self.all_text())
 
     def test_duplicate_same_day_same_text_is_warned_but_can_still_register(self):
@@ -179,6 +200,29 @@ class TelegramAddEventTests(unittest.TestCase):
         self.assertIn("[등록]", self.bot.handle_update(msg("또 글")))                   # 확인 단계의 글
         self.bot.handle_update(press(f"dlg:{did}:ed"))                                # 날짜 바꾸기 → 다시 달력
         self.assertEqual(self.bot.dialog["step"], "edate")
+
+    def test_command_words_in_the_dialog_are_refused_not_run_and_dialog_is_kept(self):
+        """일정 내용 단계에서 '오늘'·'검색'·'/start' 를 보내면 명령이 실행돼 대화가 사라지던 것 — 내용으로 쓸 수 없다고 안내하고 다시 받음."""
+        did = self.start()
+        for text in ("오늘", "검색", "마감", "메뉴", "도움말", "/start", "/today", "일정 추가", "브리핑"):    # 날짜 고르기 단계
+            self.assertIn("달력에서", self.bot.handle_update(msg(text)), text)
+            self.assertEqual(self.bot.dialog["id"], did)
+        self.pick(did)
+        sent_before = len(self.fake.sent)
+        for text in ("오늘", "검색", "마감", "메뉴", "도움말", "/start", "/today", "일정 추가", "브리핑"):    # 내용 단계
+            reply = self.bot.handle_update(msg(text))
+            self.assertIn("명령어", reply, text)
+            self.assertEqual((self.bot.dialog["id"], self.bot.dialog["step"], self.bot.dialog["date"]), (did, "etext", self.day), text)
+        self.assertEqual(len(self.fake.sent) - sent_before, 9)                        # 각각 안내 한 줄뿐 (브리핑·오늘 조회 답이 아님)
+        self.assertNotIn("업무 데스크 브리핑", "\n".join(m["text"] for m in self.fake.sent))
+        self.assertEqual(self.events(), [])
+        self.bot.handle_update(msg("회의"))                                           # 그 뒤 정상 내용은 그대로 이어짐
+        self.assertEqual(self.bot.dialog["step"], "econfirm")
+        self.bot.handle_update(msg("/cancel"))                                        # /cancel 도 취소
+        self.assertIsNone(self.bot.dialog)
+        self.start()
+        self.bot.handle_update(msg("취소"))
+        self.assertIsNone(self.bot.dialog)
 
     def test_cancel_stale_button_and_ten_minute_expiry(self):
         did = self.start()
@@ -211,6 +255,7 @@ class TelegramAddEventTests(unittest.TestCase):
         menu = next(m for m in reversed(self.fake.sent) if "inline_keyboard" in m.get("reply_markup", {}))
         self.bot.handle_update(press(self.buttons(menu)["일정 추가"]))                  # 메뉴 단추로 시작
         self.assertEqual(self.bot.dialog["kind"], "event")
+        self.bot.dialog = None
         did = self.start("일정 추가 학년 협의회")
         self.assertIn("내용: 학년 협의회", self.fake.sent[-1]["text"])
         self.pick(did)                                                                # 내용이 이미 있으면 바로 확인
