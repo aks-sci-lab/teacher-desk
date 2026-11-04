@@ -103,6 +103,23 @@ class TelegramAddEventTests(unittest.TestCase):
         self.assertEqual(len(self.events()), 1)
         self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
 
+    def test_undo_holds_the_db_lock_while_checking_and_deleting(self):
+        """읽기·검사·삭제가 한 잠금 안이라, 다른 쪽(화면의 삭제·등록)이 그 사이에 끼어들 수 없음."""
+        import threading
+        row = self.add_from_telegram("학년 협의회")
+        undo = self.undo_button()
+        done = threading.Event()
+        with self.env.db.lock:                         # 화면 쪽이 잠금을 쥐고 있는 동안
+            worker = threading.Thread(target=lambda: (self.bot.handle_update(press(undo)), done.set()), daemon=True)
+            worker.start()
+            self.assertFalse(done.wait(0.4))           # 취소는 기다림 (아직 아무것도 지우지 않음)
+            self.assertEqual(len(self.events()), 1)
+        self.assertTrue(done.wait(5))                  # 잠금이 풀리면 이어서 처리
+        worker.join(2)
+        self.assertEqual(self.events(), [])
+        self.assertIn("취소했습니다", self.fake.edited[-1]["text"])
+        self.assertEqual(row["text"], "학년 협의회")
+
     def test_old_undo_button_cannot_delete_a_later_telegram_event_that_reused_the_number(self):
         """A 등록 → 화면에서 A 삭제 → 텔레그램으로 B 등록(같은 번호) 뒤 A 의 옛 단추가 B 를 지우면 안 됨 (등록마다 토큰이 다름)."""
         a = self.add_from_telegram("학년 협의회")

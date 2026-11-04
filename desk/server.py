@@ -1083,9 +1083,10 @@ def update_event(app, q, body, eid):
 
 @api("DELETE", r"/api/events/(\d+)")
 def delete_event(app, q, body, eid):
-    app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
-    queries.forget_added_event(app.db, int(eid))
-    queries.bump_events_rev(app.db)
+    with app.db.lock:   # 일정 삭제·텔레그램 취소 목록 정리·변경 번호 올리기를 한 번에 (텔레그램 [방금 등록 취소] 와 엇갈리지 않게)
+        app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+        queries.forget_added_event(app.db, int(eid))
+        queries.bump_events_rev(app.db)
     return {"ok": True}
 
 

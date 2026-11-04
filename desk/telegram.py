@@ -655,27 +655,34 @@ class Bot:
                          [[{"text": "방금 등록 취소", "callback_data": f"evu:{row['id']}:{token}"}]])
 
     def undo_event(self, cid, eid, message_id, token=""):
+        # 취소 목록 읽기·검사·삭제·목록 갱신을 한 잠금 안에서 (화면에서 같은 번호를 지우고 다시 만드는 일과 엇갈리지 않게).
+        # 텔레그램 답은 잠금을 푼 뒤에 보냄
+        with self.db.lock:
+            text = self._undo_event_locked(eid, token)
+        return self.show(cid, message_id, text, [])
+
+    def _undo_event_locked(self, eid, token):
         entries = self.db.get_meta("telegram_added_events") or []
         entry = next((e for e in entries if (e.get("id") if isinstance(e, dict) else e) == eid), None)
         if isinstance(entry, dict) and entry.get("tok") and entry["tok"] != token:
             entry = None   # 같은 번호를 이어받은 다른 등록의 단추가 아님 (이 단추는 이미 지워진 옛 등록의 것)
         if entry is None:
-            return self.show(cid, message_id, "이미 취소했거나 지울 수 없는 일정입니다.", [])
+            return "이미 취소했거나 지울 수 없는 일정입니다."
         row = self.db.one("SELECT * FROM events WHERE id = ?", (eid,))
+        rest = [e for e in entries if e is not entry]
         if not isinstance(entry, dict):   # 예전 형식(번호만): 같은 일정인지 확인할 수 없어 지우지 않음
-            self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
-            return self.show(cid, message_id, "예전 방식으로 등록한 일정이라 같은 일정인지 확인할 수 없어 취소하지 않았습니다. 달력에서 직접 지워 주세요.", [])
+            self.db.set_meta("telegram_added_events", rest)
+            return "예전 방식으로 등록한 일정이라 같은 일정인지 확인할 수 없어 취소하지 않았습니다. 달력에서 직접 지워 주세요."
         # 그 번호의 지금 행이 등록한 그 일정(날짜·내용 앞 20자)일 때만 지움 — 화면에서 지운 번호를 새 일정이 이어받았을 수 있음
         if not row or row["item_id"] is not None or row["date"] != entry.get("date") \
                 or queries.added_event_key(row["text"]) != entry.get("key"):
-            self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
-            return self.show(cid, message_id, "이미 지워졌거나 바뀐 일정이라 취소하지 않았습니다.", [])
+            self.db.set_meta("telegram_added_events", rest)
+            return "이미 지워졌거나 바뀐 일정이라 취소하지 않았습니다."
         self.db.execute("DELETE FROM events WHERE id = ?", (eid,))
         queries.bump_events_rev(self.db)
-        self.db.set_meta("telegram_added_events", [e for e in entries if e is not entry])
+        self.db.set_meta("telegram_added_events", rest)
         self.db.log("텔레그램에서 등록한 일정을 취소")
-        return self.show(cid, message_id,
-                         f"↩ 등록을 취소했습니다 ({self.plain_day(date.fromisoformat(row['date']))} {self.mask(row['text'] or '')}).", [])
+        return f"↩ 등록을 취소했습니다 ({self.plain_day(date.fromisoformat(row['date']))} {self.mask(row['text'] or '')})."
 
     @staticmethod
     def day_label(d, start, closed):
