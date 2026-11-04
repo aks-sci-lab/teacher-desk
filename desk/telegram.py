@@ -8,6 +8,7 @@
 
 import calendar
 import hashlib
+import http.client
 import json
 import re
 import secrets
@@ -107,6 +108,10 @@ MENU_MORE = ("자료 검색", "요약", "새로고침", "상태", "취소")
 
 STALE_AFTER = 600    # PC 가 꺼져 있던 동안 쌓인 명령은 이보다 오래되면 실행하지 않음 (초)
 WATCH_EVERY = 30     # 폴링 스레드가 죽었는지 살펴 되살리는 간격 (초)
+# 메시지를 화면·텔레그램·기록에 그대로 보여 줘도 되는 오류 (연결·응답 오류). 그 밖의 오류는 이름만
+SAFE_ERRORS = (OSError, http.client.IncompleteRead, http.client.RemoteDisconnected)
+P_BOT_TOKEN = re.compile(r"/bot[^/\s]*")          # URL 속 '/bot<번호>:<토큰>'
+P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번호:글자)
 POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 초 (실패가 이어지면 두 배씩, 최대 300초)
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
@@ -1705,7 +1710,8 @@ class Bot:
             self.updates.apply(kind == "uf")
         except Exception as e:
             self.db.set_meta("telegram_update_pending", None)
-            status, message = getattr(e, "status", None), getattr(e, "message", None) or str(e)
+            status = getattr(e, "status", None)
+            message = getattr(e, "message", None) or self.describe_error(e)   # ApiError 의 글은 고정 문구, 그 밖은 예외 이름만
             buttons = ([[{"text": "중단하고 업데이트", "callback_data": f"uf:{version}"},
                          {"text": "취소", "callback_data": "uc:0"}]] if status == 409 else None)
             return self.reply(cid, f"⚠ 업데이트를 시작하지 못했습니다: {message}") if not buttons else \
@@ -1738,9 +1744,28 @@ class Bot:
     def alive(self):
         return bool(self.thread and self.thread.is_alive())
 
+    def describe_error(self, e):
+        """오류를 화면·텔레그램·기록에 내보내도 되는 한 줄로. 연결 계열(메시지가 안전한 것)만 메시지를 싣고, 나머지는 예외 이름만
+        (사용자가 보낸 글·학생 이름·토큰이 든 URL 이 메시지에 섞일 수 있어서). 싣는 메시지도 봇 토큰 모양과 학생 이름은 지움."""
+        name = type(e).__name__
+        if not isinstance(e, SAFE_ERRORS):
+            return name
+        text = str(getattr(e, "reason", None) or e)
+        for secret in (self.token, ):
+            if secret:
+                text = text.replace(secret, "***")
+        text = P_BOT_TOKEN.sub("/bot***", text)
+        text = P_TOKEN_LIKE.sub("***", text)
+        try:
+            text = self.mask(text)
+        except Exception:
+            return name
+        text = " ".join(text.split())[:80]
+        return f"{name}: {text}" if text else name
+
     def note_error(self, e, where="폴링"):
         """마지막 오류를 한 줄로 남기고 같은 오류가 이어져도 기록은 처음 한 번만."""
-        line = f"{where}: {type(e).__name__}: {str(e)[:80]}"
+        line = f"{where}: {self.describe_error(e)}"
         if line != (self.last_error or "")[9:]:
             try:
                 self.db.log(f"텔레그램 {line}", "warn")
@@ -1777,7 +1802,7 @@ class Bot:
                 self._loop()
                 return
             except Exception as e:   # _loop 안에서 못 잡은 오류: 기록하고 잠시 뒤 처음부터
-                self.status = f"오류: {type(e).__name__} (다시 시도 중)"
+                self.status = f"오류: {type(e).__name__} (다시 시도 중)"   # 이름만 (메시지는 최근 오류에서 정제해 보임)
                 self.note_error(e, "폴링 중단")
                 self.stop_event.wait(10)
 
@@ -1813,7 +1838,7 @@ class Bot:
                         self.handle_update(u)
                         self.last_handled = datetime.now().strftime("%H:%M:%S")
                     except Exception as e:
-                        self.db.log(f"텔레그램 명령 처리 오류: {type(e).__name__}: {e}", "error")
+                        self.db.log(f"텔레그램 명령 처리 오류: {self.describe_error(e)}", "error")
                         self.note_error(e, "명령 처리")
                         self.tell_error(u)
                 if skipped:
@@ -1829,12 +1854,12 @@ class Bot:
                                     "한 곳만 남기세요 (개발 폴더에는 토큰을 넣지 않습니다)", "warn")
                     self.stop_event.wait(8)
                     continue
-                self.status = f"오류: HTTP {e.code} {e.reason}"
+                self.status = f"오류: HTTP {e.code} {str(e.reason)[:40]}"   # 텔레그램의 상태 문구(Bad Request 등)
                 self.note_error(e)
                 self.stop_event.wait(backoff)
                 backoff = min(backoff * 2, 300)
             except Exception as e:   # 연결 오류뿐 아니라 응답이 중간에 끊김(IncompleteRead)·DB 오류 등 모두: 스레드가 죽지 않게
-                self.status = f"오류: {getattr(e, 'reason', None) or type(e).__name__}"
+                self.status = f"오류: {self.describe_error(e)}"
                 self.note_error(e)
                 self.stop_event.wait(backoff)
                 backoff = min(backoff * 2, 300)

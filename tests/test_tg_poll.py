@@ -1,3 +1,4 @@
+import http.client
 import socket
 import threading
 import time
@@ -155,6 +156,81 @@ class PollingResilienceTests(unittest.TestCase):
         saved = self.env.db.get_meta("telegram_offset")["offset"]
         self.assertEqual(Bot(self.env.db, self.env.config).saved_offset("T:T"), saved)   # 다시 켜면 이어서
         self.assertIsNone(Bot(self.env.db, self.env.config).saved_offset("OTHER:TOKEN"))  # 토큰이 바뀌면 처음부터
+
+
+class ErrorTextIsSafeTests(unittest.TestCase):
+    """최근 오류가 텔레그램('상태' 답)·설정 화면·기록으로 나가므로 학생 이름·봇 토큰이 섞이지 않아야 함."""
+
+    def setUp(self):
+        self.env = Env()
+        self.env.db.replace_students([{"number": 7, "name": "한가람"}])
+        self.bots = []
+
+    def tearDown(self):
+        for bot in self.bots:
+            bot.stop()
+            if bot.thread:
+                bot.thread.join(3)
+        self.env.close()
+
+    def everything_out(self, bot):
+        logs = "\n".join(r["message"] for r in self.env.db.query("SELECT message FROM logs"))
+        return "\n".join([bot.last_error or "", bot.status, bot.answer("status"), logs])
+
+    def test_describe_error_keeps_only_safe_text(self):
+        self.env.config.values["telegram_token"] = "123456789:AAFakeTokenABCDEFGHIJKLMNOP"
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        self.assertEqual(bot.describe_error(ValueError("invalid literal for int(): '한가람'")), "ValueError")     # 이름만
+        self.assertEqual(bot.describe_error(KeyError("한가람")), "KeyError")
+        net = bot.describe_error(ConnectionResetError("Connection reset by peer 한가람 /bot123456789:AAFakeTokenABCDEFGHIJKLMNOP/getUpdates"))
+        self.assertIn("ConnectionResetError: Connection reset by peer", net)             # 연결 오류는 문구를 보임
+        self.assertNotIn("한가람", net)                                                   # 학생 이름은 가림
+        self.assertNotIn("AAFake", net)
+        self.assertNotIn("123456789", net)
+        self.assertIn("/bot***", net)
+        self.assertIn("IncompleteRead", bot.describe_error(http.client.IncompleteRead(b"abc", 9)))
+        self.assertLessEqual(len(bot.describe_error(OSError("x" * 500))), 100)
+
+    def test_student_name_in_command_error_never_leaves_the_pc(self):
+        fake = FakeTelegram()
+        self.addCleanup(fake.close)
+        self.env.config.values.update(telegram_token="T:T", telegram_api_base=fake.base)
+        self.env.db.set_meta("telegram_chat_id", 111)
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        real = bot.handle_update
+        calls = {"n": 0}
+
+        def handle(u):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ValueError("invalid literal for int() with base 10: '한가람'")   # 사용자가 보낸 글이 메시지에 섞임
+            return real(u)
+        bot.handle_update = handle
+        bot.start()
+        self.bots.append(bot)
+        fake.push("아무말")
+        fake.push("상태")
+        self.assertTrue(wait_for(lambda: bot.last_handled))
+        self.assertIn("ValueError", bot.last_error)
+        out = self.everything_out(bot)
+        self.assertNotIn("한가람", out)
+        self.assertNotIn("한가람", "\n".join(m["text"] for m in fake.sent))              # 텔레그램으로 나간 글 전부
+        self.assertTrue(any("최근 오류" in m["text"] for m in fake.sent))                  # '상태' 답에는 오류 이름이 보임
+
+    def test_bot_token_in_invalid_url_error_is_not_shown(self):
+        server = FlakyServer(broken=0)
+        self.addCleanup(server.close)
+        self.env.config.values.update(telegram_token="123456789:AAFakeTokenABCDEFGHIJ KLMN",   # 공백이 섞인 잘못된 토큰
+                                      telegram_api_base=f"http://127.0.0.1:{server.port}")
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        with patch.object(telegram, "POLL_BACKOFF", 0.05):
+            bot.start()
+            self.bots.append(bot)
+            self.assertTrue(wait_for(lambda: bot.last_error))
+        self.assertIn("InvalidURL", bot.last_error)
+        out = self.everything_out(bot)
+        for secret in ("AAFake", "123456789", "KLMN"):
+            self.assertNotIn(secret, out)
 
 
 class BacklogAndWatchdogTests(unittest.TestCase):
