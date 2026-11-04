@@ -370,6 +370,9 @@ def get_state(app, q, body):
                            for pid in printing.queue(db)],
         "telegram": {
             "status": app.bot.status if app.bot else "꺼짐",
+            "alive": bool(app.bot and app.bot.alive()),
+            "last_poll": app.bot.last_poll if app.bot else None,
+            "last_error": app.bot.last_error if app.bot else None,
             "linked": bool(app.bot and app.bot.chat_id),
             "pair_code": app.bot.pair_code() if app.bot else None,
         },

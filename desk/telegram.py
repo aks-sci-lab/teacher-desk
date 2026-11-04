@@ -7,6 +7,8 @@
 """
 
 import calendar
+import hashlib
+import http.client
 import json
 import re
 import secrets
@@ -104,6 +106,13 @@ KEYBOARD = [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외�
 MENU_MORE = ("자료 검색", "요약", "새로고침", "상태", "취소")
 
 
+STALE_AFTER = 600    # PC 가 꺼져 있던 동안 쌓인 명령은 이보다 오래되면 실행하지 않음 (초)
+WATCH_EVERY = 30     # 폴링 스레드가 죽었는지 살펴 되살리는 간격 (초)
+# 메시지를 화면·텔레그램·기록에 그대로 보여 줘도 되는 오류 (연결·응답 오류). 그 밖의 오류는 이름만
+SAFE_ERRORS = (OSError, http.client.IncompleteRead, http.client.RemoteDisconnected)
+P_BOT_TOKEN = re.compile(r"/bot[^/\s]*")          # URL 속 '/bot<번호>:<토큰>'
+P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번호:글자)
+POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 초 (실패가 이어지면 두 배씩, 최대 300초)
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
 
@@ -213,6 +222,10 @@ class Bot:
         self.status = "꺼짐"
         self.conflicts = 0      # 같은 봇을 다른 곳에서도 쓰는 중이라 받은 409 횟수
         self.last_poll = None   # 마지막으로 텔레그램에서 새 글을 확인한 시각
+        self.last_error = None  # 마지막 오류 한 줄 (시각 포함) — 상태 화면·'상태' 명령에서 보임
+        self.last_handled = None   # 마지막으로 명령·단추를 처리한 시각
+        self.polled_at = None      # 직전에 텔레그램에서 새 글을 받아 온 때 (epoch 초) — 오래 끊겼다 돌아왔는지 알아봄
+        self.monitor = None
         self.asking = None      # 지금 답을 만드는 질문 (한 번에 하나)
         self.read_image = None  # desk.py 가 연결: 쿨메신저 사진 주소 → (바이트, 종류) 또는 None
         self.updates = None     # desk.py 가 연결: state()·check()·apply(force) — 텔레그램에서 업데이트
@@ -1435,7 +1448,9 @@ class Bot:
             except ai.AIError as e:
                 ai_status = f"AI 연결 오류: {e}"
             return (f"⚙ 업무 데스크 상태 · 버전 {VERSION}\n"
-                    + f"텔레그램: {self.status}" + (f" · 마지막 확인 {self.last_poll}" if self.last_poll else "") + "\n"
+                    + f"텔레그램: {self.status}" + (f" · 마지막 확인 {self.last_poll}" if self.last_poll else "")
+                    + (f" · 마지막 처리 {self.last_handled}" if self.last_handled else "")
+                    + (f"\n최근 오류: {self.last_error}" if self.last_error else "") + "\n"
                     + "업무자료 요약·검색 (로컬): " + ai_status
                     + "\n일반 질문: " + providers.PROVIDERS.get(self.config["ai_provider"], "설정 확인 필요")
                     + (" · 텔레그램 실행 불가" if self.config["ai_provider"] == "browser" else " · /ask 질문")
@@ -1472,10 +1487,12 @@ class Bot:
             self.set_refs([])
             if not self.collector:
                 return "수집기를 사용할 수 없습니다."
-            stats = self.collector.run("telegram")
-            if stats.get("busy"):
+            if self.collector.lock.locked():
                 return "이미 수집 중입니다. 잠시 뒤 다시 보내 주세요."
-            return self.collect_message(stats) or "새로 들어온 자료가 없습니다."
+            if not self.sync and self.chat_id:   # 수집은 몇 분 걸릴 수 있어 폴링을 막지 않게 뒤에서
+                threading.Thread(target=self._refresh, args=(self.chat_id,), name="telegram-refresh", daemon=True).start()
+                return "🔄 지금 수집합니다. 끝나면 알려 드립니다. (그동안에도 다른 명령은 받습니다)"
+            return self._refresh_text()
         if cmd == "summary":
             rows = self.db.query("SELECT * FROM items WHERE source != 'paste' ORDER BY received_at DESC LIMIT 3")
             self.set_refs([r["id"] for r in rows] if detail != "counts" else [])
@@ -1637,6 +1654,23 @@ class Bot:
             buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
             self.send(msg, buttons=buttons)
 
+    def _refresh_text(self):
+        stats = self.collector.run("telegram")
+        if stats.get("busy"):
+            return "이미 수집 중입니다. 잠시 뒤 다시 보내 주세요."
+        return self.collect_message(stats) or "새로 들어온 자료가 없습니다."
+
+    def _refresh(self, cid):
+        try:
+            text = self._refresh_text()
+        except Exception as e:   # 수집 오류가 폴링·알림을 멈추지 않게
+            self.note_error(e, "수집")
+            text = "수집하다가 오류가 났습니다. 업무 데스크의 '기록'에서 원인을 볼 수 있습니다."
+        try:
+            self.send(text, cid)
+        except Exception as e:
+            self.note_error(e, "수집 결과 보내기")
+
     def update_buttons(self, version):
         return [[{"text": "⬆ 지금 업데이트", "callback_data": f"up:{version}"}]] if self.updates else None
 
@@ -1676,7 +1710,8 @@ class Bot:
             self.updates.apply(kind == "uf")
         except Exception as e:
             self.db.set_meta("telegram_update_pending", None)
-            status, message = getattr(e, "status", None), getattr(e, "message", None) or str(e)
+            status = getattr(e, "status", None)
+            message = getattr(e, "message", None) or self.describe_error(e)   # ApiError 의 글은 고정 문구, 그 밖은 예외 이름만
             buttons = ([[{"text": "중단하고 업데이트", "callback_data": f"uf:{version}"},
                          {"text": "취소", "callback_data": "uc:0"}]] if status == 409 else None)
             return self.reply(cid, f"⚠ 업데이트를 시작하지 못했습니다: {message}") if not buttons else \
@@ -1699,21 +1734,87 @@ class Bot:
         if not version or not self.chat_id or self.db.get_meta("telegram_update_notified") == version:
             return False
         sent = self.send(f"⬆ 업무 데스크 새 버전 {version} 이 나왔습니다 (지금 {VERSION}).\n"
-                         "직접 누르기 전에는 바뀌지 않습니다.", buttons=self.update_buttons(version))
+                         "직접 누르기 전에는 바뀌지 않습니다. 업무 데스크 PC 가 켜져 있을 때만 단추가 응답합니다.",
+                         buttons=self.update_buttons(version))
         if sent:
             self.db.set_meta("telegram_update_notified", version)
         return sent
 
     # ---- 폴링 ----
+    def alive(self):
+        return bool(self.thread and self.thread.is_alive())
+
+    def describe_error(self, e):
+        """오류를 화면·텔레그램·기록에 내보내도 되는 한 줄로. 연결 계열(메시지가 안전한 것)만 메시지를 싣고, 나머지는 예외 이름만
+        (사용자가 보낸 글·학생 이름·토큰이 든 URL 이 메시지에 섞일 수 있어서). 싣는 메시지도 봇 토큰 모양과 학생 이름은 지움."""
+        name = type(e).__name__
+        if not isinstance(e, SAFE_ERRORS):
+            return name
+        text = str(getattr(e, "reason", None) or e)
+        for secret in (self.token, ):
+            if secret:
+                text = text.replace(secret, "***")
+        text = P_BOT_TOKEN.sub("/bot***", text)
+        text = P_TOKEN_LIKE.sub("***", text)
+        try:
+            text = self.mask(text)
+        except Exception:
+            return name
+        text = " ".join(text.split())[:80]
+        return f"{name}: {text}" if text else name
+
+    def note_error(self, e, where="폴링"):
+        """마지막 오류를 한 줄로 남기고 같은 오류가 이어져도 기록은 처음 한 번만."""
+        line = f"{where}: {self.describe_error(e)}"
+        if line != (self.last_error or "")[9:]:
+            try:
+                self.db.log(f"텔레그램 {line}", "warn")
+            except Exception:
+                pass   # 기록하지 못해도(DB 잠김 등) 폴링이 멈추지 않게
+        self.last_error = f"{datetime.now():%H:%M:%S} {line}"
+
+    @staticmethod
+    def update_chat(u):
+        msg = u.get("message") or (u.get("callback_query") or {}).get("message") or {}
+        return (msg.get("chat") or {}).get("id")
+
+    @staticmethod
+    def is_stale(u, backlog, now):
+        """PC 가 꺼져·끊겨 있던 동안 쌓인 명령인가. 글은 보낸 시각(date)이 10분 넘게 지났으면, 단추는 보낸 시각을 알 수 없어
+        오래 끊겼다 돌아온 첫 묶음 안의 것이면 실행하지 않음 (조퇴·결석계 발급·업데이트가 나중에 뜻하지 않게 실행되지 않게)."""
+        if u.get("callback_query"):
+            return backlog
+        date_ = (u.get("message") or {}).get("date")
+        return bool(date_) and now - date_ > STALE_AFTER
+
+    def saved_offset(self, token):
+        """다시 켠 뒤에도 이미 처리한 명령·단추를 또 처리하지 않도록 저장해 둔 다음 번호 (같은 봇 토큰일 때만)."""
+        saved = self.db.get_meta("telegram_offset") or {}
+        return saved.get("offset") if saved.get("key") == hashlib.sha256(token.encode()).hexdigest()[:12] else None
+
+    def save_offset(self, token, offset):
+        self.db.set_meta("telegram_offset", {"key": hashlib.sha256(token.encode()).hexdigest()[:12], "offset": offset})
+
     def loop(self):
-        offset, backoff, menu_set, last_token = None, 5, False, None
+        """폴링 루프. 어떤 오류가 나도 스레드가 죽지 않게 한 번 더 감쌈 (예전에는 예상 못 한 오류 하나로 조용히 영영 멈춤)."""
+        while not self.stop_event.is_set():
+            try:
+                self._loop()
+                return
+            except Exception as e:   # _loop 안에서 못 잡은 오류: 기록하고 잠시 뒤 처음부터
+                self.status = f"오류: {type(e).__name__} (다시 시도 중)"   # 이름만 (메시지는 최근 오류에서 정제해 보임)
+                self.note_error(e, "폴링 중단")
+                self.stop_event.wait(10)
+
+    def _loop(self):
+        offset, backoff, menu_set, last_token = None, POLL_BACKOFF, False, None
         while not self.stop_event.is_set():
             if not self.token:
                 self.status = "토큰 없음"
                 self.stop_event.wait(10)
                 continue
             if self.token != last_token:  # 설정에서 토큰을 바꾼 경우
-                offset, menu_set, last_token = None, False, self.token
+                offset, menu_set, last_token = self.saved_offset(self.token), False, self.token
             try:
                 if not menu_set:
                     self.api("setMyCommands", {"commands": BOT_MENU}, timeout=15)
@@ -1721,29 +1822,45 @@ class Bot:
                 updates = self.api("getUpdates", {"timeout": 25, "offset": offset,
                                                   "allowed_updates": ["message", "callback_query"]}, timeout=35)
                 self.status = "연결됨" if self.chat_id else "연결 대기 (코드를 보내세요)"
-                backoff, self.conflicts = 5, 0
+                backoff, self.conflicts = POLL_BACKOFF, 0
                 self.last_poll = datetime.now().strftime("%H:%M:%S")
+                now = time.time()
+                backlog = self.polled_at is None or now - self.polled_at > STALE_AFTER   # 켠 뒤 첫 묶음이거나 오래 끊겼다 돌아옴
+                self.polled_at = now
+                skipped = 0
                 for u in updates:
                     offset = u["update_id"] + 1
+                    self.save_offset(self.token, offset)   # 처리하기 전에 저장: 업데이트로 앱이 꺼져도 같은 단추가 다시 오지 않음
+                    if self.is_stale(u, backlog, now):
+                        skipped += self.update_chat(u) == self.chat_id
+                        continue
                     try:
                         self.handle_update(u)
+                        self.last_handled = datetime.now().strftime("%H:%M:%S")
                     except Exception as e:
-                        self.db.log(f"텔레그램 명령 처리 오류: {type(e).__name__}: {e}", "error")
+                        self.db.log(f"텔레그램 명령 처리 오류: {self.describe_error(e)}", "error")
+                        self.note_error(e, "명령 처리")
                         self.tell_error(u)
+                if skipped:
+                    self.send(f"PC 가 꺼져(또는 인터넷이 끊겨) 있던 동안 받은 명령·단추 {skipped}개는 실행하지 않았습니다. "
+                              "필요하면 다시 보내 주세요.")
             except urllib.error.HTTPError as e:
                 if e.code == 409:   # 같은 봇을 다른 곳(다른 폴더·PC)에서도 켜 둠: 오래 쉬면 명령에 답이 없으므로 짧게만
                     self.conflicts += 1
                     self.status = "오류: 같은 봇을 다른 곳에서도 쓰는 중 (409 Conflict)"
+                    self.last_error = f"{datetime.now():%H:%M:%S} 같은 봇 토큰을 다른 곳에서도 쓰는 중 (409 Conflict)"
                     if self.conflicts in (1, 30):
                         self.db.log("텔레그램 409 Conflict: 같은 봇 토큰을 쓰는 업무 데스크가 다른 곳에서도 켜져 있습니다. "
                                     "한 곳만 남기세요 (개발 폴더에는 토큰을 넣지 않습니다)", "warn")
                     self.stop_event.wait(8)
                     continue
-                self.status = f"오류: HTTP {e.code} {e.reason}"
+                self.status = f"오류: HTTP {e.code} {str(e.reason)[:40]}"   # 텔레그램의 상태 문구(Bad Request 등)
+                self.note_error(e)
                 self.stop_event.wait(backoff)
                 backoff = min(backoff * 2, 300)
-            except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
-                self.status = f"오류: {getattr(e, 'reason', e)}"
+            except Exception as e:   # 연결 오류뿐 아니라 응답이 중간에 끊김(IncompleteRead)·DB 오류 등 모두: 스레드가 죽지 않게
+                self.status = f"오류: {self.describe_error(e)}"
+                self.note_error(e)
                 self.stop_event.wait(backoff)
                 backoff = min(backoff * 2, 300)
 
@@ -1759,12 +1876,25 @@ class Bot:
             pass
 
     def start(self):
+        if self.thread and self.thread.is_alive():
+            return
         try:
             self.announce_update_result()
         except Exception:
             pass   # 알림 실패가 켜는 것을 막지 않음
         self.thread = threading.Thread(target=self.loop, name="telegram", daemon=True)
         self.thread.start()
+        if not (self.monitor and self.monitor.is_alive()):
+            self.monitor = threading.Thread(target=self.watch, name="telegram-watch", daemon=True)
+            self.monitor.start()
+
+    def watch(self):
+        """폴링 스레드가 (어떤 이유로든) 끝났으면 다시 켬. loop 가 오류를 다 잡으므로 안전망."""
+        while not self.stop_event.wait(WATCH_EVERY):
+            if self.token and not self.alive():
+                self.db.log("텔레그램 수신이 멈춰 있어 다시 시작합니다", "warn")
+                self.thread = threading.Thread(target=self.loop, name="telegram", daemon=True)
+                self.thread.start()
 
     def stop(self):
         self.stop_event.set()
