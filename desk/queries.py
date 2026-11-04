@@ -21,6 +21,12 @@ def events_between(db, start, end, include_done=True):
     return db.query(sql + " ORDER BY e.date, COALESCE(e.time, '99'), e.id", (end.isoformat(), start.isoformat()))
 
 
+def insert_event(db, f):
+    """따로 넣는 일정 한 건 저장 (화면의 POST /api/events 와 텔레그램 '일정 추가' 가 같이 씀). f 는 검사한 칸들."""
+    eid = db.execute(f"INSERT INTO events({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
+    return db.one("SELECT * FROM events WHERE id = ?", (eid,))
+
+
 def today_summary(db, today=None):
     today = today or date.today()
     week_end = today + timedelta(days=7)

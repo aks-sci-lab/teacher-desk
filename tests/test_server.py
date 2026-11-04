@@ -238,6 +238,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("PUT", "/api/students", {"rows": [{"number": "1", "name": "x"}]})[0], 400)
 
     # ---- 수신함·일정 ----
+    def test_state_signals_manually_added_events_so_screens_refresh(self):
+        """텔레그램 '일정 추가'(따로 넣은 일정)가 더해지거나 취소되면 화면이 알아채고 새로 고침 — 수집한 자료의 일정은 세지 않음."""
+        sig = lambda: self.req("GET", "/api/state")[1]["counts"]["manual_events"]
+        before = sig()
+        st, ev = self.req("POST", "/api/events", {"date": "2099-01-05", "text": "학년 협의회"})
+        self.assertEqual(st, 200)
+        after = sig()
+        self.assertNotEqual(before, after)
+        self.req("DELETE", f"/api/events/{ev['id']}")
+        self.assertNotEqual(sig(), after)                                              # 지우면 다시 바뀜
+        self.req("POST", "/api/items", {"text": "협의록 제출\n2099년 1월 5일(월)까지 제출 바랍니다", "source": "paste"})
+        self.assertEqual(sig(), before)                                                # 항목에 딸린 일정은 세지 않음
+
     def test_items_events_ics(self):
         st, it = self.req("POST", "/api/items", {"text": "협의록 제출\n2099년 1월 5일(월)까지 제출 바랍니다", "source": "paste"})
         self.assertEqual(st, 200, it)

@@ -30,6 +30,7 @@ HELP = (
     "마감 — 7일 안의 마감\n"
     "브리핑 — 오늘 + 지난 1주일 AI 요약\n"
     "내일 수업 · 금요일 시간표 — 내 수업\n"
+    "일정 추가 — 달력에서 날짜를 누르고 내용을 보내면 달력에 등록 (등록 직후 취소 가능)\n"
     "2-3 시간표 · 2-3 내일 · 2학년 3반 목요일 — 그 학급 시간표(과목·선생님)\n"
     "2-3 지금 — 지금(쉬는 시간이면 다음) 그 반 수업\n"
     "빈 시간 김철수 이영희 [다음주] — 나와 같이 비는 시간\n"
@@ -86,6 +87,7 @@ BOT_MENU = [
     {"command": "cancel", "description": "진행 중인 입력·발급 선택 취소"},
     {"command": "status", "description": "AI·수집·시간표 준비 상태"},
     {"command": "lessons", "description": "오늘 내 수업"},
+    {"command": "addevent", "description": "일정 추가 (달력에서 날짜를 눌러 고름)"},
     {"command": "update", "description": "새 버전 확인·업데이트"},
     {"command": "ask", "description": "일반 질문 (업무자료 제외): /ask 질문"},
 ]
@@ -103,7 +105,9 @@ WD = "월화수목금토일"
 DIALOG_TTL = 10 * 60
 # 화면을 덜 가리게 2줄 (요약·상태·취소·자료 검색·새로고침은 '메뉴' 의 단추로)
 KEYBOARD = [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외출증", "결석계", "메뉴"]]
-MENU_MORE = ("자료 검색", "요약", "새로고침", "상태", "취소")
+MENU_MORE = ("자료 검색", "일정 추가", "요약", "새로고침", "상태", "취소")
+P_ADD_EVENT = re.compile(r"^(?:/addevent(?:@\S+)?|일정\s*추가)(?:\s+(.*))?$", re.S)   # '일정 추가' 로 시작할 때만 (다른 말의 '일정' 은 가로채지 않음)
+EVENT_TEXT_LIMIT = 100
 
 
 STALE_AFTER = 600    # PC 가 꺼져 있던 동안 쌓인 명령은 이보다 오래되면 실행하지 않음 (초)
@@ -334,6 +338,9 @@ class Bot:
         if cid != self.chat_id:
             return None  # 연결되지 않은 사람에게는 답하지 않음
         head = words[0].split("@")[0].lower()
+        added = P_ADD_EVENT.match(text)
+        if added:   # '일정 추가' 또는 메뉴 단추로만 시작
+            return self.begin_event(cid, added.group(1))
         cmd = COMMANDS.get(text) or COMMANDS.get(head)
         if cmd and not self.plain_command(text, head, words, cmd):
             cmd = None   # '오늘 식단표' 는 오늘 브리핑이 아니라 자료 검색으로
@@ -439,6 +446,8 @@ class Bot:
                 return self.reply(cid, "검색어를 100자 안쪽으로 보내세요. 그만하려면 '취소'.")
             self.dialog = None
             return self.send_search(cid, text)
+        if kind == "event":
+            return self.event_text_input(cid, dialog, text)
         if kind == "free":
             return self.free_pick(cid, dialog, text.strip())
         if step == "number":
@@ -520,7 +529,8 @@ class Bot:
                  {"text": "▶", "callback_data": f"dlg:{did}:cm:{next_y:04d}{next_m:02d}"}],
                 [{"text": w, "callback_data": f"dlg:{did}:nop"} for w in "일월화수목금토"]]
         last = calendar.monthrange(year, month)[1]
-        closed = absence.closed_days(self.db, date(year, month, 1), date(year, month, last))
+        # 일정 추가 달력에는 아직 휴업일·공휴일을 표시하지 않음 (공휴일 목록 `desk/holidays.py` 가 생기면 day_label 한 곳에서 붙임)
+        closed = set() if dialog["kind"] == "event" else absence.closed_days(self.db, date(year, month, 1), date(year, month, last))
         for week in calendar.Calendar(firstweekday=6).monthdayscalendar(year, month):
             row = []
             for day in week:
@@ -528,10 +538,11 @@ class Bot:
                     row.append(nop)
                     continue
                 d = date(year, month, day)
-                label = f"▶{day}" if d == start else f"({day})" if d in closed else str(day)
-                row.append({"text": label, "callback_data": f"dlg:{did}:cd:{d:%Y%m%d}"})
+                row.append({"text": self.day_label(d, start, closed), "callback_data": f"dlg:{did}:cd:{d:%Y%m%d}"})
             rows.append(row)
-        if dialog["kind"] in KIND:   # 조퇴·외출: 날짜 하나만 고름
+        if dialog["kind"] == "event":
+            rows.append([{"text": "취소", "callback_data": f"dlg:{did}:cancel"}])
+        elif dialog["kind"] in KIND:   # 조퇴·외출: 날짜 하나만 고름
             rows.append([{"text": "오늘로", "callback_data": f"dlg:{did}:td"},
                          {"text": "취소", "callback_data": f"dlg:{did}:cancel"}])
         elif start:
@@ -542,7 +553,124 @@ class Bot:
             rows.append([{"text": "취소", "callback_data": f"dlg:{did}:cancel"}])
         return rows
 
+    # ---- 일정 추가: 달력에서 날짜 → 내용 한 줄 → 확인 → 등록 (등록 직후 취소 가능) ----
+    def begin_event(self, cid, preset=None):
+        preset = " ".join((preset or "").split())
+        if preset and self.event_text_error(preset):
+            return self.reply(cid, self.event_text_error(preset))
+        self.dialog = {"id": secrets.token_hex(6), "kind": "event", "step": "edate", "text": preset or None,
+                       "expires": time.monotonic() + DIALOG_TTL}
+        today = date.today()
+        return self.show_calendar(cid, self.dialog, None, today.year, today.month)
+
+    @staticmethod
+    def event_text_error(text):
+        if not text:
+            return "일정 내용을 글 한 줄로 보내세요. 예: 학년 협의회"
+        if len(text) > EVENT_TEXT_LIMIT:
+            return f"일정 내용이 너무 깁니다 ({EVENT_TEXT_LIMIT}자 이하로 줄여 보내세요)."
+        if text.startswith("/") or text in COMMANDS or text in ARG_COMMANDS or P_ADD_EVENT.match(text):
+            return "명령어로 보이는 글은 일정 내용으로 쓸 수 없습니다. 내용을 다시 보내거나 '취소' 를 보내세요."
+        return None
+
+    @staticmethod
+    def plain_day(d):
+        return f"{d.month}/{d.day}({WD[d.weekday()]})"
+
+    def event_action(self, cid, dialog, action, message_id):
+        """일정 추가 대화의 단추. 처리했으면 결과 글, 이 단계의 단추가 아니면 None."""
+        step = dialog["step"]
+        year, month = dialog.get("cal_month") or (date.today().year, date.today().month)
+        if action == "nop":
+            return ""
+        if action.startswith("cm:") and step == "edate" and re.fullmatch(r"\d{6}", action[3:]):
+            y, m = int(action[3:7]), int(action[7:9])
+            if not (2000 <= y <= 2100 and 1 <= m <= 12):
+                return self.reply(cid, "달력에 없는 달입니다.")
+            return self.show_calendar(cid, dialog, message_id, y, m)
+        if action.startswith("cd:") and step == "edate":
+            try:
+                picked = datetime.strptime(action[3:], "%Y%m%d").date()
+            except ValueError:
+                return self.reply(cid, "달력에 없는 날짜입니다.")
+            dialog["date"] = picked
+            if dialog.get("text"):   # '일정 추가 학년 협의회' 처럼 내용을 함께 보냈으면 바로 확인
+                return self.event_confirm(cid, dialog, message_id)
+            dialog["step"] = "etext"
+            return self.show(cid, message_id,
+                             f"📅 {self.plain_day(picked)} · 일정 내용을 글 한 줄로 보내세요 ({EVENT_TEXT_LIMIT}자 이하). 예: 학년 협의회\n그만하려면 '취소'.",
+                             [[{"text": "날짜 바꾸기", "callback_data": f"dlg:{dialog['id']}:ed"},
+                               {"text": "취소", "callback_data": f"dlg:{dialog['id']}:cancel"}]])
+        if action == "ed" and step in ("etext", "econfirm"):
+            dialog["step"] = "edate"
+            d = dialog.get("date") or date.today()
+            return self.show_calendar(cid, dialog, message_id, d.year, d.month)
+        if action in ("reg", "regd") and step == "econfirm":
+            return self.register_event(cid, dialog, "deadline" if action == "regd" else "event", message_id)
+        return None
+
+    def event_text_input(self, cid, dialog, text):
+        step = dialog["step"]
+        if step == "edate":
+            return self.reply(cid, "위 달력에서 날짜를 눌러 주세요. 그만하려면 '취소'.")
+        if step == "econfirm":
+            return self.reply(cid, "위의 [등록] 또는 [취소]를 눌러 주세요.")
+        text = " ".join(text.split())
+        error = self.event_text_error(text)
+        if error:
+            return self.reply(cid, error)
+        dialog["text"] = text
+        return self.event_confirm(cid, dialog, None)
+
+    def event_confirm(self, cid, dialog, message_id):
+        d, text = dialog["date"], dialog["text"]
+        dialog["step"] = "econfirm"
+        dup = self.db.one("SELECT id FROM events WHERE date = ? AND text = ?", (d.isoformat(), text))
+        prompt = f"📅 {self.plain_day(d)} {self.mask(text)} — 등록할까요?"
+        if dup:
+            prompt += "\n⚠ 같은 날 같은 내용이 이미 있습니다."
+        return self.show(cid, message_id, prompt, [
+            [{"text": "그래도 등록" if dup else "등록", "callback_data": f"dlg:{dialog['id']}:reg"},
+             {"text": "마감으로 등록", "callback_data": f"dlg:{dialog['id']}:regd"}],
+            [{"text": "날짜 바꾸기", "callback_data": f"dlg:{dialog['id']}:ed"},
+             {"text": "취소", "callback_data": f"dlg:{dialog['id']}:cancel"}]])
+
+    def register_event(self, cid, dialog, kind, message_id):
+        d, text = dialog["date"], dialog["text"]
+        self.dialog = None   # 중복 클릭으로 두 번 등록하지 않음
+        row = queries.insert_event(self.db, {"date": d.isoformat(), "kind": kind, "text": text,
+                                             "category": "제출·마감" if kind == "deadline" else "참고"})
+        ids = (self.db.get_meta("telegram_added_events") or [])[-19:] + [row["id"]]
+        self.db.set_meta("telegram_added_events", ids)   # 텔레그램에서 더한 것만 [방금 등록 취소] 로 지울 수 있음
+        self.db.log(f"텔레그램에서 일정 추가 ({self.plain_day(d)} {'마감' if kind == 'deadline' else '일정'})")
+        return self.show(cid, message_id,
+                         f"✅ {self.plain_day(d)} {self.mask(text)} 등록했습니다 ({'마감' if kind == 'deadline' else '일정'}). 달력에서 볼 수 있습니다.",
+                         [[{"text": "방금 등록 취소", "callback_data": f"evu:{row['id']}"}]])
+
+    def undo_event(self, cid, eid, message_id):
+        ids = self.db.get_meta("telegram_added_events") or []
+        row = self.db.one("SELECT * FROM events WHERE id = ?", (eid,)) if eid in ids else None
+        if not row or row["item_id"] is not None:
+            return self.show(cid, message_id, "이미 취소했거나 지울 수 없는 일정입니다.", [])
+        self.db.execute("DELETE FROM events WHERE id = ?", (eid,))
+        self.db.set_meta("telegram_added_events", [i for i in ids if i != eid])
+        self.db.log("텔레그램에서 등록한 일정을 취소")
+        return self.show(cid, message_id,
+                         f"↩ 등록을 취소했습니다 ({self.plain_day(date.fromisoformat(row['date']))} {self.mask(row['text'] or '')}).", [])
+
+    @staticmethod
+    def day_label(d, start, closed):
+        """달력 칸에 쓸 글. 고른 시작일 ▶12, 학사일정 휴업일·공휴일 (12), 그 밖은 숫자. 날짜 표시를 바꿀 때는 이 함수 한 곳만."""
+        if d == start:
+            return f"▶{d.day}"
+        return f"({d.day})" if d in closed else str(d.day)
+
     def show_calendar(self, cid, dialog, message_id, year, month):
+        if dialog["kind"] == "event":
+            dialog["cal_month"] = (year, month)
+            preset = f"\n내용: {cut(self.mask(dialog['text']), 40)}" if dialog.get("text") else ""
+            text = f"📅 일정을 넣을 날짜를 누르세요 (하루만 고릅니다).{preset}"
+            return self.show(cid, message_id, text, self.calendar_buttons(dialog, year, month))
         if dialog["kind"] in KIND:
             dialog["cal_month"] = (year, month)
             text = (f"{dialog['number']}번 {KIND[dialog['kind']]}증 날짜를 누르세요\n오늘 이후만 고를 수 있습니다. "
@@ -1075,6 +1203,10 @@ class Bot:
                 dialog.update(step="date", type=list(absence.TYPE_WORDS)[int(n)])
                 today = date.today()
                 return self.show_calendar(cid, dialog, msg.get("message_id"), today.year, today.month)
+            if dialog["kind"] == "event":
+                event_result = self.event_action(cid, dialog, action, msg.get("message_id"))
+                if event_result is not None:
+                    return event_result
             calendar_result = self.calendar_action(cid, dialog, action, msg.get("message_id"))
             if calendar_result is not None:
                 return calendar_result
@@ -1133,6 +1265,8 @@ class Bot:
             return self.show(cid, msg.get("message_id"),
                              f"🎫 {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 {self.pass_when(p)}\n"
                              "사유를 고르면 발급합니다.", buttons)
+        if kind == "evu" and rest.isdigit():
+            return self.undo_event(cid, int(rest), msg.get("message_id"))
         if kind in ("up", "ua", "uf", "uc"):
             return self.update_button(cid, kind, rest, msg.get("message_id"))
         if kind == "pp":

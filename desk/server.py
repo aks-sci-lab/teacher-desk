@@ -365,6 +365,9 @@ def get_state(app, q, body):
             # 텔레그램으로 발급하면 화면이 알아채고 목록을 새로 고침
             "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
             "absences": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM absences")["last"],
+            # 텔레그램 '일정 추가'(따로 넣은 일정)가 더해지거나 취소되면 화면이 알아채고 새로 고침
+            "manual_events": (lambda r: f"{r['n']}:{r['last']}")(
+                db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM events WHERE item_id IS NULL")),
         },
         "print_requests": [db.one("SELECT * FROM passes WHERE id = ?", (pid,))
                            for pid in printing.queue(db)],
@@ -1067,8 +1070,7 @@ def create_event(app, q, body):
         f["item_id"] = body["item_id"]
         # 일정을 직접 더하면 그 항목은 등록한 것으로 (더한 일정이 달력에 보이게)
         app.db.execute("UPDATE items SET registered = 1 WHERE id = ?", (body["item_id"],))
-    eid = app.db.execute(f"INSERT INTO events({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
-    return app.db.one("SELECT * FROM events WHERE id = ?", (eid,))
+    return queries.insert_event(app.db, f)
 
 
 @api("PATCH", r"/api/events/(\d+)")

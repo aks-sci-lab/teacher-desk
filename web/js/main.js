@@ -51,6 +51,7 @@ on('state', updateStatus);
 let lastRunId = null;
 let lastPass = null;
 let lastAbsence = null;
+let lastManualEvents = null;
 const seenPrintRequests = new Set();
 const silentPrintId = new URLSearchParams(location.search).get('silent-print');
 function showPrintRequests(s) {
@@ -70,9 +71,11 @@ const tick = async () => {
         if ((s.last_run && lastRunId !== null && s.last_run.id !== lastRunId) || passChanged) emit('data-changed');
         if (passChanged) emit('passes-changed');
         if (lastAbsence !== null && s.counts.absences !== lastAbsence) emit('absences-changed');
+        if (lastManualEvents !== null && s.counts.manual_events !== lastManualEvents) emit('data-changed');   // 텔레그램에서 일정을 더했거나 취소
         lastRunId = s.last_run ? s.last_run.id : 0;
         lastPass = s.counts.passes;
         lastAbsence = s.counts.absences;
+        lastManualEvents = s.counts.manual_events;
     } catch (e) {
         setStatus('conn', '○ 연결 끊김 — start-desk.bat 실행');
     }
@@ -88,6 +91,7 @@ guarded(async () => {
     else applyLayout(saved, false);
     lastRunId = s.last_run ? s.last_run.id : 0;
     lastAbsence = s.counts.absences;
+    lastManualEvents = s.counts.manual_events;
     await Promise.all([loadStudents(), initPasses(), initAbsences(), initInbox(), initCalendar(), initTimetable()]);
     if (!silentPrintId) showPrintRequests(s);
     showView('today');
