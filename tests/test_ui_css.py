@@ -21,9 +21,9 @@ class UiCssTests(unittest.TestCase):
             self.assertNotRegex(block, r"font-size:\s*\d+px")
 
     def test_brief_event_title_gets_full_row(self):
-        self.assertRegex(CSS, r"\.cards \.ev \{[^}]*flex-wrap: wrap")
-        self.assertRegex(CSS, r"\.cards \.ev > a[^{]*\{[^}]*flex: 1 1 100%")
-        self.assertRegex(CSS, r"\.cards \.ev\.movable > \.to-todo \{ position: absolute")
+        self.assertRegex(CSS, r"\.cards \.ev, \.brief-grid \.ev \{[^}]*flex-wrap: wrap")
+        self.assertRegex(CSS, r"\.cards \.ev > a[^{]*\.brief-grid \.ev > span:last-child \{[^}]*flex: 1 1 100%")
+        self.assertRegex(CSS, r"\.brief-grid \.ev\.movable > \.to-todo \{ position: absolute")
 
     def test_activity_bar_scrolls_instead_of_overflowing(self):   # 0.5.68
         self.assertRegex(CSS, r"#activity-top \{[^}]*overflow-y: auto")
@@ -42,6 +42,16 @@ class UiCssTests(unittest.TestCase):
         self.assertNotIn("!st?.telegram.linked ||", body)          # 안 쓰는 것은 경고 아님
         self.assertIn("tgError", body)
         self.assertIn("사용 안 함", body)
+
+    def test_brief_uses_two_columns_and_compact_todo_rows(self):   # 0.5.70
+        self.assertRegex(CSS, r"\.brief-grid:not\(\.one-col\) \{ grid-template-columns: minmax\(0, 3fr\) minmax\(0, 2fr\)")
+        self.assertRegex(CSS, r"\.todo-list li\.todo \{ display: grid;")          # 체크칸·날짜·제목 줄 맞춤
+        self.assertRegex(CSS, r"\.todo-list li\.todo > \.ai-txt \{[^}]*-webkit-line-clamp: 2")
+        self.assertRegex(CSS, r"\.brief-right > \.new-card:not\(\.empty-card\) \{ flex: 1 1 0")  # 새 자료는 카드 안 스크롤
+        js = (WEB / "js" / "views" / "today.js").read_text(encoding="utf-8")
+        self.assertIn("div.brief-left", js)
+        self.assertIn("div.brief-right", js)
+        self.assertIn("function emptyStrip", js)                                       # 빈 카드는 작은 한 줄로
 
 
 if __name__ == "__main__":
