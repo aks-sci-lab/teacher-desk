@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import VERSION, absence, ai, assist, passlink, printing, providers, queries, timetable
+from . import VERSION, absence, ai, assist, holidays, passlink, printing, providers, queries, timetable
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -542,7 +542,8 @@ class Bot:
                     row.append(nop)
                     continue
                 d = date(year, month, day)
-                row.append({"text": self.day_label(d, start, closed), "callback_data": f"dlg:{did}:cd:{d:%Y%m%d}"})
+                row.append({"text": self.day_label(d, start, closed, dialog["kind"] == "event"),
+                            "callback_data": f"dlg:{did}:cd:{d:%Y%m%d}"})
             rows.append(row)
         if dialog["kind"] == "event":
             rows.append([{"text": "취소", "callback_data": f"dlg:{did}:cancel"}])
@@ -633,6 +634,11 @@ class Bot:
         prompt = f"📅 {self.plain_day(d)} {self.mask(text)} — 등록할까요?"
         if dup:
             prompt += "\n⚠ 같은 날 같은 내용이 이미 있습니다."
+        holiday = holidays.holiday_name(d)
+        if holiday:
+            prompt += f"\n⚠ 공휴일({holiday})입니다"
+        elif holidays.is_weekend(d):
+            prompt += f"\n⚠ {'토요일' if d.weekday() == 5 else '일요일'}입니다"
         return self.show(cid, message_id, prompt, [
             [{"text": "그래도 등록" if dup else "등록", "callback_data": f"dlg:{dialog['id']}:reg"},
              {"text": "마감으로 등록", "callback_data": f"dlg:{dialog['id']}:regd"}],
@@ -685,17 +691,24 @@ class Bot:
         return f"↩ 등록을 취소했습니다 ({self.plain_day(date.fromisoformat(row['date']))} {self.mask(row['text'] or '')})."
 
     @staticmethod
-    def day_label(d, start, closed):
-        """달력 칸에 쓸 글. 고른 시작일 ▶12, 학사일정 휴업일·공휴일 (12), 그 밖은 숫자. 날짜 표시를 바꿀 때는 이 함수 한 곳만."""
+    def day_label(d, start, closed, event=False):
+        """달력 칸에 쓸 글. 일정 추가 달력은 주말·공휴일을 구분하고, 나머지는 기존 표시를 씁니다."""
         if d == start:
             return f"▶{d.day}"
+        if event:
+            holiday = holidays.holiday_name(d)
+            if holiday or (holidays.is_weekend(d) and d.weekday() == 6):
+                return f"🔴{d.day}"
+            if holidays.is_weekend(d):
+                return f"🔵{d.day}"
+            return str(d.day)
         return f"({d.day})" if d in closed else str(d.day)
 
     def show_calendar(self, cid, dialog, message_id, year, month):
         if dialog["kind"] == "event":
             dialog["cal_month"] = (year, month)
             preset = f"\n내용: {cut(self.mask(dialog['text']), 40)}" if dialog.get("text") else ""
-            text = f"📅 일정을 넣을 날짜를 누르세요 (하루만 고릅니다).{preset}"
+            text = f"📅 일정을 넣을 날짜를 누르세요 (하루만 고릅니다).{preset}\n🔴 일요일·공휴일  🔵 토요일"
             return self.show(cid, message_id, text, self.calendar_buttons(dialog, year, month))
         if dialog["kind"] in KIND:
             dialog["cal_month"] = (year, month)
