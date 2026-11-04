@@ -102,6 +102,41 @@ class PollingResilienceTests(unittest.TestCase):
         self.assertTrue(bot.last_error)                                          # 원인이 화면·'상태' 에 남음 (오류 이름은 환경마다 다름)
         self.assertGreaterEqual(server.hits, 3)                                  # 끊긴 두 번 뒤에 다시 시도해 정상 응답을 받음
 
+    def test_cut_off_response_is_not_a_request_body_reset(self):
+        """131072자 큰 요청에서도 가짜 서버가 요청을 끝까지 읽은 뒤 답하므로 첫 응답은 IncompleteRead, 다음 응답은 정상
+        (요청을 다 읽기 전에 닫으면 윈도우에서 연결이 강제로 끊김(WinError 10053)으로 달라져 시험이 불안정했음. 코파일럿 #80)."""
+        server = FlakyServer(broken=1)
+        self.addCleanup(server.close)
+        self.env.config.values.update(telegram_token="T:T", telegram_api_base=f"http://127.0.0.1:{server.port}")
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        payload = {"padding": "x" * 131072}
+        with self.assertRaises(http.client.IncompleteRead):
+            bot.api("getUpdates", payload)
+        self.assertEqual(bot.api("getUpdates", payload), [])
+        self.assertEqual(server.hits, 2)
+
+    def test_polling_thread_stays_alive_after_recovery(self):
+        """첫 getUpdates 만 IncompleteRead 로 실패한 뒤 복구되면 스레드가 살아 있고, 마지막 확인 시각과 최근 오류가 남음
+        (상태 문구는 복구 뒤 일시 오류로 바뀔 수 있어 확인하지 않음)."""
+        fake = FakeTelegram()
+        self.addCleanup(fake.close)
+        self.env.config.values.update(telegram_token="T:T", telegram_api_base=fake.base)
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        real = bot.api
+
+        def api(method, params=None, timeout=35):
+            if method == "getUpdates" and not bot.last_error:
+                raise http.client.IncompleteRead(b"abc", 9)
+            return real(method, params, timeout)
+
+        bot.api = api
+        with patch.object(telegram, "POLL_BACKOFF", 0.05):
+            bot.start()
+            self.bots.append(bot)
+            self.assertTrue(wait_for(lambda: bot.last_poll is not None))
+        self.assertTrue(bot.alive())
+        self.assertIn("IncompleteRead", bot.last_error)
+
     def test_same_error_is_logged_once(self):
         bot = Bot(self.env.db, self.env.config, self.env.collector)
         for _ in range(3):
