@@ -40,14 +40,37 @@ class FlakyServer:
                 c, _ = self.sock.accept()
             except OSError:
                 return
-            c.recv(65536)
-            self.hits += 1
-            if self.hits <= self.broken:
-                c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"ok\": tr")
-            else:
-                body = b'{"ok": true, "result": []}'
-                c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
-            c.close()
+            try:
+                self.read_request(c)       # 요청을 끝까지 읽은 뒤에 답함 (안 읽고 닫으면 윈도우에서 연결이 강제로 끊김)
+                self.hits += 1
+                if self.hits <= self.broken:
+                    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"ok\": tr")
+                else:
+                    body = b'{"ok": true, "result": []}'
+                    c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: %d\r\n\r\n" % len(body) + body)
+            except OSError:
+                pass
+            finally:
+                c.close()
+
+    @staticmethod
+    def read_request(c):
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = c.recv(65536)
+            if not chunk:
+                return
+            data += chunk
+        head, _, rest = data.partition(b"\r\n\r\n")
+        length = 0
+        for line in head.split(b"\r\n"):
+            if line.lower().startswith(b"content-length:"):
+                length = int(line.split(b":", 1)[1])
+        while len(rest) < length:
+            chunk = c.recv(65536)
+            if not chunk:
+                return
+            rest += chunk
 
     def close(self):
         self.sock.close()
@@ -75,9 +98,41 @@ class PollingResilienceTests(unittest.TestCase):
             bot.start()
             self.bots.append(bot)
             self.assertTrue(wait_for(lambda: bot.last_poll is not None))        # 끊긴 응답 두 번 뒤에 정상으로 돌아옴
+        self.assertTrue(bot.alive())                                             # 끊긴 응답 뒤에도 스레드가 살아 있음
+        self.assertTrue(bot.last_error)                                          # 원인이 화면·'상태' 에 남음 (오류 이름은 환경마다 다름)
+        self.assertGreaterEqual(server.hits, 3)                                  # 끊긴 두 번 뒤에 다시 시도해 정상 응답을 받음
+
+    def test_cut_off_response_is_not_a_request_body_reset(self):
+        server = FlakyServer(broken=1)
+        self.addCleanup(server.close)
+        self.env.config.values.update(telegram_token="T:T", telegram_api_base=f"http://127.0.0.1:{server.port}")
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        payload = {"padding": "x" * 131072}
+        with self.assertRaises(http.client.IncompleteRead):
+            bot.api("getUpdates", payload)
+        self.assertEqual(bot.api("getUpdates", payload), [])
+        self.assertEqual(server.hits, 2)
+
+    def test_polling_thread_stays_alive_after_recovery(self):
+        fake = FakeTelegram()
+        self.addCleanup(fake.close)
+        self.env.config.values.update(telegram_token="T:T", telegram_api_base=fake.base)
+        bot = Bot(self.env.db, self.env.config, self.env.collector)
+        real = bot.api
+
+        def api(method, params=None, timeout=35):
+            if method == "getUpdates" and not bot.last_error:
+                raise http.client.IncompleteRead(b"abc", 9)
+            return real(method, params, timeout)
+
+        bot.api = api
+        with patch.object(telegram, "POLL_BACKOFF", 0.05):
+            bot.start()
+            self.bots.append(bot)
+            self.assertTrue(wait_for(lambda: bot.last_poll is not None))
         self.assertTrue(bot.alive())
         self.assertIn("연결", bot.status)
-        self.assertTrue(bot.last_error)                                          # 원인이 화면·'상태' 에 남음 (오류 이름은 환경마다 다름)
+        self.assertIn("IncompleteRead", bot.last_error)
 
     def test_same_error_is_logged_once(self):
         bot = Bot(self.env.db, self.env.config, self.env.collector)
