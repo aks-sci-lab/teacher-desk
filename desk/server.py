@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -1159,6 +1159,15 @@ def calendar_ics(app, q, body):
     evs = queries.events_between(app.db, today - timedelta(days=30), today + timedelta(days=365))
     return (200, to_ics(evs).encode("utf-8"), "text/calendar; charset=utf-8",
             {"Content-Disposition": 'attachment; filename="teacher-desk.ics"', "Cache-Control": "no-store"})
+
+
+@api("GET", "/api/holidays")
+def list_holidays(app, q, body):
+    start = date.fromisoformat(check_date(q.get("from"), "시작 날짜"))
+    end = date.fromisoformat(check_date(q.get("to"), "끝 날짜"))
+    need(end >= start, "끝 날짜가 시작 날짜보다 빠릅니다")
+    need((end - start).days <= 400, "조회 기간은 400일 이내여야 합니다")
+    return holidays.holidays_between(start, end)
 
 
 # ---- 대시보드·검색·수집 ----

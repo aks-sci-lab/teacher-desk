@@ -56,6 +56,28 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/collect", {}, headers={"Origin": "https://evil.example"})[0], 403)
         self.assertEqual(self.req("GET", "/api/state")[0], 200)
 
+    def test_holidays_api_validates_dates_and_range(self):
+        status, result = self.req("GET", "/api/holidays?from=2026-03-01&to=2026-03-02")
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result, {
+            "2026-03-01": "삼일절",
+            "2026-03-02": "대체공휴일(삼일절)",
+        })
+        self.assertEqual(self.req(
+            "GET", "/api/holidays?from=2026-01-01&to=2027-02-05",
+        )[0], 200)
+        self.assertEqual(self.req(
+            "GET", "/api/holidays?from=9999-12-31&to=9999-12-31",
+        ), (200, {}))
+        for path in (
+            "/api/holidays?from=2026-02-30&to=2026-03-02",
+            "/api/holidays?from=2026-03-02&to=2026-03-01",
+            "/api/holidays?from=2026-01-01&to=2027-02-06",
+            "/api/holidays?from=2026-03-01",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.req("GET", path)[0], 400)
+
     def test_static_files_and_traversal(self):
         status, body = self.req("GET", "/", token=False)
         self.assertEqual(status, 200)
