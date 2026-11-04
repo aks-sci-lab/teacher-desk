@@ -16,10 +16,11 @@ Claude Code 가 쓰는 세션과 **같은 이름·같은 영역**으로 Copilot 
 | 일정·시간표·주간 계획 | 달력·일정, 학사일정, 시간표·교체·선생님 찾기·수업 알림, 주간 계획, 브리핑 일정 카드 | `desk/schoolcal.py` `xlsx.py` `neis.py` `timetable.py` `bell.py` `weekplan.py` `ics.py` · `web/js/views/calendar.js` `schoolcal.js` `timetable.js` `week.js` · `views/today.js`(일정 카드) |
 | 텔레그램 | 봇 명령·알림·대화형 입력 | `desk/telegram.py` `assist.py` |
 | 브라우저 확장·외부 연동 | 에듀파인·나이스 화면 보내기, 나이스 입력 칸 채우기(**보류**: 사용자가 다시 하자고 하기 전에는 오류 수정만) | `browser-extension/` `desk/capture.py` `neisfill.py` · `web/js/views/neisfill.js` |
-| UI·사용성 | 화면 흐름·탐색·가독성·정보 밀도·접근성·반응형 배치·화면 간 일관성. 기능 동작은 해당 기능 담당과 조율 | `web/css/desk.css` `web/js/shell.js` `web/js/ui.js` · 기능 화면의 표현·상호작용 부분 |
+| UI·사용성 | 글자 크기·배치·가독성·정보 밀도·접근성·화면 간 일관성의 분석·검토 (구현은 Claude) | 분석·검토 대상: `web/css/desk.css`(자기 영역 묶음) · 기능 화면의 표현 부분 |
 | 앱 기반·설정·배포·품질 | 화면 틀(탭·팝업·메뉴), 설정 화면, 전용 창, 업데이트, 윈도우 ZIP·CI, 성능·무결성 점검·경량화 | `desk/server.py`(공통) `config.py` `db.py` `window.py` `background.py` `updater.py` `desk.py` · `web/js/shell.js` `ui.js` `api.js` `store.js` `singleton.js` `update.js` `main.js` `views/settings.js` · `tools/` `.github/` |
 
-- UI·사용성 채팅은 화면의 배치·표현·조작 흐름을 맡고, 기능 채팅은 해당 화면의 자료·업무 동작을 맡습니다. 같은 화면 파일을 함께 고칠 때는 변경 범위와 열린 PR을 먼저 조율합니다.
+- **UI·사용성의 구현 도구는 Claude**입니다. Copilot UI·사용성 채팅은 분석·검토를 맡고 구현을 병행하지 않습니다 (한 영역은 한 도구만).
+- UI·사용성 담당은 화면의 모양(CSS·글자 크기·배치·접근성)을, 기능 담당은 해당 화면의 자료·업무 동작을 맡습니다. `web/js/shell.js`·`web/js/ui.js`의 탭·팝업·메뉴 구조는 **앱 기반·설정·배포·품질** 담당으로 둡니다. UI 쪽에서 이 두 파일을 고쳐야 하면 앱 기반 담당에 먼저 알리고, 변경 범위와 열린 PR을 맞춘 뒤 진행합니다. 다른 기능 화면을 고칠 때도 해당 담당과 먼저 조율합니다.
 - 담당 영역은 **기본 책임 범위**입니다. 한 기능을 완성하는 데 꼭 필요한 작은 교차 영역 변경은 열린 PR과 파일 충돌을 확인한 뒤 함께 고칠 수 있습니다. 큰 교차 영역 작업은 총괄 채팅에 나눠 맡기도록 알립니다.
 - 같이 쓰는 파일(`desk/server.py`, `web/css/desk.css`, `web/js/main.js`)은 다른 열린 PR과 충돌하지 않는지 먼저 확인하고, 필요한 부분만 작게 고칩니다. CSS 는 맨 아래 자기 영역 묶음에 덧붙입니다.
 - 채팅마다 **PR 은 한 번에 하나**. PR 설명 첫 줄에 영역을 적습니다 (예: `영역: 출결·증 발급`). 버전·기록 충돌은 `AGENTS.md` 의 '충돌 줄이기'를 따릅니다.

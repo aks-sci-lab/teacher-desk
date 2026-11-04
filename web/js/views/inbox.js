@@ -94,10 +94,11 @@ function renderSide(body, actions) {
             onclick: pickMode ? togglePick : () => openItem(it.id),
         },
         pickMode
-            ? el('input.pick', { type: 'checkbox', checked: picked.has(it.id), title: '지울 항목으로 고르기',
+            ? el('input.pick', { type: 'checkbox', checked: picked.has(it.id), title: '삭제할 항목으로 고르기 (체크한 항목을 아래 [지우기]로 지웁니다)', 'aria-label': '삭제할 항목으로 고르기',
                 onclick: e => e.stopPropagation(), onchange: togglePick })
             : el('input', { type: 'checkbox', checked: !!it.registered,
-                title: it.event_count ? `체크하면 일정 ${it.event_count}건이 달력·브리핑에 들어갑니다` : '체크하면 이 메시지의 일정이 달력·브리핑에 들어갑니다',
+                title: it.event_count ? `달력에 넣기: 체크하면 일정 ${it.event_count}건이 달력·브리핑에 들어갑니다 (항목은 지워지지 않음)` : '달력에 넣기: 체크하면 이 메시지의 일정이 달력·브리핑에 들어갑니다',
+                'aria-label': '일정을 달력에 넣기',
                 onclick: e => e.stopPropagation(),
                 onchange: e => setRegistered(it.id, e.target.checked) }),
         !pickMode && el('button.row-del', { title: '이 항목 지우기', onclick: guarded(async e => {
