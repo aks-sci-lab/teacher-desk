@@ -378,7 +378,7 @@ dl.kvs dd { margin: 0; }
 .brief-stats .stat.bad b { color: var(--danger); }
 .brief-stats .stat.zero { opacity: .6; }
 .brief-actions { margin: 0; }
-.empty-strip { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px; border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); font-size: 0.88em; grid-column: 1 / -1; }
+.empty-strip { display: flex; flex-wrap: wrap; gap: 2px 16px; margin: -6px 0 10px; padding: 0 2px; color: var(--muted); font-size: var(--fs-small); }
 .empty-strip b { color: var(--ink); font-weight: 600; margin-right: 4px; }
 .card > .row { margin-bottom: 12px; }
 .card .big { font-size: 2em; font-weight: 800; line-height: 1.1; }
@@ -707,25 +707,9 @@ a.ai-ref:hover { background: var(--accent); color: var(--accent-ink); }
 .ai-hidden-toggle { margin: 0 0 8px; }
 @media (hover: none) { .ai-x { opacity: 0.8; } }
 section.card + .cards, .cards { margin-top: 12px; }
-/* 브리핑: 위 '오늘' 줄(카드들이 내용 높이만큼 나란히) · 아래 본문(왼쪽 AI 요약, 오른쪽 새로 받은 자료) */
-.brief-today > .cards { margin-top: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22em), 1fr)); gap: 12px; align-items: start; }
-.brief-today > .cards > .card { margin: 0; }
-.brief-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 12px; }
-.brief-main > .card, .brief-side > .card { margin: 0; }
-.brief-side > .card { max-height: 70vh; overflow: auto; }
+/* 브리핑 본문 틀은 맨 아래 '0.5.70' 묶음 */
 .status-chip { font-variant-numeric: tabular-nums; color: var(--muted); }
 .status-chip.warn { color: var(--danger); border-color: var(--danger); }
-@media (min-width: 1000px) {
-    .brief-main { grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); }
-}
-@media (min-width: 1400px) {
-    .brief-main { grid-template-columns: minmax(0, 1fr) minmax(420px, 520px); }
-}
-/* AI 를 끈 경우: 요약 칸이 짧으니 새로 받은 자료를 넓게 (항목을 여러 칸으로) */
-.brief-main.no-ai { grid-template-columns: minmax(0, 1fr); }
-.brief-main.no-ai .brief-side > .card { max-height: none; }
-.brief-main.no-ai .brief-side ul.list { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); column-gap: 18px; }
-
 /* 쿨메신저 사진 */
 .img-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .img-grid img { max-width: 220px; max-height: 220px; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; object-fit: contain; background: var(--surface-2); }
@@ -1121,11 +1105,11 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .pane { line-height: 1.55; }
 /* 브리핑 카드의 일정 줄: 날짜·분류가 첫 줄, 제목은 다음 줄 전체 폭 (제목이 한두 글자씩 끊기지 않게).
    '할 일로' 단추는 줄 자리를 차지하지 않고 오른쪽 위에 겹쳐 뜸 */
-.cards .ev { flex-wrap: wrap; align-items: center; gap: 0 8px; padding: 6px 0; position: relative; }
-.cards .ev + .ev { border-top: 1px solid var(--line); }
-.cards .ev .when { min-width: 0; font-size: var(--fs-small); }
-.cards .ev > a, .cards .ev > span:last-child { flex: 1 1 100%; order: 3; min-width: 0; margin-top: 2px; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
-.cards .ev.movable > .to-todo { position: absolute; right: 0; top: 4px; margin: 0; }
+.cards .ev, .brief-grid .ev { flex-wrap: wrap; align-items: center; gap: 0 8px; padding: 6px 0; position: relative; }
+.cards .ev + .ev, .brief-grid .ev + .ev { border-top: 1px solid var(--line); }
+.cards .ev .when, .brief-grid .ev .when { min-width: 0; font-size: var(--fs-small); }
+.cards .ev > a, .cards .ev > span:last-child, .brief-grid .ev > a, .brief-grid .ev > span:last-child { flex: 1 1 100%; order: 3; min-width: 0; margin-top: 2px; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
+.cards .ev.movable > .to-todo, .brief-grid .ev.movable > .to-todo { position: absolute; right: 0; top: 4px; margin: 0; }
 /* 수신함 목록·브리핑 새 자료: 제목은 최대 두 줄, 날짜·출처는 그 아래 */
 .list .ttl { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
 .list.compact .ttl { -webkit-line-clamp: 1; }
@@ -1140,3 +1124,30 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
     .act { padding: 5px 0; }
     .act .ico { height: 26px; }
 }
+
+/* ---------- 브리핑 공간 배치 (0.5.70) ----------
+   왼쪽 주 열(꼭 할 일·마감·AI 요약)과 오른쪽 보조 열(수업·일정·조퇴·새 자료). 가로 전체를 쓰고,
+   카드는 내용 높이만큼만 차지(빈 칸 없음). 비어 있는 카드는 머리 아래 작은 한 줄. 좁으면(<1000px) 한 열로 쌓음 */
+.brief-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.brief-left, .brief-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.brief-left > .card, .brief-right > .card { margin: 0; }
+/* 오른쪽 열은 화면 높이만큼 쓰고, 맨 아래 '새로 받은 자료' 가 남는 높이를 받아 카드 안에서 스크롤 (보이는 건수가 늘어남) */
+.brief-right > .card { flex: none; }
+.brief-right:has(> .new-card) { min-height: calc(100vh - var(--status-h) - 10.5em); }
+.brief-right > .new-card:not(.empty-card) { flex: 1 1 0; min-height: 14em; overflow: auto; }
+@media (min-width: 1000px) {
+    .brief-grid:not(.one-col) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
+/* 꼭 할 일 줄: 칸을 고정해 체크칸·날짜·제목이 줄마다 맞고, 제목이 남는 폭을 모두 씀(최대 두 줄), 배지·메모·✕ 는 오른쪽 끝 */
+.todo-list li.todo { display: grid; grid-template-columns: 14px 20px 7.8em minmax(0, 1fr) auto auto auto auto; column-gap: 0; align-items: start; padding: 7px 0; }
+.todo-list li.todo > * { min-width: 0; }
+.todo-list li.todo > .todo-grip { grid-column: 1; }
+.todo-list li.todo > input[type=checkbox] { grid-column: 2; align-self: start; margin-top: .3em; }
+.todo-list li.todo > .ai-when { grid-column: 3; padding-right: 8px; }
+.todo-list li.todo > .ai-txt { grid-column: 4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: keep-all; overflow-wrap: anywhere; line-height: 1.4; }
+.todo-list li.todo > .todo-from { grid-column: 5; margin: .25em 0 0 8px; }
+.todo-list li.todo > .todo-memo { grid-column: 6; }
+.todo-list li.todo > .todo-move { grid-column: 7; }
+.todo-list li.todo > .ai-x { grid-column: 8; }
+.todo-list li.todo > .todo-notes { grid-column: 1 / -1; margin-left: 34px; }
+/* 요약이 짧아도 가로 전체를 차지하지 않으니(주 열 안) 별도 조정 없음. 한두 줄이면 높이도 그만큼만 */

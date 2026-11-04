@@ -190,7 +190,7 @@ function todoBox(aiNodes = [], more = null) {
             el('input', { type: 'checkbox', checked: !!t.done, title: '업무 완료로 표시', 'aria-label': '업무 완료', onchange: e => patch(t, { done: e.target.checked }) }),
             t.date ? el('span.ai-when', dayLabel(t.date, false) + (t.time ? ` ${t.time}` : ''),
                 !t.done && el('span', { className: `ai-dday ${dd.cls}` }, dd.label)) : null,
-            el('span.ai-txt', t.item_id
+            el('span.ai-txt', { title: t.text }, t.item_id
                 ? el('a', { href: '#', title: '자료 열기', onclick: e => { e.preventDefault(); openItem(t.item_id); } }, t.text)
                 : t.text),
             ORIGIN[t.origin] && el('span.todo-from', ORIGIN[t.origin]),
@@ -496,14 +496,13 @@ function aiCard(todoCard, sv) {
     return card(sv?.first ? '지난 1주일 요약' : `지난 접속 이후 요약 (${atLabel(sv?.prev_end)}부터)`, null, body, { cls: 'ai-card' });
 }
 
-// 비어 있는 카드는 한 줄로 모음 ('오늘 일정 없음 · 7일 안 마감 없음'), 내용 있는 카드만 칸을 차지
-function withEmptyStrip(cards) {
-    const empties = [...cards.querySelectorAll(':scope > .empty-card')];
-    if (!empties.length) return cards;
-    const strip = el('div.empty-strip', empties.map(c => el('span', el('b', c.querySelector('h3 > span').textContent), '없음')));
-    empties.forEach(c => c.remove());
-    cards.prepend(strip);
-    return cards;
+// 비어 있는 카드는 머리 아래 작은 한 줄로 모음 ('오늘 일정 없음 · 7일 안 마감 없음'), 내용 있는 카드만 칸을 차지
+function emptyStrip(cards) {
+    const empties = cards.filter(c => c.classList.contains('empty-card'));
+    return {
+        full: cards.filter(c => !c.classList.contains('empty-card')),
+        strip: empties.length ? el('div.empty-strip', empties.map(c => el('span', el('b', c.querySelector('h3 > span').textContent), '없음'))) : null,
+    };
 }
 
 // 자동 수집 상태: 머리 줄에 한 줄 요약 (연결 안 된 것이 있으면 빨갛게), 누르면 자세히
@@ -555,7 +554,7 @@ function renderToday(pane) {
             ? el('ul.list', s.new_items.map(it => movable(el('li', { onclick: () => openItem(it.id) },
                 el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16))),
                 { text: it.title, item_id: it.id, origin: 'item' })))
-            : el('p.muted.small', '없음'));
+            : el('p.muted.small', '없음'), { cls: 'new-card' });
         pane.append(
             // 머리: 날짜 · 오늘 숫자 · 수집 한 줄 요약 · 단추를 한 줄에 (빈 곳 없이)
             el('div.brief-head',
@@ -571,28 +570,36 @@ function renderToday(pane) {
                     el('button.btn.small', { onclick: () => openForm({ kind: 'out' }) }, icon('passes'), '외출증'),
                     el('button.btn.small', { onclick: openPaste }, icon('plus'), '붙여넣기'),
                     el('button.btn.small', { onclick: collectNow }, icon('refresh'), '지금 수집'))),
-            // 오늘 줄: 마감·꼭 할 일·오늘 수업·일정·조퇴/외출·7일 안 (빈 것은 한 줄로 모음)
-            el('div.brief-today', withEmptyStrip(el('div.cards',
-                todoCard,
-                s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
-                s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
-                s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
-                    ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },
-                        el('b', `${l.p}교시`), l.start && el('span.lesson-time', l.start), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'),
-                        l.note && el('span', { className: `tag lesson-note ${l.note.level}`, title: l.note.text }, l.note.level === 'off' ? `수업 없음 · ${l.note.text.slice(0, 14)}` : `확인 · ${l.note.text.slice(0, 14)}`))))
-                    : el('p.muted.small', '없음')) : null,
-                card('오늘 일정', s.today.length, evList(s.today, '없음')),
-                card('7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '없음')),
-                card('7일 안 일정', s.week_events.length, evList(s.week_events, '없음')),
-                card('오늘 조퇴·외출', s.passes.length, s.passes.length
-                    ? el('ul.list', s.passes.map(p => el('li', { onclick: () => openPass(p) },
-                        el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
-                        el('span.meta', KIND[p.kind], p.time_out || '', p.time_return ? `~${p.time_return}` : '',
-                            p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
-                    : el('p.muted.small', '없음'))))),
-            // 본문: 왼쪽 AI 요약(넓게), 오른쪽 새로 받은 자료 (넓은 화면에서)
-            // AI 를 끄면 요약 칸이 짧으니 새 자료를 넓게 (칸 여러 개가 나란히)
-            el(store.settings.ai_enabled ? 'div.brief-main' : 'div.brief-main.no-ai', aiCard(todoCard, s.since_visit), el('div.brief-side', newCard)));
+            // 본문: 왼쪽 주 열(꼭 할 일 · 마감 · AI 요약, 넓게) / 오른쪽 보조 열(오늘 수업 · 일정 · 조퇴 · 새 자료).
+            // 내용이 있는 카드만 자리를 차지하고, 없는 것은 위의 작은 한 줄로 (0.5.70)
+            ...(() => {
+                const left = [todoCard,
+                    s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
+                    s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
+                    aiCard(todoCard, s.since_visit)].filter(Boolean);
+                const right = [
+                    s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
+                        ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },
+                            el('b', `${l.p}교시`), l.start && el('span.lesson-time', l.start), el('span', l.cls || ''), el('span.muted', l.subj), l.moved && el('span.tag', '교체'),
+                            l.note && el('span', { className: `tag lesson-note ${l.note.level}`, title: l.note.text }, l.note.level === 'off' ? `수업 없음 · ${l.note.text.slice(0, 14)}` : `확인 · ${l.note.text.slice(0, 14)}`))))
+                        : el('p.muted.small', '없음')) : null,
+                    card('오늘 일정', s.today.length, evList(s.today, '없음')),
+                    card('7일 안 마감', s.week_deadlines.length, evList(s.week_deadlines, '없음')),
+                    card('7일 안 일정', s.week_events.length, evList(s.week_events, '없음')),
+                    card('오늘 조퇴·외출', s.passes.length, s.passes.length
+                        ? el('ul.list', s.passes.map(p => el('li', { onclick: () => openPass(p) },
+                            el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
+                            el('span.meta', KIND[p.kind], p.time_out || '', p.time_return ? `~${p.time_return}` : '',
+                                p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
+                        : el('p.muted.small', '없음')),
+                    newCard].filter(Boolean);
+                const l = emptyStrip(left), r = emptyStrip(right);
+                const strip = [l.strip, r.strip].filter(Boolean);
+                const merged = strip.length > 1 ? el('div.empty-strip', strip.flatMap(x => [...x.children])) : strip[0];
+                return [merged,
+                    el('div', { className: `brief-grid${r.full.length ? '' : ' one-col'}` },
+                        el('div.brief-left', l.full), r.full.length ? el('div.brief-right', r.full) : null)].filter(Boolean);
+            })());
     })();
 }
 
