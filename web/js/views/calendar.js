@@ -111,7 +111,7 @@ function renderMonth(pane, tab) {
             if (!cell) continue;
             cell.classList.add('holiday');
             const hasMatchingEvent = evs.some(e => e.date <= d && (e.end_date || e.date) >= d
-                && e.text === name);
+                && (e.item_title || e.text) === name);
             if (!hasMatchingEvent) cell.append(el('div.holiday-name', { title: name }, name));
         }
         for (const e of evs) {
