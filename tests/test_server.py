@@ -63,6 +63,9 @@ class ServerTests(unittest.TestCase):
             "2026-03-01": "삼일절",
             "2026-03-02": "대체공휴일(삼일절)",
         })
+        self.assertEqual(self.req(
+            "GET", "/api/holidays?from=2026-01-01&to=2027-02-05",
+        )[0], 200)
         for path in (
             "/api/holidays?from=2026-02-30&to=2026-03-02",
             "/api/holidays?from=2026-03-02&to=2026-03-01",
