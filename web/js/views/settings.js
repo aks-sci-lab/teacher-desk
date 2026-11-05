@@ -372,7 +372,7 @@ function renderSettings(pane, tab) {
             el('details.small', el('summary', '처음 한 번 필요한 LM Studio 설정'),
                 el('ol',
                     el('li', 'LM Studio를 최신 버전으로 업데이트하고 Developer → Server Settings에서 Just-in-Time Model Loading(필요할 때 모델 불러오기)을 켜세요. 서버는 이 PC 전용으로 유지하세요.'),
-                    el('li', '이미 수동으로 불러온 모델에는 새 해제 시간이 적용되지 않습니다. 진행 중인 AI 작업을 마친 뒤 LM Studio에서 해당 모델을 한 번 내리세요. 서버나 다른 모델은 종료할 필요가 없습니다.'),
+                    el('li', '이미 불러온 모델에는 새 해제 시간이 소급 적용되지 않을 수 있습니다. 진행 중인 AI 작업을 마친 뒤 LM Studio에서 해당 모델을 한 번 내리세요. 서버나 다른 모델은 종료할 필요가 없습니다.'),
                     el('li', '설치 도우미를 썼다면 새 배치파일을 받아 실행한 뒤 [연결 확인 후 적용]을 눌러 모델 이름을 갱신하세요. 직접 설정했다면 임시 별명이 아닌 다운로드한 모델의 고정 이름을 사용하세요.'),
                     el('li', '다른 프로그램이 계속 AI를 사용하거나 자동 요약할 자료가 남아 있으면 메모리에서 내려가지 않을 수 있습니다.'))),
             checkField('ai_enabled', 'AI 요약 쓰기'),
