@@ -72,6 +72,8 @@ class LocalAISetupTests(unittest.TestCase):
             self.assertIn("server start --bind 127.0.0.1 --port 23456", script)
             self.assertIn("https://huggingface.co/" + localai.MODELS[model]["repo"], script)
             self.assertIn("ps --json", script)
+            self.assertIn("--context-length 12288 --ttl 300", script)
+            self.assertIn("Just-in-Time Model Loading", script)
             self.assertIn("if (-not ($loaded", script)
             self.assertIn("Read-Host", script)
             self.assertNotIn("--cors", script)
@@ -148,9 +150,13 @@ class LocalAISetupTests(unittest.TestCase):
                 else:
                     self.assertEqual([c.split()[0] for c in commands], ["daemon", "server", "ps", "get", "load", "server"])
                     self.assertIn("Qwen3-4B-Q4_K_M.gguf", commands[3])
+                    self.assertTrue(commands[4].endswith("--ttl 300"))
 
     def test_apply_checks_real_fake_completion_before_persisting(self):
         fake = FakeLMStudio(models=["teacher-desk-qwen3-4b"])
+        key = "lmstudio-community/qwen3-4b-gguf"
+        fake.catalog = [{"type": "llm", "key": key,
+                         "loaded_instances": [{"id": "teacher-desk-qwen3-4b"}]}]
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 config = Config(Path(tmp) / "config.json")
@@ -171,15 +177,51 @@ class LocalAISetupTests(unittest.TestCase):
                 self.assertTrue(result["ok"])
                 restored = Config(config.path)
                 self.assertTrue(restored["ai_enabled"])
-                self.assertEqual(restored["ai_model"], "teacher-desk-qwen3-4b")
+                self.assertEqual(restored["ai_model"], key)
                 self.assertEqual(restored["ai_base"], fake.base)
                 self.assertEqual(restored["ai_input_size"], "short")
                 self.assertEqual(fake.requests[-1]["max_tokens"], 64)
+                self.assertEqual(fake.requests[-1]["ttl"], 300)
+                self.assertEqual(fake.requests[-1]["model"], key)
                 self.assertNotIn("자료:", fake.requests[-1]["messages"][1]["content"])
+                fake.models = [key]  # 내린 뒤 임시 별명이 사라져도 고정 이름으로 다시 요청
+                fake.catalog[0]["loaded_instances"] = []
+                self.assertEqual(ai.ask(restored["ai_base"], restored["ai_model"], "다시 연결"), "준비됐습니다")
+                self.assertEqual(fake.requests[-1]["model"], key)
+                self.assertEqual(fake.requests[-1]["ttl"], 300)
                 with self.assertRaises(localai.SetupError):
                     localai.apply(config, "qwen3-4b", config["port"])
         finally:
             fake.close()
+
+    def test_apply_does_not_save_unresolvable_or_ambiguous_model_key(self):
+        fake = FakeLMStudio(models=["teacher-desk-qwen3-4b"])
+        entry = {"type": "llm", "key": "qwen3-4b",
+                 "loaded_instances": [{"id": "teacher-desk-qwen3-4b"}]}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                config = Config(Path(tmp) / "config.json")
+                for catalog in (None, [], [entry, entry], [{"type": "llm", "key": "other", "loaded_instances": []}],
+                                [{"type": "llm", "key": "bad", "loaded_instances": None}]):
+                    with self.subTest(catalog=catalog):
+                        fake.catalog = catalog
+                        with self.assertRaises(localai.SetupError):
+                            localai.apply(config, "qwen3-4b", urlparse(fake.base).port)
+                        self.assertFalse(config.path.exists())
+                        self.assertEqual(fake.requests, [])
+        finally:
+            fake.close()
+
+    def test_apply_requires_native_catalog_without_silently_saving_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Config(Path(tmp) / "config.json")
+            with patch("desk.localai.ai.models", return_value=["teacher-desk-qwen3-4b"]), \
+                    patch("desk.localai.ai._call", side_effect=ai.AIError("LM Studio 오류 (404)")), \
+                    patch("desk.localai.ai.ask") as ask:
+                with self.assertRaisesRegex(localai.SetupError, "업데이트"):
+                    localai.apply(config, "qwen3-4b", 23456)
+                ask.assert_not_called()
+                self.assertFalse(config.path.exists())
 
 
 def shutil_usage(gb):

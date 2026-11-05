@@ -26,6 +26,7 @@ TOTAL_CHARS = 14000       # 한 번에 보내는 글자 수 (작은 모델의 �
 # 설정의 '보내는 양': 짧게 하면 LM Studio 가 읽는 시간이 크게 줄어듦 (8845HS 내장 그래픽 12B 모델 약 70토큰/초)
 SIZES = {"normal": (700, 14000), "short": (400, 6000)}
 TIMEOUT = 900             # LM Studio 답을 기다리는 최대 시간 (15분)
+IDLE_TTL = 300            # 작업 중이 아닌 모델을 메모리에서 내리기까지의 시간
 SOURCE_NAMES = {"cool": "쿨메신저", "edufine": "업무포털"}
 
 SYSTEM = (
@@ -321,7 +322,7 @@ def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500):
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        "temperature": 0.2, "max_tokens": max_tokens, "stream": False,
+        "temperature": 0.2, "max_tokens": max_tokens, "stream": False, "ttl": IDLE_TTL,
     }
     try:
         # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)

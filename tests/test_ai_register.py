@@ -20,6 +20,7 @@ class FakeLMStudio:
     def __init__(self, models=("qwen3-8b", "text-embedding-nomic")):
         self.requests = []
         self.models = list(models)
+        self.catalog = []
         self.reply = "<think>생각</think>## 꼭 할 일 (마감 순)\n- 11월 3일 · 협의록 제출 [1]"
         self.reject_extra = False   # True: 모르는 칸(chat_template_kwargs)이 있으면 400 (깐깐한 LM Studio 흉내)
         fake = self
@@ -37,6 +38,8 @@ class FakeLMStudio:
                 self.wfile.write(data)
 
             def do_GET(self):
+                if self.path == "/api/v1/models":
+                    return self._send({"models": fake.catalog})
                 self._send({"data": [{"id": m} for m in fake.models]})
 
             def do_POST(self):
@@ -89,6 +92,7 @@ class AITests(unittest.TestCase):
         self.assertEqual((r["count"], r["used"], r["model"]), (2, 2, "qwen3-8b"))   # 임베딩 모델은 고르지 않음
         req = self.fake.requests[-1]
         self.assertEqual(req["chat_template_kwargs"], {"enable_thinking": False})   # 생각 단계 끄기
+        self.assertEqual(req["ttl"], 300)
         self.assertTrue(req["messages"][1]["content"].endswith("/no_think"))       # Qwen 은 글로도
         self.assertEqual(r["text"], "## 꼭 할 일 (마감 순)\n- 11월 3일 · 협의록 제출 [1]")  # 생각 과정 뺌
         prompt = self.fake.requests[-1]["messages"][1]["content"]
@@ -114,6 +118,7 @@ class AITests(unittest.TestCase):
         self.fake.reject_extra = True                                              # 모르는 칸 → 400 → 빼고 다시
         self.assertIn("협의록", ai.weekly_summary(self.env.db, self.env.config)["text"])
         self.assertNotIn("chat_template_kwargs", self.fake.requests[-1])
+        self.assertTrue(all(r["ttl"] == 300 for r in self.fake.requests))
         self.fake.reply = "<think>생각만 길게"                                       # 생각만 하다 끝남
         with self.assertRaises(ai.AIError) as cm:
             ai.weekly_summary(self.env.db, self.env.config)
