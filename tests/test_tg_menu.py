@@ -90,7 +90,7 @@ class TelegramMenuTests(unittest.TestCase):
         self.assertNotIn("← 메뉴", self.labels(self.fake.sent[-1]) if "reply_markup" in self.fake.sent[-1]
                          and "inline_keyboard" in self.fake.sent[-1]["reply_markup"] else {})
 
-    def test_week_plan_masks_names_and_pages_to_next_week(self):
+    def test_week_plan_shows_titles_like_today_and_pages_to_next_week(self):
         today = date.today()
         queries.insert_event(self.env.db, {"date": today.isoformat(), "kind": "deadline", "text": f"{NAME} 상담 기록 제출",
                                            "category": "제출·마감"})
@@ -101,7 +101,7 @@ class TelegramMenuTests(unittest.TestCase):
         self.assertIn("이번 주 계획", out)
         self.assertIn("상담 기록 제출", out)
         self.assertIn("학부모 전화", out)
-        self.assertNotIn(NAME, self.all_text())
+        self.assertIn(f"{NAME} 상담", out)   # 오늘·마감·브리핑과 같게 일정 제목은 가리지 않음 (2026-11-06 결정)
         week = self.labels(self.fake.sent[-1])
         self.bot.handle_update(press(week["다음 주 ▶"], message_id=len(self.fake.sent)))
         self.assertIn("다음 주 계획", self.fake.edited[-1]["text"])

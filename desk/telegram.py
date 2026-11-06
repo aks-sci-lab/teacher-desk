@@ -537,7 +537,7 @@ class Bot:
         return None
 
     def week_text(self, nxt=False, today=None):
-        """주간 계획 (웹 '주간 계획' 과 같은 자료, 읽기만). 일정·할 일 글의 학생 이름은 가림."""
+        """주간 계획 (웹 '주간 계획' 과 같은 자료, 읽기만). 오늘·마감·브리핑과 같은 조회 답이라 일정 제목은 가리지 않음 (2026-11-06 결정)."""
         today = today or date.today()
         plan = weekplan.week_plan(self.db, today + timedelta(days=7 if nxt else 0), 7)
         counts = self.config["telegram_detail"] == "counts"
@@ -554,10 +554,10 @@ class Bot:
                     out.append(f"  일정 {len(evs)}건 · 할 일 {len(col['todos'])}건")
                 return out
             out += [f"  {'⏰' if e['kind'] == 'deadline' else '•'}{' ' + e['time'] if e.get('time') else ''} "
-                    f"{cut(self.mask(e.get('item_title') or e['text']), 45)}" for e in evs[:8]]
+                    f"{cut(e.get('item_title') or e['text'], 45)}" for e in evs[:8]]
             if len(evs) > 8:
                 out.append(f"  … 그 외 {len(evs) - 8}건")
-            out += [f"  ☐ {cut(self.mask(t['text']), 45)}" for t in col["todos"][:5]]
+            out += [f"  ☐ {cut(t['text'], 45)}" for t in col["todos"][:5]]
             return out
 
         for col in plan["cols"]:
@@ -568,10 +568,10 @@ class Bot:
             lines += day_lines(col, note)
         if plan["overdue"] and not counts:
             lines.append(f"\n⚠ 지난 할 일 {len(plan['overdue'])}건")
-            lines += [f"  ☐ {cut(self.mask(t['text']), 45)}" for t in plan["overdue"][:5]]
+            lines += [f"  ☐ {cut(t['text'], 45)}" for t in plan["overdue"][:5]]
         if plan["undated"] and not counts:
             lines.append(f"\n꼭 할 일 (날짜 없음) {len(plan['undated'])}건")
-            lines += [f"  ☐ {cut(self.mask(t['text']), 45)}" for t in plan["undated"][:5]]
+            lines += [f"  ☐ {cut(t['text'], 45)}" for t in plan["undated"][:5]]
         if len(lines) == 1:
             lines.append("이 주에는 일정·할 일이 없습니다.")
         return "\n".join(lines)
