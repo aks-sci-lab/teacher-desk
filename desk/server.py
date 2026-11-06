@@ -1586,7 +1586,7 @@ def ai_hidden(app, q, body):
 def ai_check(app, q, body):
     base = text_field(body.get("base"), "AI 주소", 200) or app.config["ai_base"]
     try:
-        return ai.check(base)
+        return ai.check(base, app.db)
     except ai.AIError as e:
         raise ApiError(400, str(e))
 

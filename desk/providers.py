@@ -71,7 +71,7 @@ def ask(db, config, question, *, provider=None, confirmed=False):
         raise ai.AIError("브라우저 내장 AI는 앱의 'AI 질문' 화면에서만 사용할 수 있습니다. 텔레그램에서는 로컬 또는 외부 API를 선택하세요.")
     if provider == "local":
         return ai.ask(config["ai_base"], ai.pick_model(config), question, timeout=90,
-                      system=SYSTEM, max_tokens=1200)
+                      system=SYSTEM, max_tokens=1200, db=db)
     if confirmed is not True:
         raise ai.AIError("공개 자료·일반 질문이며 외부 전송과 비용 발생에 동의하는지 먼저 확인하세요.")
     check_public(db, config, question)
