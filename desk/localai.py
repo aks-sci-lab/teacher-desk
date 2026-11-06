@@ -133,13 +133,16 @@ try {
     $loaded = Run-Lms ps --json | ConvertFrom-Json
     if (-not ($loaded | Where-Object { $_.identifier -eq '__MODEL__' })) {
         Run-Lms get 'https://huggingface.co/__REPO__/blob/main/__FILE__'
-        Run-Lms load '__REPO__/__FILE__' --identifier '__MODEL__' --context-length 12288
+        Run-Lms load '__REPO__/__FILE__' --identifier '__MODEL__' --context-length 12288 --ttl __TTL__
+    } else {
+        Write-Host '이미 불러온 모델은 메모리 해제 시간을 바꾸지 않았습니다. 작업을 마친 뒤 LM Studio에서 한 번 내리고 이 파일을 다시 실행하세요.'
     }
     if (-not $server.running) { Run-Lms server start --bind 127.0.0.1 --port __PORT__ }
     Assert-LocalPort
     $r = Invoke-RestMethod -Uri 'http://127.0.0.1:__PORT__/v1/models' -TimeoutSec 15
     if (-not ($r.data | Where-Object { $_.id -eq '__MODEL__' })) { throw '선택한 모델을 서버에서 찾지 못했습니다.' }
     Write-Host 'AI 실행을 확인했습니다. 업무 데스크 설정에서 [연결 확인 후 적용]을 눌러 마무리하세요.'
+    Write-Host 'LM Studio의 Just-in-Time Model Loading을 켜 두세요. 5분 미사용 시 모델을 내리고 다음 요청에 다시 불러옵니다.'
     Write-Host '재부팅 뒤 AI를 다시 켤 때도 이 파일을 실행할 수 있습니다. 기존 모델은 재사용합니다.'
 } catch {
     Write-Host $_.Exception.Message -ForegroundColor Red
@@ -149,7 +152,8 @@ try {
 Read-Host 'Enter를 누르면 닫습니다'
 """
     script = script.replace("__PORT__", str(port)).replace("__REPO__", model["repo"]).replace(
-        "__FILE__", model["file"]).replace("__MODEL__", "teacher-desk-" + model_id)
+        "__FILE__", model["file"]).replace("__MODEL__", "teacher-desk-" + model_id).replace(
+        "__TTL__", str(ai.IDLE_TTL))
     encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
     line = "powershell.exe -NoProfile -EncodedCommand " + encoded
     if len(line) > 8000:
@@ -167,7 +171,22 @@ def apply(config, model_id: str, port: int) -> dict:
     identifier = "teacher-desk-" + model_id
     if identifier not in ai.models(base):
         raise SetupError("설치 배치파일을 먼저 실행해 선택한 모델을 불러오세요. 기존 AI 설정은 바꾸지 않았습니다.")
-    ai.ask(base, identifier, "연결 시험입니다. '준비됐습니다'라고 한 문장으로 답하세요.",
+    # 임시 인스턴스 이름은 메모리에서 내리면 사라지므로, 재로딩 가능한 모델 키를 저장.
+    try:
+        catalog = ai._call(f"http://127.0.0.1:{port}", "/api/v1/models")
+    except ai.AIError as e:
+        raise SetupError(f"모델의 고정 이름을 확인하지 못했습니다. LM Studio를 최신 버전으로 업데이트하세요. {e}") from e
+    entries = catalog.get("models") if isinstance(catalog, dict) else None
+    if not isinstance(entries, list):
+        raise SetupError("LM Studio의 모델 목록을 읽을 수 없습니다. 기존 AI 설정은 바꾸지 않았습니다.")
+    keys = [m["key"] for m in entries if isinstance(m, dict) and m.get("type") == "llm"
+            and isinstance(m.get("key"), str) and m["key"]
+            and isinstance(m.get("loaded_instances"), list)
+            and any(isinstance(i, dict) and i.get("id") == identifier for i in m["loaded_instances"])]
+    if len(keys) != 1:
+        raise SetupError("선택한 모델의 고정 이름을 하나로 확인하지 못했습니다. 설치 배치파일을 다시 실행하세요.")
+    model_key = keys[0]
+    ai.ask(base, model_key, "연결 시험입니다. '준비됐습니다'라고 한 문장으로 답하세요.",
            timeout=60, system="한국어로 짧게 답하세요.", max_tokens=64)
-    config.update({"ai_enabled": True, "ai_base": base, "ai_model": identifier, "ai_input_size": "short"})
+    config.update({"ai_enabled": True, "ai_base": base, "ai_model": model_key, "ai_input_size": "short"})
     return {"ok": True, "settings": config.public()}
