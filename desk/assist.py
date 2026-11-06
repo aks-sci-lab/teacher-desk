@@ -247,7 +247,7 @@ def answer(db, config, question, today=None):
     ai.check_local(base)
     model = ai.pick_model(config)
     prompt, used = build_prompt(question, found, [s["name"] for s in db.students()], today)
-    text = ai.ask(base, model, prompt, timeout=QA_TIMEOUT, system=SYSTEM_QA, max_tokens=700)
+    text = ai.ask(base, model, prompt, timeout=QA_TIMEOUT, system=SYSTEM_QA, max_tokens=700, db=db)
     ids = [it["id"] for it in found["items"][:used]]
     # 답에 나온 자료 번호만 단추로 (나오지 않았으면 모두)
     cited = sorted({int(n) for g in re.findall(r"\[(\d+(?:\s*,\s*\d+)*)\]", text) for n in re.split(r"\s*,\s*", g)})

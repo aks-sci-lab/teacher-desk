@@ -225,7 +225,8 @@ function renderSettings(pane, tab) {
             const r = await api.post('/api/ai/check', { base });
             clear(aiBox, el('p', { style: 'color: var(--ok); font-weight: 700' }, 'LM Studio 연결됨'),
                 el('p.small', `불러온 모델: ${r.models.join(', ')}`),
-                el('p.small.muted', '모델 이름 칸을 비워 두면 첫 모델을 씁니다.'));
+                el('p.small.muted', '모델 이름 칸을 비워 두면 첫 모델을 씁니다.'),
+                r.ttl_unsupported && el('p.small', { style: 'color: var(--danger)' }, '이 서버는 자동 해제(ttl)를 지원하지 않아 모델이 메모리에 계속 남습니다. LM Studio를 최신 버전으로 올리면 해결될 수 있습니다.'));
         } catch (e) {
             clear(aiBox, el('p', { style: 'color: var(--danger)' }, e.message));
         }

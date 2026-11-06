@@ -95,11 +95,11 @@ def models(base):
     return [m["id"] for m in data if isinstance(m, dict) and m.get("id") and "embed" not in m["id"].lower()]
 
 
-def check(base):
+def check(base, db=None):
     names = models(base)
     if not names:
         raise AIError("LM Studio 에 불러온 모델이 없습니다. LM Studio 에서 모델을 하나 불러오세요.")
-    return {"ok": True, "models": names}
+    return {"ok": True, "models": names, "ttl_unsupported": ttl_unsupported(base, db)}
 
 
 def mask_names(text, names):
@@ -195,7 +195,7 @@ def weekly_summary(db, config, today=None, timeout=TIMEOUT, since=None):
         return result
     model = pick_model(config)
     prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today)
-    text = ask(base, model, prompt, timeout)
+    text = ask(base, model, prompt, timeout, db=db)
     result.update(text=text, used=used, model=model, ids=[it["id"] for it in items[:used]])
     result["applied"] = apply_summary(db, text, result["ids"], today)
     db.set_meta("ai_weekly", result)
@@ -215,7 +215,7 @@ def update_summary(db, config, today=None, timeout=TIMEOUT):
         return result
     model = pick_model(config)
     prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today, new=True)
-    text = ask(config["ai_base"], model, prompt, timeout)
+    text = ask(config["ai_base"], model, prompt, timeout, db=db)
     update = {"at": datetime.now().strftime("%Y-%m-%d %H:%M"), "text": text, "model": model,
               "count": len(items), "used": used, "ids": [it["id"] for it in items[:used]]}
     update["applied"] = apply_summary(db, text, update["ids"], today)
@@ -315,23 +315,54 @@ def apply_summary(db, text, ids, today=None):
     return {"added": added, "changed": changed, "items": len(touched)}
 
 
-def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500):
+_ttl_refused = set()   # 이번 실행 중 '자동 해제(ttl)'를 거부한 서버 주소 (db 가 없는 호출용)
+TTL_META = "ai_ttl_unsupported"
+
+
+def ttl_unsupported(base, db=None):
+    """이 서버 주소가 자동 해제(ttl)를 받지 않는다고 알려졌는지."""
+    key = (base or "").rstrip("/")
+    if key in _ttl_refused:
+        return True
+    return bool(db and db.get_meta(TTL_META) == key)
+
+
+def _note_ttl_refused(base, db):
+    key = (base or "").rstrip("/")
+    _ttl_refused.add(key)
+    if db is not None and db.get_meta(TTL_META) != key:
+        db.set_meta(TTL_META, key)   # 같은 주소면 다음 요청부터 ttl 을 보내지 않음 (주소가 바뀌면 다시 시도)
+        db.log("AI 서버가 자동 해제(ttl)를 지원하지 않아 모델이 메모리에 계속 남습니다 (" + key + ")", "warn")
+
+
+def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None):
     """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌."""
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        "temperature": 0.2, "max_tokens": max_tokens, "stream": False, "ttl": IDLE_TTL,
+        "temperature": 0.2, "max_tokens": max_tokens, "stream": False,
     }
-    try:
-        # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)
-        res = _call(base, "/chat/completions", {**payload, "chat_template_kwargs": {"enable_thinking": False}},
-                    timeout=timeout)
-    except AIError as e:
-        if not str(e).startswith("LM Studio 오류 (400"):
-            raise
-        res = _call(base, "/chat/completions", payload, timeout=timeout)  # 그 칸을 받지 않는 LM Studio
+    # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)
+    think = {"chat_template_kwargs": {"enable_thinking": False}}
+    ttl = {"ttl": IDLE_TTL}
+    # 400(모르는 칸)이면 칸을 하나씩 빼며 다시 시도: (생각끄기, ttl) 조합
+    tries = [(True, True), (False, True), (True, False), (False, False)]
+    if ttl_unsupported(base, db):
+        tries = [(True, False), (False, False)]
+    res = None
+    for i, (use_think, use_ttl) in enumerate(tries):
+        body = {**payload, **(think if use_think else {}), **(ttl if use_ttl else {})}
+        try:
+            res = _call(base, "/chat/completions", body, timeout=timeout)
+        except AIError as e:
+            if not str(e).startswith("LM Studio 오류 (400") or i == len(tries) - 1:
+                raise   # 다른 이유의 400(모델 없음 등)은 그대로 보임
+            continue
+        if not use_ttl and (True, True) == tries[0] and i > 0:
+            _note_ttl_refused(base, db)   # ttl 을 뺀 요청만 받아들였음 = ttl 거부
+        break
     try:
         msg = res["choices"][0]["message"]
         text = msg.get("content") or ""
@@ -394,7 +425,8 @@ class Job:
                 "started_at": self.started_at if self.running else None, "error": self.error,
                 "result": result, "timeout": TIMEOUT, "hidden": self.db.get_meta("ai_hidden", []),
                 "new_count": len(new_items(self.db, result)) if result and result.get("text") else 0,
-                "visit": visits.info(self.db)}
+                "visit": visits.info(self.db),
+                "ttl_unsupported": ttl_unsupported(self.config["ai_base"], self.db)}
 
 
 ITEM_SYSTEM = ("너는 한국 중·고등학교 담임 교사의 업무 비서다. 쪽지나 공문 한 건을 읽고 교사가 10초 안에 파악하게 "
@@ -617,7 +649,7 @@ class ItemJob:
         names = [s["name"] for s in self.db.students()]
         body = re.sub(r"[ \t]+", " ", it["body"]).strip()[:ITEM_CHARS]
         prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}", names)
-        text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500), names)
+        text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500, db=self.db), names)
         self.db.execute("UPDATE items SET ai_summary = ?, ai_summary_hash = ?, ai_summary_at = ?, ai_summary_model = ? "
                         "WHERE id = ?", (text, body_hash(it["body"]), datetime.now().strftime("%Y-%m-%d %H:%M"), model, it["id"]))
 
