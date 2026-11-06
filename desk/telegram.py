@@ -636,7 +636,7 @@ class Bot:
             prompt += "\n⚠ 같은 날 같은 내용이 이미 있습니다."
         holiday = holidays.holiday_name(d)
         if holiday:
-            prompt += f"\n⚠ 공휴일({holiday})입니다"
+            prompt += f"\n⚠ {holiday}입니다" if holiday.startswith("대체공휴일") else f"\n⚠ 공휴일({holiday})입니다"
         elif holidays.is_weekend(d):
             prompt += f"\n⚠ {'토요일' if d.weekday() == 5 else '일요일'}입니다"
         return self.show(cid, message_id, prompt, [
@@ -708,7 +708,9 @@ class Bot:
         if dialog["kind"] == "event":
             dialog["cal_month"] = (year, month)
             preset = f"\n내용: {cut(self.mask(dialog['text']), 40)}" if dialog.get("text") else ""
-            text = f"📅 일정을 넣을 날짜를 누르세요 (하루만 고릅니다).{preset}\n🔴 일요일·공휴일  🔵 토요일"
+            first, last = holidays.year_range()
+            text = (f"📅 일정을 넣을 날짜를 누르세요 (하루만 고릅니다).{preset}\n"
+                    f"🔴 일요일·공휴일  🔵 토요일 (공휴일 표: {first}~{last}년)")
             return self.show(cid, message_id, text, self.calendar_buttons(dialog, year, month))
         if dialog["kind"] in KIND:
             dialog["cal_month"] = (year, month)
