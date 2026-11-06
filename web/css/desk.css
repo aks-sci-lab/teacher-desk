@@ -1155,3 +1155,76 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .todo-list li.todo > .ai-x { grid-column: 8; }
 .todo-list li.todo > .todo-notes { grid-column: 1 / -1; margin-left: 34px; }
 /* 요약이 짧아도 가로 전체를 차지하지 않으니(주 열 안) 별도 조정 없음. 한두 줄이면 높이도 그만큼만 */
+
+/* ---------- 앱 기반: 설정 화면·첫 실행 설정 도우미 (0.5.79) ----------
+   설정 = 왼쪽 묶음 목록 + 오른쪽 내용 (좁으면 목록이 위로). 도우미 = 위 진행 표시 + 카드 + 아래 이전/다음 */
+.pane.set-pane, .pane.setup-pane { max-width: 1280px; }
+.set-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; justify-content: space-between; }
+.set-head .sub { margin-bottom: 10px; }
+.set-tools { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.save-state { font-size: var(--fs-small); color: var(--muted); padding: 3px 10px; border-radius: 999px; background: var(--surface-2); white-space: nowrap; }
+.save-state.ok { color: var(--ok); background: var(--ok-soft); }
+.save-state.busy { color: var(--accent); background: var(--accent-soft); }
+.save-state.err { color: var(--danger); background: var(--danger-soft); font-weight: 700; }
+.set-searchrow { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.set-search { flex: 0 1 420px; min-width: 0; padding: 7px 12px; font-size: 1em; }
+.set-layout { display: grid; grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.set-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 2px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; }
+.set-nav button { display: flex; gap: 10px; align-items: center; text-align: left; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); cursor: pointer; font: inherit; }
+.set-nav button:hover { background: var(--surface-2); }
+.set-nav button.on { background: var(--accent-soft); color: var(--accent); }
+.set-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.set-ico { width: 1.6em; text-align: center; flex: none; }
+.set-nt { display: flex; flex-direction: column; min-width: 0; }
+.set-ns { font-size: var(--fs-small); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-main { min-width: 0; }
+.set-sec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px 6px; margin-bottom: 14px; }
+.set-sec[hidden], .set-item[hidden] { display: none; }
+.set-sec > h2 { margin: 0 0 2px; font-size: 1.15em; }
+.set-desc { color: var(--muted); margin: 0 0 14px; }
+.set-item { margin-bottom: 4px; }
+.set-item .field, .set-item label.check { margin-bottom: 8px; }
+.set-item label.check > .hint { flex-basis: 100%; padding-left: 1.7em; }
+.set-sec select, .setup-card select { max-width: 460px; }
+.set-sec .grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.set-item.bad input { border-color: var(--danger); }
+.set-err { color: var(--danger); font-size: var(--fs-small); font-weight: 600; margin: -4px 0 8px; }
+.set-err:empty { display: none; }
+.set-good { color: var(--ok); font-weight: 700; }
+.set-bad { color: var(--danger); }
+.set-badge { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: var(--fs-small); font-weight: 600; vertical-align: middle; }
+.set-code { font-size: 1.3em; font-weight: 800; user-select: all; }
+.set-steps { margin: 0 0 12px; padding-left: 1.3em; }
+.set-menus { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0 12px; margin-bottom: 10px; }
+.set-adv { border-top: 1px dashed var(--line-strong); margin: 8px 0 10px; padding-top: 8px; }
+.set-adv > summary { cursor: pointer; color: var(--muted); font-weight: 600; padding: 4px 0; }
+.set-adv[open] > summary { margin-bottom: 10px; }
+.searching .set-sec { padding-bottom: 6px; }
+@media (max-width: 900px) {
+    .set-layout { grid-template-columns: minmax(0, 1fr); }
+    .set-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+    .set-nav button { width: auto; }
+    .set-ns { display: none; }
+}
+/* 설정 도우미 */
+.setup-progress { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 4px 0 14px; counter-reset: none; }
+.setup-progress li button { display: flex; gap: 6px; align-items: center; padding: 6px 12px 6px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; font: inherit; }
+.setup-progress li .n { display: inline-grid; place-items: center; width: 1.7em; height: 1.7em; border-radius: 50%; background: var(--surface-2); font-weight: 700; font-size: .9em; }
+.setup-progress li .opt { font-size: var(--fs-small); color: var(--muted); }
+.setup-progress li.filled .n { background: var(--ok-soft); color: var(--ok); }
+.setup-progress li.on button { border-color: var(--accent); color: var(--accent); font-weight: 700; background: var(--accent-soft); }
+.setup-progress li.on .n { background: var(--accent); color: var(--accent-ink); }
+.setup-card { padding: 20px 24px 10px; }
+.setup-card h2 { margin: 0 0 4px; }
+.setup-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.setup-cards .card { margin: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.setup-cards .card p { flex: 1; margin: 0; }
+.setup-foot { display: flex; gap: 10px; align-items: center; margin-top: 14px; position: sticky; bottom: 0; background: var(--bg); padding: 10px 0; }
+.setup-foot .grow { flex: 1; }
+.setup-summary { list-style: none; padding: 0; margin: 0 0 12px; }
+.setup-summary li { display: grid; grid-template-columns: 1.6em 12em minmax(0, 1fr) auto; gap: 10px; align-items: center; justify-items: start; text-align: left; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.setup-summary li > .btn { justify-self: end; }
+.setup-summary li .mark { font-weight: 800; text-align: center; }
+.setup-summary li.ok .mark { color: var(--ok); }
+.setup-summary li.empty .mark { color: var(--muted); }
+.setup-toast .btn { margin-left: 6px; background: var(--surface); color: var(--ink); border-color: var(--surface); }

@@ -15,6 +15,7 @@ import './views/neisfill.js';
 import './views/search.js';
 import './views/ai.js';
 import { openSettings } from './views/settings.js';
+import { maybeStartSetup } from './views/setup.js';
 import { api } from './api.js';
 import { startUpdate } from './update.js';
 
@@ -22,7 +23,7 @@ orderViews(['today', 'week', 'inbox', 'calendar', 'timetable', 'attendance', 'se
 
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
-statusItem('telegram', { title: '텔레그램 설정', onclick: () => { showView('settings'); openSettings(); } });
+statusItem('telegram', { title: '텔레그램 설정', onclick: () => { showView('settings'); openSettings('telegram'); } });
 statusItem('update', { title: '새 버전이 있습니다. 누르면 업데이트합니다', onclick: startUpdate });
 statusItem('new', { title: '새로 받은 자료', onclick: () => showView('inbox') });
 statusItem('log', { right: true, title: '수집·오류 기록 보기/숨기기', onclick: () => setLayout({ bottomVisible: !getLayout().bottomVisible }) });
@@ -95,9 +96,8 @@ guarded(async () => {
     await Promise.all([loadStudents(), initPasses(), initAbsences(), initInbox(), initCalendar(), initTimetable()]);
     if (!silentPrintId) showPrintRequests(s);
     showView('today');
-    if (!s.settings.school_name && !s.settings.edufine_folder && !s.settings.coolmessenger_name && !s.settings.coolmessenger_path) {
-        toast('처음 오셨네요. ⚙ 설정에서 학교·학급과 수집 폴더를 입력하세요.', 'info', 8000);
-    }
+    // 첫 실행이면 설정 도우미를 열고, 이미 설정해 쓰던 선생님께는 한 번만 안내 (0.5.79)
+    if (!silentPrintId) guarded(() => maybeStartSetup(s.settings))();
     pollLogs();
     if (silentPrintId && /^\d+$/.test(silentPrintId)) {
         window.addEventListener('afterprint', () => {

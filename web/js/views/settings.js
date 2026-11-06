@@ -1,58 +1,21 @@
-// ⚙ 설정: 학교·학급, 수집 폴더·시각, 텔레그램, 공유 페이지
+// ⚙ 설정 (0.5.79 개편): 왼쪽 묶음 목록 + 오른쪽 내용, 검색 칸, 항목마다 한 줄 설명, 고급은 접기.
+// 칸은 고치면 바로 저장되고(저장 상태는 위에 표시), 잘못된 값은 칸 아래에 바로 안내합니다.
+// 설정 키 이름·config.json 형식은 예전 그대로입니다 (새 키는 설정 도우미 상태 setup_wizard 하나).
 import { api } from '../api.js';
 import { el, clear, toast, guarded, download } from '../ui.js';
 import { registerView, openTab, findTab, on, toggleLayoutMode, menuList, setMenuOn } from '../shell.js';
-import { store, loadState, saveSettings } from '../store.js';
+import { store, loadState } from '../store.js';
 import { openAI } from './ai.js';
 import { checkUpdate, startUpdate } from '../update.js';
-
-function textField(key, label, hint, attrs = {}) {
-    const input = el('input', { type: 'text', value: store.settings[key] ?? '', ...attrs });
-    input.dataset.key = key;
-    return el('label.field', el('span', label), input, hint && el('span.hint', hint));
-}
-
-// 경로 칸 + 📂 찾아보기 (윈도우 찾아보기 창으로 고르면 칸에 채워짐)
-function pathField(key, label, hint, purpose, placeholder = '') {
-    const input = el('input', { type: 'text', value: store.settings[key] ?? '', placeholder, style: 'flex: 1' });
-    input.dataset.key = key;
-    const browse = el('button.btn.small', { type: 'button', onclick: guarded(async () => {
-        browse.disabled = true;
-        toast('찾아보기 창을 열었습니다. 작업 표시줄에서 창을 확인하세요.');
-        try {
-            const r = await api.post('/api/pick', { purpose });
-            if (r.path) {
-                input.value = r.path;
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        } finally {
-            browse.disabled = false;
-        }
-    }) }, '찾아보기');
-    return el('div.field', el('span', label), el('div.row', input, browse), hint && el('span.hint', hint));
-}
-
-// 켬/끔 칸 (저장할 때 collectForm 이 checked 를 읽음)
-function checkField(key, label, hint) {
-    const input = el('input', { type: 'checkbox', checked: !!store.settings[key] });
-    input.dataset.key = key;
-    return el('label.check', input, label, hint && el('span.hint', hint));
-}
-
-function section(title, ...children) {
-    return el('section.card', { style: 'margin-bottom: 16px' }, el('h3', title), children);
-}
-
-// 접어 두는 설정 묶음 (0.5.58 간소화): 제목 옆에 지금 상태 한 줄, 연 묶음은 기억
-const OPEN_KEY = 'desk.settings.open';
-const openGroups = (() => { try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')); } catch { return new Set(); } })();
-function group(id, title, status, ...children) {
-    const d = el('details.card.set-group', { open: openGroups.has(id), ontoggle: () => {
-        if (d.open) openGroups.add(id); else openGroups.delete(id);
-        try { localStorage.setItem(OPEN_KEY, JSON.stringify([...openGroups])); } catch { /* 저장 못 해도 괜찮음 */ }
-    } }, el('summary', el('b', title), status && el('span.set-status', status)), el('div.set-body', children));
-    return d;
-}
+import { openTimetable } from './timetable.js';
+import { openSchoolCal } from './schoolcal.js';
+import { openRoster } from './passes.js';
+import { openSetup } from './setup.js';
+import {
+    item, textField, pathField, checkField, selectField, secretField, autoSave, saveStateBox,
+    coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, TELEGRAM_STEPS,
+} from './setfields.js';
+import { matches } from '../setup-rules.js';
 
 function aiSetup(pane) {
     const result = el('div');
@@ -122,38 +85,6 @@ function aiSetup(pane) {
     return el('div', el('p.small', '다운로드할 때만 인터넷을 사용합니다. 학교 자료는 이 PC의 AI로만 보냅니다. 기존 AI 설정은 마지막 [적용] 전까지 바꾸지 않습니다.'), check, result);
 }
 
-function fieldValue(input) {
-    if (input.type === 'checkbox') return input.checked;
-    if (input.dataset.key === 'collect_times') return input.value.split(',').map(t => t.trim()).filter(Boolean);
-    return input.value;
-}
-
-function collectForm(pane) {
-    const out = {};
-    for (const input of pane.querySelectorAll('[data-key]')) out[input.dataset.key] = fieldValue(input);
-    return out;
-}
-
-// 칸을 고치고 다른 곳을 누르면(또는 Enter) 그 칸만 바로 저장 — [설정 저장] 을 잊어도 남게 (사용자 지적: 저장 안 됨)
-function autoSave(pane) {
-    if (pane.dataset.autosave) return;   // 다시 그려도 같은 pane 이라 한 번만
-    pane.dataset.autosave = '1';
-    pane.addEventListener('change', guarded(async ev => {
-        const input = ev.target.closest?.('[data-key]');
-        if (!input || !pane.contains(input)) return;
-        const key = input.dataset.key;
-        const label = input.closest('.field, .check')?.querySelector('span')?.textContent || '설정';
-        try {
-            await saveSettings({ [key]: fieldValue(input) });
-        } finally {
-            delete pane.dataset.dirty;
-        }
-        loadState();
-        toast(`${label} 저장됨`, 'info', 1800);
-    }));
-    pane.addEventListener('input', () => { pane.dataset.dirty = '1'; });
-}
-
 // 업데이트: 지금 버전·배포된 최신 버전·[새 버전 확인]·[지금 업데이트] (프로그램을 따로 끌 필요 없음)
 function updateBox(st) {
     const box = el('div');
@@ -206,258 +137,272 @@ function captureBox() {
     return box;
 }
 
-function renderSettings(pane, tab) {
-    const s = store.settings;
-    const st = store.state || {};
-    const tg = st.telegram || {};
-    const detail = el('select', { dataset: { key: 'telegram_detail' } },
-        [['counts', '개수만 (가장 안전)'], ['titles', '제목까지 (기본)'], ['summary', '요약까지']]
-            .map(([v, l]) => el('option', { value: v, selected: s.telegram_detail === v }, l)));
-    const neisKey = el('input', { type: 'password', placeholder: s.neis_key_set ? '설정됨 (바꿀 때만 입력)' : 'open.neis.go.kr 에서 받은 인증키', autocomplete: 'off' });
-    const token = el('input', { type: 'password', placeholder: s.telegram_token_set ? '설정됨 (바꿀 때만 입력)' : 'BotFather 가 준 토큰', autocomplete: 'off' });
-    const diagBox = el('div');
-    const coolDiagBox = el('div');
-    const aiBox = el('div');
-    const aiCheck = guarded(async () => {
-        clear(aiBox, el('p.small.muted', '확인 중…'));
-        try {
-            const base = pane.querySelector('[data-key="ai_base"]').value;
-            const r = await api.post('/api/ai/check', { base });
-            clear(aiBox, el('p', { style: 'color: var(--ok); font-weight: 700' }, 'LM Studio 연결됨'),
-                el('p.small', `불러온 모델: ${r.models.join(', ')}`),
-                el('p.small.muted', '모델 이름 칸을 비워 두면 첫 모델을 씁니다.'),
-                r.ttl_unsupported && el('p.small', { style: 'color: var(--danger)' }, '이 서버는 자동 해제(ttl)를 지원하지 않아 모델이 메모리에 계속 남습니다. LM Studio를 최신 버전으로 올리면 해결될 수 있습니다.'));
-        } catch (e) {
-            clear(aiBox, el('p', { style: 'color: var(--danger)' }, e.message));
-        }
-    });
-    const coolBox = el('div');
-    const coolList = el('datalist#cool-names');
-    const coolPathField = pathField('coolmessenger_path', '(선택) 쪽지 파일 직접 지정',
-        '쿨메신저를 다른 곳에 설치했거나 이름으로 찾지 못할 때 .udb 파일을 직접 고르세요. 지정하면 이름보다 우선합니다.',
-        'cool', '예: D:\\CoolMessenger\\Memo\\홍길동.udb');
-    const coolPath = coolPathField.querySelector('input');
-    const coolName = el('input', { type: 'text', value: s.coolmessenger_name || '', placeholder: '쿨메신저에 로그인하는 이름 (예: 홍길동)',
-        list: 'cool-names', dataset: { key: 'coolmessenger_name' } });
-    // 이 PC 의 쿨메신저 Memo 폴더에서 찾은 이름을 보기로 보여 줌
-    guarded(async () => {
-        const r = await api.get('/api/cool');
-        clear(coolList, r.names.map(n => el('option', { value: n })));
-        coolBox.dataset.dir = r.dir;
-        if (!coolBox.childElementCount) {
-            clear(coolBox, el('p.small.muted', r.names.length
-                ? `이 PC 에서 찾은 이름: ${r.names.join(', ')}`
-                : `쿨메신저 쪽지 폴더를 찾지 못했습니다: ${r.dir}`));
-        }
-    })();
-    const coolCheck = guarded(async () => {
-        clear(coolBox, el('p.small.muted', '확인 중…'));
-        let r;
-        try {
-            r = await api.post('/api/cool/check', { name: coolName.value, path: coolPath.value });
-        } catch (e) {
-            clear(coolBox, el('p', { style: 'color: var(--danger)' }, e.message));
-            return;
-        }
-        const d = r.detected;
-        clear(coolBox,
-            el('p.small', `파일: ${r.path}`),
-            d ? el('div',
-                el('p', { style: 'color: var(--ok); font-weight: 700' }, `연결됨 — 쪽지 ${d.rows.toLocaleString()}개`),
-                el('p.small.muted', `읽는 곳: 표 ${d.table} · 내용 ${d.body}${d.title ? ' · 제목 ' + d.title : ''}${d.date ? ' · 날짜 ' + d.date : ' · 날짜 열 없음'}${d.sender ? ' · 보낸 사람 ' + d.sender : ''}`),
-                r.sender_check && el('p.small', r.sender_check.me
-                    ? (r.sender_check.mine
-                        ? `내가 보낸 쪽지: 최근 ${r.sender_check.checked}개 중 ${r.sender_check.mine}개 (보낸 사람 열 ${r.sender_check.column} 에서 내 이름과 같은 것). 앞으로 이런 쪽지는 '쿨메신저 보냄' 으로 따로 모읍니다.`
-                        : `보낸 사람 열(${r.sender_check.column})에서 내 이름과 같은 쪽지를 찾지 못했습니다 (서로 다른 보낸 사람 ${r.sender_check.kinds}명). 이 열에 이름이 아닌 번호가 들어 있을 수 있으니 아래 '파일 구조' 를 개발 담당에게 보내 주세요.`)
-                    : '위의 쿨메신저 이름을 입력해야 내가 보낸 쪽지를 구분합니다.'),
-                r.images && Object.keys(r.images.kinds).length
-                    ? el('p.small.muted', `최근 쪽지의 사진: ${Object.entries(r.images.kinds).map(([k, n]) => `${k} ${n}장`).join(', ')}${r.images.hosts.length ? ' (' + r.images.hosts.join(', ') + ')' : ''}`)
-                    : el('p.small.muted', '최근 쪽지 200개에서 사진을 찾지 못했습니다.'),
-                el('p.small', '최근 쪽지:'),
-                el('ul.small', r.recent.map(m => el('li', `${m.when || ''} ${m.sender ? '[' + m.sender + '] ' : ''}${m.title}`))),
-                el('p.small.muted', '맞으면 아래 "설정 저장"을 누르세요. 처음 수집 때 최근 30일 쪽지를 가져옵니다.'))
-              : el('p', { style: 'color: var(--danger)' }, '쪽지 표를 찾지 못했습니다. 아래 구조를 복사해 개발 담당에게 보내 주세요.'),
-            el('details', el('summary.small', '파일 구조 (내용 없음)'),
-                el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r.tables, null, 2)); toast('구조를 복사했습니다'); }) }, '복사'),
-                el('pre.text', JSON.stringify(r.tables, null, 2))));
-    });
+// 고급 항목 접기 (보통은 그대로 두는 칸)
+function advanced(...children) {
+    return el('details.set-adv', el('summary', '고급 — 보통은 그대로 두세요'), el('div', children));
+}
 
-    const save = guarded(async () => {
-        const change = collectForm(pane);
-        if (token.value.trim()) change.telegram_token = token.value.trim();
-        if (neisKey.value.trim()) change.neis_key = neisKey.value.trim();
-        await saveSettings(change);
-        delete pane.dataset.dirty;
-        await loadState();
-        toast('설정을 저장했습니다');
-        tab.rerender();
-    });
-    const tgAction = action => guarded(async () => {
-        await api.post('/api/telegram', { action });
-        await loadState();
-        if (action === 'test') toast('시험 알림을 보냈습니다');
-        tab.rerender();
-    });
-    const diagnose = (source, box = diagBox) => guarded(async () => {
-        const key = source === 'edufine' ? 'edufine_folder' : 'coolmessenger_folder';
-        const folder = pane.querySelector(`[data-key="${key}"]`)?.value || '';
-        const r = await api.get(`/api/diagnose?source=${source}&folder=${encodeURIComponent(folder)}`);
-        if (r.error) return clear(box, el('p', { style: 'color: var(--danger)' }, r.error));
-        clear(box,
-            el('p', { style: 'font-weight: 700' }, `${r.folder}: 파일 ${r.total}개 (읽는 형식 ${r.supported}개)`),
-            r.cloud_only
-                ? el('div',
-                    el('p', { style: 'color: var(--ok)' }, `이 PC 에 있는 공문 파일 ${r.local_supported ?? 0}개는 그대로 읽습니다. 새로 저장하는 공문도 읽습니다.`),
-                    el('p', { style: 'color: var(--danger)' }, `나머지 ${r.cloud_only}개는 ${r.cloud_hint}`),
-                    el('p.small.muted', '읽을 수 없는 파일은 한 번 기록해 두고 다시 시도하지 않으므로 업무 데스크가 느려지지는 않습니다.'))
-                : el('p.small', { style: 'color: var(--ok)' }, '모든 파일이 이 PC 에 있습니다.'),
-            !r.saved ? el('p.small', { style: 'color: var(--warn)' }, '아직 저장하지 않은 경로입니다. 아래 💾 설정 저장을 눌러야 이 폴더를 수집합니다.') : '',
-            el('details', el('summary.small', '자세한 결과 (개발 담당용)'),
-            el('p.small', '아래 결과에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 쿨메신저 전용 읽기 기능을 만들 때 이 결과를 Claude Code 에게 전달하세요.'),
-            el('button.btn.small', { onclick: guarded(async () => { await navigator.clipboard.writeText(JSON.stringify(r, null, 2)); toast('진단 결과를 복사했습니다'); }) }, '결과 복사'),
-            el('pre.text', JSON.stringify(r, null, 2))));
-    });
+const onOff = v => (v ? '켜짐' : '꺼짐');
 
-    const onOff = v => (v ? '켜짐' : '꺼짐');
-    pane.append(
-        el('h1', '설정'),
-        el('p.sub', `업무 데스크 ${st.version || ''} · 모든 자료는 이 PC 의 teacher-desk/data 폴더에만 저장됩니다.`),
-        // ---- 기본: 이것만 채우면 바로 씀
-        section('기본 설정 — 이것만 채우면 됩니다',
+// 설정 묶음: 왼쪽 목록에 이름·지금 상태, 오른쪽에 내용
+const GROUPS = [
+    {
+        id: 'general', icon: '🏫', title: '일반', desc: '학교·학급·담임 이름, 창 열기 방식, 사용할 메뉴',
+        status: s => (s.school_name ? `${s.school_name}${s.grade && s.class_no ? ` ${s.grade}-${s.class_no}` : ''}` : '학교 정보 없음'),
+        build: () => [
             el('div.grid2',
-                textField('school_name', '학교 이름', null, { placeholder: '예: ○○고등학교' }),
-                textField('teacher_name', '담임 이름'),
-                textField('grade', '학년', null, { placeholder: '2' }),
-                textField('class_no', '반', null, { placeholder: '3' })),
-            el('p.small.muted', { style: 'margin: -4px 0 12px' }, '학교·학급·담임 이름은 조퇴증·외출증·결석계에 인쇄됩니다.'),
-            el('label.field', el('span', '쿨메신저 이름'), coolName, coolList,
-                el('span.hint', '쿨메신저에 로그인하는 이름. 쪽지 기록 파일은 자동으로 찾습니다.')),
-            el('div.row', el('button.btn.small', { onclick: coolCheck }, '연결 확인')),
-            coolBox,
-            pathField('edufine_folder', '에듀파인 공문 저장 폴더', '에듀파인에서 공문(한글·PDF)을 저장하는 폴더. 저장하면 날짜·마감을 저절로 찾습니다.', 'edufine', '예: C:\\Users\\선생님\\Documents\\공문'),
-            el('div.row', el('button.btn.small', { onclick: diagnose('edufine') }, '폴더 확인')),
-            diagBox),
-        el('p.small.muted', { style: 'margin: 4px 2px 8px' }, '아래는 필요할 때만 펼쳐서 설정하세요.'),
-        // ---- 필요할 때만
-        group('telegram', '📱 텔레그램 (폰으로 알림·명령)', tg.linked ? '연결됨' : s.telegram_token_set ? '연결 코드 대기' : '사용 안 함',
-            el('ol.small', { style: 'margin: 0 0 12px; padding-left: 1.2em' },
-                el('li', '텔레그램에서 @BotFather 를 찾아 /newbot 으로 봇을 만들고 토큰을 받습니다.'),
-                el('li', '아래에 토큰을 넣고 저장합니다.'),
-                el('li', '만든 봇에게 연결 코드를 보내면 선생님 계정만 연결됩니다.')),
-            el('label.field', el('span', '봇 토큰'), token),
-            el('p', '상태: ', el('b', tg.status || '-'), tg.last_poll ? ` · 마지막 확인 ${tg.last_poll}` : '', tg.linked && s.telegram_token_set && tg.alive === false ? ' · ⚠ 수신이 멈춤 (앱을 다시 켜 보세요)' : '',
-                tg.linked ? ' · ✅ 연결됨' : (s.telegram_token_set ? ` · 봇에게 보낼 연결 코드: ` : ''),
-                !tg.linked && s.telegram_token_set ? el('code', { style: 'font-size: 1.3em; font-weight: 800' }, `/start ${tg.pair_code}`) : null),
-            tg.last_error ? el('p.small.muted', `최근 오류: ${tg.last_error}`) : null,
-            el('label.field', el('span', '수집 알림에 담을 내용'), detail,
-                el('span.hint', '새 자료가 들어왔을 때 저절로 보내는 알림의 내용입니다. 공문 내용이 텔레그램 서버를 거치는 것이 걱정되면 "개수만"을 고르세요.')),
-            checkField('telegram_photos', '쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보내기',
-                '새 쪽지에 든 사진(쪽지 안 그림·이 PC 의 사진 파일)을 한 번에 10장까지 텔레그램으로 보냅니다. 사진 속 내용은 가릴 수 없어서 학생 정보가 든 사진이 걱정되면 끄세요. 인터넷 주소 사진은 보내지 않습니다.'),
-            checkField('telegram_cool_text', '쿨메신저 쪽지의 원문도 텔레그램으로 보내기',
-                '새 쪽지의 원문 글을 그대로 텔레그램으로 보냅니다 (한 번에 최대 5건). 원문 안의 이름·내용도 그대로 나갑니다. 끄면 제목·요약만 보냅니다.'),
-            el('details.tg-help.small', el('summary', '봇에게 보낼 수 있는 말'),
-                el('ul',
-                    el('li', '브리핑 — 오늘 일정·마감 + AI 요약'),
-                    el('li', '그냥 묻기 — "다음 주 연수 언제야?" 처럼. 맞는 자료를 찾아 이 PC 의 AI(LM Studio)가 읽고 답합니다 (AI 를 안 켜면 찾은 자료만)'),
-                    el('li', '검색 낱말 — 제목·요약과 [원문]·[파일] 단추. 원문·원본 파일은 단추를 누르거나 "원문 2"·"파일 2" 를 보낼 때만 갑니다'),
-                    el('li', '조퇴 7 13:30 · 외출 7 13:30 14:30 · "7번 조퇴 1시 반" — 번호로 발급, 사유는 단추로. 답장에는 이름을 "김○○" 로만 쓰고 사유는 쓰지 않습니다. 인쇄는 이 PC 에서'),
-                    el('li', '오늘 · 마감 · 새로고침 · 요약 · 도움말'))),
-            el('div.row',
-                tg.linked && el('button.btn.small', { onclick: tgAction('test') }, '시험 알림'),
-                tg.linked && el('button.btn.small.danger', { onclick: tgAction('unpair') }, '연결 끊기'),
-                !tg.linked && s.telegram_token_set && el('button.btn.small', { onclick: tgAction('renew') }, '코드 새로 만들기'))),
-        group('ai', '🤖 AI 요약 (이 PC 의 LM Studio)', s.ai_enabled ? `켜짐 · 새 항목 자동 요약 ${onOff(s.ai_auto_item !== false)}` : '꺼짐',
-            aiSetup(pane),
-            el('p.small', '브리핑 요약과 수신함 항목 요약을 이 PC 의 LM Studio 로 만듭니다. 쪽지·공문이 PC 밖으로 나가지 않습니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).'),
-            el('p.small', '메모리 절약: 필요할 때 불러온 모델은 5분 동안 작업이 없으면 메모리에서 내리도록 요청합니다. 자동 요약은 그대로이며, 다음 요청은 모델을 다시 읽느라 조금 느릴 수 있습니다.'),
-            el('details.small', el('summary', '처음 한 번 필요한 LM Studio 설정'),
-                el('ol',
-                    el('li', 'LM Studio를 최신 버전으로 업데이트하고 Developer → Server Settings에서 Just-in-Time Model Loading(필요할 때 모델 불러오기)을 켜세요. 서버는 이 PC 전용으로 유지하세요.'),
-                    el('li', '이미 불러온 모델에는 새 해제 시간이 소급 적용되지 않을 수 있습니다. 진행 중인 AI 작업을 마친 뒤 LM Studio에서 해당 모델을 한 번 내리세요. 서버나 다른 모델은 종료할 필요가 없습니다.'),
-                    el('li', '설치 도우미를 썼다면 새 배치파일을 받아 실행한 뒤 [연결 확인 후 적용]을 눌러 모델 이름을 갱신하세요. 직접 설정했다면 임시 별명이 아닌 다운로드한 모델의 고정 이름을 사용하세요.'),
-                    el('li', '다른 프로그램이 계속 AI를 사용하거나 자동 요약할 자료가 남아 있으면 메모리에서 내려가지 않을 수 있습니다.'))),
-            checkField('ai_enabled', 'AI 요약 쓰기'),
-            checkField('ai_auto_item', '새 수신 항목을 자동으로 AI 요약 (권장)',
-                '최근 7일 안에 받은 쪽지·공문을 뒤에서 한 건씩 요약합니다 (한 건에 20~30초). 끄면 [AI 로 요약하기]를 눌렀을 때만.'),
-            el('div.row', el('button.btn.small', { onclick: aiCheck }, '연결 확인')),
-            aiBox,
-            el('details.small', el('summary', '더 자세히 (주소·모델·보내는 양·일반 질문 AI)'),
-                el('ol', { style: 'margin: 8px 0 12px; padding-left: 1.2em' },
-                    el('li', 'LM Studio 에서 한국어가 되는 모델을 받아 불러옵니다 (예: Qwen3 8B, Gemma 3 12B, EXAONE 3.5 7.8B).'),
-                    el('li', 'LM Studio 왼쪽 Developer(개발자) 화면에서 "Start Server" 를 켭니다.'),
-                    el('li', '위 [연결 확인] → AI 요약 쓰기 체크.')),
-                textField('ai_base', 'LM Studio 서버 주소', '기본 http://127.0.0.1:1234/v1'),
-                textField('ai_model', '(선택) 모델 이름', '다운로드한 모델의 고정 이름. 비워 두면 첫 대화 모델 (자동 불러오기 필요)'),
-                el('label.field', el('span', '보내는 양'),
-                    el('select', { dataset: { key: 'ai_input_size' } },
-                        [['normal', '보통 — 최대 14,000자 (더 꼼꼼, 4~5분)'], ['short', '짧게 — 최대 6,000자 (빠름, 2분 안팎)']]
-                            .map(([v, l]) => el('option', { value: v, selected: (s.ai_input_size || 'normal') === v }, l))),
-                    el('span.hint', '오래 걸리면 "짧게"를 고르세요.')),
-                el('p', '일반 질문(공개 자료만)은 로컬·브라우저 내장·외부 API 중에서 고를 수 있습니다. 업무자료는 언제나 이 PC 의 AI 로만 처리합니다.'),
-                el('button.btn.small', { onclick: openAI }, 'AI 선택·일반 질문 열기'))),
-        group('capture', '🌐 에듀파인·나이스 화면 보내기 (브라우저 단축키)', s.capture_key_set ? '켜짐' : '꺼짐', captureBox()),
-        group('neis', '📅 나이스 학사일정', s.neis_school?.name ? `학교: ${s.neis_school.name}` : (s.neis_key_set ? '인증키 있음' : '인증키 없음'),
-            el('p.small', '달력 → 📥 학사일정 → 🏫 나이스 에서 학교를 골라 학사일정을 가져올 때 씁니다. 인증키는 교육정보 개방 포털(open.neis.go.kr)에 가입하면 무료로 받습니다.'),
-            el('label.field', el('span', '나이스 인증키'), neisKey)),
-        group('update', '⬆ 업데이트', `${st.version || ''} · 켤 때 확인 ${onOff(s.auto_update)}`,
-            checkField('auto_update', '켤 때 새 버전 확인',
-                '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로). 없으면 바로 켜집니다.'),
-            updateBox(st)),
-        group('menus', '🧩 사용할 메뉴 (끈 메뉴는 왼쪽 막대에서 숨김)', `${menuList().filter(m => m.on).length}개 켜짐`,
-            el('p.small.muted', '쓰지 않는 메뉴는 끄세요. 설정 메뉴는 항상 보입니다. 다시 켜면 그대로 나옵니다.'),
-            menuList().map(m => el('label.field.menu-toggle',
-                el('input', { type: 'checkbox', checked: m.on, disabled: m.id === 'settings',
-                    onchange: e => setMenuOn(m.id, e.target.checked) }),
-                el('span', m.label)))),
-        group('advanced', '🔧 고급', '대부분 그대로 두면 됩니다',
+                textField('school_name', '학교 이름', '조퇴증·외출증·결석계에 인쇄됩니다.', { placeholder: '예: ○○고등학교' }),
+                textField('teacher_name', '담임 이름', '증 인쇄와 시간표에서 내 수업을 찾을 때 씁니다.'),
+                textField('grade', '학년', '숫자만 (예: 2)', { placeholder: '예: 2', inputmode: 'numeric' }),
+                textField('class_no', '반', '숫자만 (예: 3)', { placeholder: '예: 3', inputmode: 'numeric' })),
             checkField('app_window', '전용 창으로 열기 (권장)',
-                '주소창 없는 전용 창으로 엽니다. 다른 브라우저 창을 닫아도 같이 닫히지 않습니다. 끄면 기본 브라우저의 새 탭. 다음에 켤 때부터 적용.'),
+                '주소창 없는 전용 창으로 엽니다. 끄면 기본 브라우저의 새 탭. 다음에 켤 때부터 적용.'),
+            item('사용할 메뉴 왼쪽 막대 숨기기',
+                el('div.field', el('span', '사용할 메뉴'),
+                    el('span.hint', '쓰지 않는 메뉴는 끄면 왼쪽 막대에서 숨겨집니다. 설정 메뉴는 항상 보입니다.')),
+                el('div.set-menus', menuList().map(m => el('label.check',
+                    el('input', { type: 'checkbox', checked: m.on, disabled: m.id === 'settings',
+                        onchange: e => { setMenuOn(m.id, e.target.checked); toast(`${m.label} 메뉴 ${e.target.checked ? '켬' : '끔'}`, 'info', 1500); } }),
+                    el('span', m.label))))),
+        ],
+    },
+    {
+        id: 'collect', icon: '📥', title: '수집', desc: '쿨메신저 쪽지·에듀파인 공문을 읽어 오는 곳',
+        status: s => [(s.coolmessenger_name || s.coolmessenger_path) && '쿨메신저', s.edufine_folder && '에듀파인'].filter(Boolean).join('·') || '수집할 곳 없음',
+        build: st => [
+            coolConnect(),
+            pathField('edufine_folder', '에듀파인 공문 저장 폴더',
+                '에듀파인에서 공문(한글·PDF)을 저장하는 폴더. 새 공문이 생기면 날짜·마감을 저절로 찾습니다.',
+                'edufine', '예: C:\\Users\\선생님\\Documents\\공문', folderCheck('edufine')),
             checkField('watch_enabled', '실시간 감시 (권장)',
                 '쿨메신저 쪽지 파일과 공문 폴더가 바뀌면 바로 읽습니다. PC 에 부담이 거의 없습니다.'),
-            el('label.field', el('span', '수집 시각'),
-                el('input', { type: 'text', value: (s.collect_times || []).join(', '), dataset: { key: 'collect_times' } }),
-                el('span.hint', '쉼표로 구분. 예: 09:00, 12:00, 15:00 — 실시간 감시를 켜 두면 거의 필요 없습니다.')),
-            coolPathField,
-            pathField('coolmessenger_folder', '(선택) 쿨메신저 받은 파일 폴더', '쿨메신저로 받은 한글·PDF 파일이 저장되는 폴더. 비워 두면 쪽지만 읽습니다.', 'coolfolder'),
-            el('div.row', el('button.btn.small', { onclick: diagnose('cool', coolDiagBox) }, '폴더 확인')),
-            coolDiagBox,
-            el('p.small.muted', `PDF 읽기: ${st.pdf_ready ? '준비됨' : '꺼짐 — 명령 프롬프트에서  pip install pypdf  실행 후 다시 시작'}`),
-            textField('pass_page_url', '학생 공유 페이지 주소', '조퇴증·외출증 QR 이 가리키는 주소 (보통 바꿀 필요 없음)'),
-            el('div.row',
-                el('button.btn.small', { onclick: toggleLayoutMode }, '화면 배치 모드 열기'),
-                el('button.btn.small', { onclick: guarded(async () => {
-                    if (!window.confirm('업무 데스크를 종료할까요? 자동 수집·텔레그램·수업 알림도 멈춥니다.')) return;
-                    await api.post('/api/shutdown', {});
-                    toast('업무 데스크를 종료했습니다. 다시 쓰려면 start-desk.bat을 실행하세요.');
-                }) }, '프로그램 종료')),
-            el('p.small.muted', '브라우저를 닫아도 수집·텔레그램은 백그라운드에서 계속 동작합니다. 완전히 끄려면 [프로그램 종료].')),
-        el('div.row', { style: 'position: sticky; bottom: 0; background: var(--surface); padding: 10px 0' },
-            el('button.btn.primary', { onclick: save }, '설정 저장'),
-            el('span.small.muted', '칸을 고치면 바로 저장됩니다. 텔레그램 토큰·나이스 인증키는 이 단추로 저장하세요.')));
+            advanced(
+                textField('collect_times', '하루 수집 시각',
+                    '쉼표로 구분 (예: 09:00, 12:00, 15:00). 실시간 감시를 켜 두면 거의 필요 없습니다.',
+                    { value: (store.settings.collect_times || []).join(', ') }),
+                pathField('coolmessenger_path', '쪽지 파일 직접 지정',
+                    '이름으로 쪽지 파일을 찾지 못할 때만 .udb 파일을 고르세요. 지정하면 이름보다 우선합니다.',
+                    'cool', '예: D:\\CoolMessenger\\Memo\\홍길동.udb'),
+                pathField('coolmessenger_folder', '쿨메신저 받은 파일 폴더',
+                    '쿨메신저로 받은 한글·PDF 파일이 저장되는 폴더. 비워 두면 쪽지만 읽습니다.', 'coolfolder', '', folderCheck('cool')),
+                item('PDF 읽기 pypdf', el('p.small.muted', `PDF 읽기: ${st.pdf_ready ? '준비됨' : '꺼짐 — 명령 프롬프트에서  pip install pypdf  실행 후 다시 시작'}`))),
+        ],
+    },
+    {
+        id: 'schedule', icon: '📅', title: '일정·시간표', desc: '시간표 엑셀, 학사일정(파일·나이스)',
+        status: s => (s.neis_school?.name ? `나이스: ${s.neis_school.name}` : (s.neis_key_set ? '나이스 인증키 있음' : '파일로 불러오기')),
+        build: () => [
+            item('시간표 엑셀 불러오기 내 수업 수업 알림',
+                el('div.field', el('span', '시간표'),
+                    el('span.hint', '학교 시간표 엑셀을 불러오면 브리핑에 오늘 수업이 나오고 시간표 교체·같이 비는 시간을 찾습니다.')),
+                el('div.row', el('button.btn.small', { type: 'button', onclick: openTimetable }, '시간표 화면 열기'))),
+            item('학사일정 가져오기 파일 나이스 휴업일 공휴일',
+                el('div.field', el('span', '학사일정'),
+                    el('span.hint', '학사일정 파일(엑셀·한글)이나 나이스에서 가져오면 달력·결석계 수업일 계산에 씁니다.')),
+                el('div.row', el('button.btn.small', { type: 'button', onclick: openSchoolCal }, '학사일정 가져오기'))),
+            secretField('neis_key', '나이스 인증키',
+                '나이스에서 학사일정을 가져올 때만 필요합니다. 교육정보 개방 포털(open.neis.go.kr)에 가입하면 무료로 받습니다.',
+                'open.neis.go.kr 에서 받은 인증키'),
+            item('나이스 학교', el('p.small.muted', store.settings.neis_school?.name
+                ? `고른 학교: ${store.settings.neis_school.name} (학사일정 가져오기 → 🏫 나이스 에서 바꿉니다)`
+                : '학교는 학사일정 가져오기 → 🏫 나이스 에서 고릅니다.')),
+        ],
+    },
+    {
+        id: 'attendance', icon: '☑', title: '출결', desc: '학생 명단, 조퇴증·외출증 공유 페이지',
+        status: () => `학생 ${store.state?.counts?.students ?? 0}명`,
+        build: st => [
+            item('학생 명단 붙여넣기 번호 이름 학부모 연락처',
+                el('div.field', el('span', '학생 명단'),
+                    el('span.hint', `지금 ${st.counts?.students ?? 0}명. 엑셀에서 번호·이름(·학부모 연락처)을 복사해 붙여 넣습니다. 명단은 이 PC 에만 저장됩니다.`)),
+                el('div.row', el('button.btn.small', { type: 'button', onclick: openRoster }, '학생 명단 열기'))),
+            advanced(textField('pass_page_url', '학생 공유 페이지 주소', '조퇴증·외출증 QR 이 가리키는 주소 (보통 바꿀 필요 없음)')),
+        ],
+    },
+    {
+        id: 'telegram', icon: '📱', title: '텔레그램', desc: '폰으로 알림 받고 명령 보내기 (선택)',
+        status: s => (store.state?.telegram?.linked ? '연결됨' : s.telegram_token_set ? '연결 코드 대기' : '사용 안 함'),
+        build: () => [
+            item('텔레그램 연결 방법 BotFather 봇 만들기', TELEGRAM_STEPS()),
+            secretField('telegram_token', '봇 토큰', '토큰은 이 PC 의 설정 파일에만 저장되고 화면에 다시 보이지 않습니다.', 'BotFather 가 준 토큰'),
+            item('텔레그램 상태 연결 코드 시험 알림 연결 끊기', telegramStatus()),
+            selectField('telegram_detail', '수집 알림에 담을 내용',
+                [['counts', '개수만 (가장 안전)'], ['titles', '제목까지 (기본)'], ['summary', '요약까지']],
+                '새 자료가 들어왔을 때 저절로 보내는 알림. 공문 내용이 텔레그램 서버를 거치는 것이 걱정되면 "개수만".', 'titles'),
+            checkField('telegram_photos', '쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보내기',
+                '새 쪽지의 사진을 한 번에 10장까지 보냅니다. 사진 속 내용은 가릴 수 없으니 학생 정보가 든 사진이 걱정되면 끄세요.'),
+            checkField('telegram_cool_text', '쿨메신저 쪽지의 원문도 텔레그램으로 보내기',
+                '새 쪽지의 원문을 그대로 보냅니다 (한 번에 최대 5건). 원문 안의 이름·내용도 그대로 나갑니다. 끄면 제목·요약만.'),
+            item('봇에게 보낼 수 있는 말 명령 도움말', el('details.tg-help.small', el('summary', '봇에게 보낼 수 있는 말'),
+                el('ul',
+                    el('li', '브리핑 — 오늘 일정·마감 + AI 요약'),
+                    el('li', '그냥 묻기 — "다음 주 연수 언제야?" 처럼. 맞는 자료를 찾아 이 PC 의 AI(LM Studio)가 읽고 답합니다'),
+                    el('li', '검색 낱말 — 제목·요약과 [원문]·[파일] 단추. 원문·원본 파일은 단추를 누르거나 "원문 2"·"파일 2" 를 보낼 때만 갑니다'),
+                    el('li', '조퇴 7 13:30 · 외출 7 13:30 14:30 — 번호로 발급, 사유는 단추로. 답장에는 이름을 "김○○" 로만 씁니다'),
+                    el('li', '메뉴 · 도움말 · 취소 · 상태')))),
+        ],
+    },
+    {
+        id: 'ai', icon: '🤖', title: 'AI', desc: '이 PC 의 LM Studio 로 브리핑·수신 항목 요약 (선택)',
+        status: s => (s.ai_enabled ? `켜짐 · 자동 요약 ${onOff(s.ai_auto_item !== false)}` : '꺼짐'),
+        build: (st, pane) => [
+            item('AI 개인정보 LM Studio 127.0.0.1', el('p.small', '쪽지·공문은 이 PC 의 LM Studio 로만 보냅니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).')),
+            checkField('ai_enabled', 'AI 요약 쓰기', '브리핑의 요약과 수신함 항목 요약을 만듭니다. LM Studio 서버가 켜져 있어야 합니다.'),
+            checkField('ai_auto_item', '새 수신 항목을 자동으로 AI 요약 (권장)',
+                '최근 7일 안에 받은 쪽지·공문을 뒤에서 한 건씩 요약합니다 (한 건에 20~30초). 끄면 [AI 로 요약하기]를 눌렀을 때만.'),
+            item('LM Studio 연결 확인', aiCheck()),
+            item('LM Studio 설치 도우미 PC 사양 모델 추천 배치파일',
+                el('details.set-adv', el('summary', 'LM Studio 설치 도우미 (PC 사양 확인·모델 추천)'), el('div', aiSetup(pane)))),
+            advanced(
+                textField('ai_base', 'LM Studio 서버 주소', '기본 http://127.0.0.1:1234/v1 — 이 PC 주소만 됩니다.'),
+                textField('ai_model', '모델 이름', '다운로드한 모델의 고정 이름. 비워 두면 첫 대화 모델'),
+                selectField('ai_input_size', '보내는 양',
+                    [['normal', '보통 — 최대 14,000자 (더 꼼꼼, 4~5분)'], ['short', '짧게 — 최대 6,000자 (빠름, 2분 안팎)']],
+                    '오래 걸리면 "짧게"를 고르세요.', 'normal'),
+                item('처음 한 번 필요한 LM Studio 설정 메모리 해제 JIT',
+                    el('details.small', el('summary', '처음 한 번 필요한 LM Studio 설정'),
+                        el('ol',
+                            el('li', 'LM Studio를 최신 버전으로 업데이트하고 Developer → Server Settings에서 Just-in-Time Model Loading(필요할 때 모델 불러오기)을 켜세요.'),
+                            el('li', '필요할 때 불러온 모델은 5분 동안 작업이 없으면 메모리에서 내립니다. 다음 요청은 조금 느릴 수 있습니다.'),
+                            el('li', '설치 도우미를 썼다면 [연결 확인 후 적용]을 눌러 모델 이름을 갱신하세요.')))),
+                item('일반 질문 AI 외부 API 브라우저 내장',
+                    el('p.small', '일반 질문(공개 자료만)은 로컬·브라우저 내장·외부 API 중에서 고를 수 있습니다. 업무자료는 언제나 이 PC 의 AI 로만 처리합니다.'),
+                    el('button.btn.small', { type: 'button', onclick: openAI }, 'AI 선택·일반 질문 열기'))),
+        ],
+    },
+    {
+        id: 'capture', icon: '🌐', title: '브라우저 연결', desc: '에듀파인·나이스 화면을 단축키로 보내기 (선택)',
+        status: s => (s.capture_key_set ? '켜짐' : '꺼짐'),
+        build: () => [item('에듀파인 나이스 화면 보내기 브라우저 단축키 확장 프로그램 연결 키', captureBox())],
+    },
+    {
+        id: 'update', icon: '🔧', title: '업데이트·고급', desc: '새 버전, 화면 배치, 프로그램 종료',
+        status: s => `${store.state?.version || ''} · 자동 업데이트 ${onOff(s.auto_update)}`,
+        build: st => [
+            checkField('auto_update', '켤 때 새 버전 확인',
+                '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로).'),
+            item('업데이트 새 버전 확인 지금 업데이트 버전', updateBox(st)),
+            item('설정 도우미 다시 하기 처음 설정',
+                el('div.field', el('span', '설정 도우미'), el('span.hint', '처음 설정을 단계별로 다시 확인합니다. 지금 설정은 그대로 남습니다.')),
+                el('div.row', el('button.btn.small', { type: 'button', onclick: () => openSetup() }, '설정 도우미 다시 하기'))),
+            advanced(
+                item('화면 배치 모드', el('div.field', el('span', '화면 배치'), el('span.hint', '왼쪽·아래 영역의 크기와 위치를 바꿉니다.')),
+                    el('div.row', el('button.btn.small', { type: 'button', onclick: toggleLayoutMode }, '화면 배치 모드 열기'))),
+                item('프로그램 종료 끄기 백그라운드',
+                    el('div.field', el('span', '프로그램 종료'),
+                        el('span.hint', '브라우저를 닫아도 수집·텔레그램은 뒤에서 계속 동작합니다. 완전히 끄려면 [프로그램 종료].')),
+                    el('div.row', el('button.btn.small.danger', { type: 'button', onclick: guarded(async () => {
+                        if (!window.confirm('업무 데스크를 종료할까요? 자동 수집·텔레그램·수업 알림도 멈춥니다.')) return;
+                        await api.post('/api/shutdown', {});
+                        toast('업무 데스크를 종료했습니다. 다시 쓰려면 start-desk.bat을 실행하세요.');
+                    }) }, '프로그램 종료')))),
+        ],
+    },
+];
+
+const GROUP_KEY = 'desk.settings.group';
+let activeGroup = (() => { try { return localStorage.getItem(GROUP_KEY) || 'general'; } catch { return 'general'; } })();
+if (!GROUPS.some(g => g.id === activeGroup)) activeGroup = 'general';
+
+function showGroup(pane, id) {
+    activeGroup = id;
+    try { localStorage.setItem(GROUP_KEY, id); } catch { /* 저장 못 해도 괜찮음 */ }
+    for (const b of pane.querySelectorAll('.set-nav button')) {
+        const on = b.dataset.group === id;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-current', on ? 'true' : 'false');
+    }
+    for (const sec of pane.querySelectorAll('.set-sec')) sec.hidden = sec.dataset.group !== id;
+    pane.querySelector('.set-main')?.scrollTo?.(0, 0);
+}
+
+// 검색: 항목 이름·설명에 낱말이 든 칸만 묶음에 상관없이 보여 줌 (지우면 원래 묶음으로)
+function applySearch(pane, query) {
+    const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const note = pane.querySelector('.set-found');
+    pane.classList.toggle('searching', !!words.length);
+    if (!words.length) {
+        for (const it of pane.querySelectorAll('.set-item')) it.hidden = false;
+        clear(note);
+        showGroup(pane, activeGroup);
+        return;
+    }
+    let found = 0;
+    for (const sec of pane.querySelectorAll('.set-sec')) {
+        const head = sec.dataset.search;
+        let n = 0;
+        // 맨 바깥 칸만 셈 (고급 묶음 안의 칸도 각자 셈)
+        for (const it of sec.querySelectorAll('.set-item')) {
+            const hit = matches(`${it.dataset.search} ${head}`, query);
+            it.hidden = !hit;
+            if (hit) n++;
+        }
+        for (const adv of sec.querySelectorAll('details.set-adv')) {
+            if ([...adv.querySelectorAll('.set-item')].some(it => !it.hidden)) adv.open = true;
+        }
+        sec.hidden = !n;
+        found += n;
+    }
+    for (const b of pane.querySelectorAll('.set-nav button')) b.classList.remove('on');
+    clear(note, found ? `찾은 항목 ${found}개` : '찾는 항목이 없습니다. 다른 낱말로 찾아 보세요 (예: 텔레그램, 폴더, 시각).');
+}
+
+function navStatus(g) {
+    try { return g.status(store.settings) || ''; } catch { return ''; }
+}
+
+function renderSettings(pane) {
+    const st = store.state || {};
+    const search = el('input.set-search', { type: 'search', placeholder: '설정 찾기 (예: 텔레그램, 폴더, 수집 시각)', 'aria-label': '설정 찾기',
+        oninput: e => applySearch(pane, e.target.value),
+        onkeydown: e => { if (e.key === 'Escape') { e.target.value = ''; applySearch(pane, ''); } } });
+    const nav = el('nav.set-nav', { 'aria-label': '설정 묶음' }, GROUPS.map(g => el('button', {
+        type: 'button', dataset: { group: g.id },
+        onclick: () => { if (search.value) { search.value = ''; applySearch(pane, ''); } showGroup(pane, g.id); },
+    }, el('span.set-ico', g.icon), el('span.set-nt', el('b', g.title), el('span.set-ns', navStatus(g))))));
+    const sections = GROUPS.map(g => el('section.set-sec', { dataset: { group: g.id, search: `${g.title} ${g.desc}`.toLowerCase() } },
+        el('h2', `${g.icon} ${g.title}`), el('p.set-desc', g.desc), g.build(st, pane)));
+    pane.classList.add('set-pane');
+    pane.append(
+        el('div.set-head',
+            el('div', el('h1', '설정'),
+                el('p.sub', `업무 데스크 ${st.version || ''} · 모든 자료는 이 PC 의 data 폴더에만 저장됩니다.`)),
+            el('div.set-tools', saveStateBox(),
+                el('button.btn.small', { type: 'button', onclick: () => openSetup() }, '🧭 설정 도우미'))),
+        el('div.set-searchrow', search, el('span.small.muted.set-found', { role: 'status' })),
+        el('div.set-layout', nav, el('div.set-main', sections)));
+    showGroup(pane, activeGroup);
     autoSave(pane);
 }
 
-export function openSettings() {
-    openTab({ id: 'settings', title: '설정', menu: true, render: renderSettings });
+// 왼쪽 목록의 상태 한 줄만 새로 씀 (입력 중인 칸은 건드리지 않음)
+function refreshNav() {
+    const tab = findTab('settings');
+    if (!tab) return;
+    for (const g of GROUPS) {
+        const s = tab.pane.querySelector(`.set-nav button[data-group="${g.id}"] .set-ns`);
+        if (s) s.textContent = navStatus(g);
+    }
+}
+
+export function openSettings(group) {
+    if (group && GROUPS.some(g => g.id === group)) activeGroup = group;
+    const tab = openTab({ id: 'settings', title: '설정', menu: true, render: renderSettings });
+    if (group && tab?.pane.querySelector('.set-nav')) showGroup(tab.pane, activeGroup);
+    return tab;
 }
 
 registerView({
     id: 'settings', icon: '⚙', label: '설정', bottom: true, noSide: true,
     renderSide(body) {
         body.append(el('ul.list',
-            el('li', { onclick: openSettings }, el('span.ttl', '설정 열기')),
+            el('li', { onclick: () => openSettings() }, el('span.ttl', '설정 열기')),
+            el('li', { onclick: () => openSetup() }, el('span.ttl', '설정 도우미')),
             el('li', { onclick: toggleLayoutMode }, el('span.ttl', '화면 배치 모드'))));
     },
-    open: openSettings,
+    open: () => openSettings(),
 });
 
-on('state', () => {
-    // 텔레그램 연결 상태가 바뀌면 설정 화면을 새로 그림 (입력 중일 때는 건드리지 않음)
-    const tab = findTab('settings');
-    if (tab && !tab.pane.contains(document.activeElement) && !tab.pane.dataset.dirty && !tab.pane.dataset.setupBusy) {
-        const linked = tab.pane.dataset.linked;
-        const now = String(!!store.state.telegram.linked) + store.state.telegram.status;
-        if (linked !== undefined && linked !== now) tab.rerender();
-        tab.pane.dataset.linked = now;
-    }
-});
+// 텔레그램 연결 상태 등이 바뀌면 그 자리만 다시 그림 (예전처럼 화면 전체를 다시 그리지 않아 입력·검색이 지워지지 않음)
+on('state', () => { refreshTelegramBoxes(); refreshNav(); });
+on('settings', refreshNav);

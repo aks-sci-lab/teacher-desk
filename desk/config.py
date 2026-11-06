@@ -62,6 +62,8 @@ DEFAULTS = {
     "telegram_cool_text": False,   # 새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 켠 경우만, 0.5.61)
     # 화면 배치 (🧩 화면 배치 모드에서 저장)
     "layout": {},
+    # 첫 실행 설정 도우미 (0.5.79): '' 처음 · later 나중에 · done 마침 · notified 기존 사용자에게 한 번 안내함
+    "setup_wizard": "",
 }
 
 # 화면에 그대로 돌려주면 안 되는 값
@@ -73,8 +75,9 @@ EDITABLE_KEYS = {
     "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
-    "ai_openai_key", "ai_anthropic_key", "ai_gemini_key",
+    "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
 }
+SETUP_WIZARD_STATES = ("", "later", "done", "notified")
 BOOL_KEYS = {"telegram_photos", "telegram_cool_text", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
@@ -163,6 +166,10 @@ class Config:
                 if not isinstance(v, str) or len(v.strip()) > 512 or any(not 33 <= ord(c) <= 126 for c in v.strip()):
                     raise ValueError("API 키 형식이 잘못되었습니다")
                 clean[k] = v.strip()
+            elif k == "setup_wizard":
+                if v not in SETUP_WIZARD_STATES:
+                    raise ValueError("설정 도우미 상태 값이 잘못되었습니다")
+                clean[k] = v
             elif k == "layout":
                 if not isinstance(v, dict):
                     raise ValueError("layout 은 객체여야 합니다")
