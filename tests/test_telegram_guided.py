@@ -44,13 +44,25 @@ class TelegramGuidedTests(unittest.TestCase):
         markup = next(m["reply_markup"] for m in reversed(self.fake.sent) if "keyboard" in m["reply_markup"])
         self.assertTrue(markup["is_persistent"])
         self.assertTrue(markup["resize_keyboard"])
-        self.assertEqual(markup["keyboard"], [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외출증", "결석계", "메뉴"]])   # 화면을 덜 가리게 2줄
-        # 아래 판에 없는 명령은 '메뉴' 아래의 단추로 (누르면 같은 이름의 글을 보낸 것처럼 처리)
+        self.assertEqual(markup["keyboard"], [["📋 브리핑", "🗓 주간", "📥 수신함"], ["📅 달력", "▦ 시간표", "☑ 출결"],
+                                              ["🔍 검색", "🤖 AI 질문", "☰ 메뉴"]])   # 웹 화면 메뉴 순서, 3줄
+        # 같은 묶음의 인라인 메뉴: 묶음을 누르면 같은 메시지를 고쳐 하위 메뉴, '← 메뉴' 로 돌아감
         more = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
-        self.assertEqual([b["text"] for row in more for b in row], ["자료 검색", "일정 추가", "요약", "새로고침", "상태", "취소"])
+        self.assertEqual([b["text"] for row in more for b in row],
+                         ["📋 브리핑", "🗓 주간", "📥 수신함", "📅 달력", "▦ 시간표", "☑ 출결", "🔍 검색", "🤖 AI 질문", "⚙ 기타"])
         before = len(self.fake.sent)
-        self.bot.handle_update(press(next(b["callback_data"] for row in more for b in row if b["text"] == "상태")))   # 상태
+        self.bot.handle_update(press("mn:g:more"))
+        self.assertEqual(len(self.fake.sent), before)   # 새 메시지 없이 고침
+        sub = self.fake.edited[-1]["reply_markup"]["inline_keyboard"]
+        self.assertEqual(sub[-1], [{"text": "← 메뉴", "callback_data": "mn:home"}])
+        self.bot.handle_update(press(next(b["callback_data"] for row in sub for b in row if b["text"] == "⚙ 상태")))   # 상태
         self.assertGreater(len(self.fake.sent), before)
+        self.assertIn("업무 데스크 상태", self.fake.sent[-1]["text"])
+        self.bot.handle_update(press("mn:home"))
+        self.assertEqual(self.fake.edited[-1]["reply_markup"]["inline_keyboard"], more)
+        for old in ("상태", "요약", "새로고침", "자료 검색", "취소"):   # 예전 '그 밖의 명령' 메시지의 단추도 동작
+            self.assertIsNotNone(self.bot.handle_update(press(f"mn:{old}")), old)
+        self.bot.dialog = None
         self.assertIsNone(self.bot.handle_update(press("mn:위험한명령")))
         self.bot.handle_update(msg("/help"))
         self.assertIn("단계별", self.texts())

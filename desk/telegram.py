@@ -20,29 +20,33 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import VERSION, absence, ai, assist, holidays, passlink, printing, providers, queries, timetable
+from . import VERSION, absence, ai, assist, holidays, passlink, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
-    "📋 업무 데스크 명령\n"
-    "\n■ 일정·마감\n"
-    "오늘 — 오늘 일정·오늘 마감·외출 인원\n"
-    "마감 — 7일 안의 마감\n"
-    "브리핑 — 오늘 + 지난 1주일 AI 요약\n"
-    "내일 수업 · 금요일 시간표 — 내 수업\n"
-    "일정 추가 — 달력에서 날짜를 누르고 내용을 보내면 달력에 등록 (등록 직후 취소 가능)\n"
+    "📋 업무 데스크 명령 (웹 화면 왼쪽 메뉴와 같은 순서)\n"
+    "아래 단추 판이나 '☰ 메뉴' 의 단추로 대부분 글 없이 할 수 있습니다.\n"
+    "\n📋 브리핑 — 오늘 + 지난 접속 이후 AI 요약\n"
+    "🗓 주간 — 이번 주 날짜별 일정·마감·할 일 (다음 주 단추)\n"
+    "\n📥 수신함\n"
+    "안 읽은 자료 · 요약(최근 받은 자료) · 새로고침(지금 수집)\n"
+    "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
+    "\n📅 달력\n"
+    "오늘 — 오늘 일정·오늘 마감·외출 인원 · 마감 — 7일 안의 마감\n"
+    "일정 추가 — 달력에서 날짜를 누르고 내용을 보내면 등록 (등록 직후 취소 가능)\n"
+    "\n▦ 시간표\n"
+    "내 수업 · 내일 수업 · 금요일 시간표 — 내 수업 · 우리 반 시간표\n"
     "2-3 시간표 · 2-3 내일 · 2학년 3반 목요일 — 그 학급 시간표(과목·선생님)\n"
     "2-3 지금 — 지금(쉬는 시간이면 다음) 그 반 수업\n"
     "빈 시간 김철수 이영희 [다음주] — 나와 같이 비는 시간\n"
-    "\n■ 학생\n"
+    "\n☑ 출결\n"
     "조퇴 7 [13:30] · 외출 7 [13:30] [14:30] — 사유는 단추로, 발급 뒤 인쇄·웹 링크 선택\n"
     "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
     "종류: 병결·인정결·기타결·미인정결 (주말·학사일정 공휴일·휴업일 제외, 앱에 저장만)\n"
-    "\n■ 자료\n"
-    "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
-    "요약 — 최근 받은 자료 · 새로고침 — 지금 수집\n"
-    "\n■ 기타\n"
-    "도움말 · 메뉴 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기) · /ask 질문(일반 질문 AI, 업무자료는 붙이지 않음)\n"
+    "통계 — 이번 달 학급 합계 (건수만)\n"
+    "\n🔍 검색 — 자료 검색 (AI 없이)\n"
+    "🤖 AI 질문 — /ask 질문 (일반 질문 AI, 업무자료는 붙이지 않음)\n"
+    "\n⚙ 기타: 메뉴 · 도움말 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기)\n"
     "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
 COMMANDS = {
@@ -57,7 +61,18 @@ COMMANDS = {
     "상태": "status", "/status": "status",
     "업데이트": "update", "/update": "update",
     "자료 검색": "guided-search", "내 수업": "lessons", "/lessons": "lessons",
+    # 0.5.78 웹 화면 메뉴와 맞춘 명령 (아래 MENU_COMMANDS 가 처리)
+    "주간": "week", "주간 계획": "week", "/week": "week",
+    "수신함": "g-inbox", "/inbox": "g-inbox", "안 읽은 자료": "unread", "안읽은 자료": "unread", "/unread": "unread",
+    "달력": "g-calendar", "/calendar": "g-calendar",
+    "시간표": "g-timetable", "/timetable": "g-timetable", "내일 수업": "tomorrow", "/tomorrow": "tomorrow",
+    "우리 반 시간표": "myclass", "우리반 시간표": "myclass", "/myclass": "myclass",
+    "출결": "g-attendance", "/attendance": "g-attendance",
+    "통계": "stats", "출결 통계": "stats", "이번 달 통계": "stats", "/stats": "stats",
+    "AI 질문": "ai-dialog", "/ai": "ai-dialog",
 }
+MENU_COMMANDS = {"week", "unread", "tomorrow", "myclass", "stats", "ai-dialog",
+                 "g-inbox", "g-calendar", "g-timetable", "g-attendance", "g-more"}
 # 뒤에 낱말이 붙는 명령
 ARG_COMMANDS = {
     "검색": "search", "/search": "search", "찾기": "search",
@@ -72,24 +87,30 @@ ARG_COMMANDS = {
 POLITE_TAILS = {"보여줘", "알려줘", "보내줘", "해줘", "줘", "좀", "주세요", "보여주세요", "알려주세요", "부탁", "부탁해", "부탁해요", "요"}
 COMMAND_TAILS = {"today": {"일정", "업무"}, "deadlines": {"일정"}}
 P_ARG_NUMBER = re.compile(r"^\d")   # 숫자로 시작하면 명령 ('1시' 같은 잘못된 번호는 명령이 안내)
+# '/' 봇 명령 메뉴: 웹 화면 왼쪽 메뉴 순서(main.js orderViews) → 자주 쓰는 바로가기 → 기타
 BOT_MENU = [
-    {"command": "brief", "description": "브리핑 (오늘 + 1주일 요약)"},
+    {"command": "brief", "description": "📋 브리핑 (오늘 + AI 요약)"},
+    {"command": "week", "description": "🗓 주간 계획 (이번 주)"},
+    {"command": "inbox", "description": "📥 수신함 (안 읽은 자료·수집)"},
+    {"command": "calendar", "description": "📅 달력 (오늘·마감·일정 추가)"},
+    {"command": "timetable", "description": "▦ 시간표 (내 수업·우리 반)"},
+    {"command": "attendance", "description": "☑ 출결 (조퇴·외출·결석계·통계)"},
+    {"command": "search", "description": "🔍 자료 검색: /search 낱말"},
+    {"command": "ask", "description": "🤖 AI 질문 (업무자료 제외)"},
+    {"command": "menu", "description": "☰ 메뉴 단추"},
     {"command": "today", "description": "오늘 일정·마감"},
     {"command": "deadlines", "description": "7일 안의 마감"},
-    {"command": "search", "description": "자료 검색: /search 낱말"},
+    {"command": "addevent", "description": "일정 추가 (달력에서 날짜)"},
+    {"command": "lessons", "description": "오늘 내 수업"},
     {"command": "early", "description": "조퇴증: /early 번호 [시각]"},
     {"command": "out", "description": "외출증: /out 번호 [나감] [복귀]"},
     {"command": "absence", "description": "결석계: /absence 이름 번호 병결 10/29~11/3"},
+    {"command": "unread", "description": "안 읽은 자료"},
     {"command": "refresh", "description": "지금 수집"},
-    {"command": "summary", "description": "최근 받은 자료"},
-    {"command": "help", "description": "도움말"},
-    {"command": "menu", "description": "자주 쓰는 메뉴와 단계별 작성"},
-    {"command": "cancel", "description": "진행 중인 입력·발급 선택 취소"},
-    {"command": "status", "description": "AI·수집·시간표 준비 상태"},
-    {"command": "lessons", "description": "오늘 내 수업"},
-    {"command": "addevent", "description": "일정 추가 (달력에서 날짜를 눌러 고름)"},
+    {"command": "status", "description": "준비 상태"},
     {"command": "update", "description": "새 버전 확인·업데이트"},
-    {"command": "ask", "description": "일반 질문 (업무자료 제외): /ask 질문"},
+    {"command": "cancel", "description": "진행 중인 입력 취소"},
+    {"command": "help", "description": "도움말"},
 ]
 # 화면(passes.js)의 사유 단추와 같음
 REASONS = {
@@ -103,9 +124,38 @@ TEXT_AS_FILE = 3 * TEXT_LIMIT
 FILE_LIMIT = 45 * 1024 * 1024   # 봇이 보낼 수 있는 파일은 50MB 까지
 WD = "월화수목금토일"
 DIALOG_TTL = 10 * 60
-# 화면을 덜 가리게 2줄 (요약·상태·취소·자료 검색·새로고침은 '메뉴' 의 단추로)
-KEYBOARD = [["브리핑", "오늘", "마감", "내 수업"], ["조퇴증", "외출증", "결석계", "메뉴"]]
+# 아래 단추 판 (0.5.78): 웹 화면 왼쪽 메뉴와 같은 순서·묶음, 폰 한 화면에 3줄 × 3
+KEYBOARD = [["📋 브리핑", "🗓 주간", "📥 수신함"], ["📅 달력", "▦ 시간표", "☑ 출결"], ["🔍 검색", "🤖 AI 질문", "☰ 메뉴"]]
+KEY_TEXT = {"📋 브리핑": "브리핑", "🗓 주간": "주간", "📥 수신함": "수신함", "📅 달력": "달력", "▦ 시간표": "시간표",
+            "☑ 출결": "출결", "🔍 검색": "자료 검색", "🤖 AI 질문": "AI 질문", "☰ 메뉴": "메뉴"}
+# 인라인 메뉴 단추 `mn:<이름>` → 같은 뜻의 글 명령 (여기 있는 이름만 받음)
+MENU_ACTIONS = {
+    "brief": "브리핑", "week": "주간", "unread": "안 읽은 자료", "summary": "요약", "refresh": "새로고침",
+    "today": "오늘", "deadlines": "마감", "addevent": "일정 추가",
+    "lessons": "내 수업", "tomorrow": "내일 수업", "myclass": "우리 반 시간표",
+    "early": "조퇴증", "out": "외출증", "absence": "결석계", "stats": "통계",
+    "search": "자료 검색", "ai": "AI 질문", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
+}
+MAIN_MENU = [[("📋 브리핑", "brief"), ("🗓 주간", "week"), ("📥 수신함", "g:inbox")],
+             [("📅 달력", "g:calendar"), ("▦ 시간표", "g:timetable"), ("☑ 출결", "g:attendance")],
+             [("🔍 검색", "search"), ("🤖 AI 질문", "ai"), ("⚙ 기타", "g:more")]]
+SUBMENUS = {
+    "inbox": ("📥 수신함", [[("🆕 안 읽은 자료", "unread"), ("📨 최근 받은 자료", "summary")], [("🔄 지금 수집", "refresh")]]),
+    "calendar": ("📅 달력", [[("📅 오늘", "today"), ("⏰ 마감 7일", "deadlines")], [("➕ 일정 추가", "addevent")]]),
+    "timetable": ("▦ 시간표", [[("📚 오늘 내 수업", "lessons"), ("📚 내일 수업", "tomorrow")], [("🏫 우리 반 시간표", "myclass")]]),
+    "attendance": ("☑ 출결", [[("🏃 조퇴증", "early"), ("🚶 외출증", "out")], [("📝 결석계", "absence"), ("📊 이번 달 통계", "stats")]]),
+    "more": ("⚙ 기타", [[("⚙ 상태", "status"), ("⬆ 업데이트", "update")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
+}
+GROUP_HINT = {
+    "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2'",
+    "calendar": "",
+    "timetable": "학급은 '2-3 시간표'·'2-3 지금', 같이 비는 시간은 '빈 시간 이름'",
+    "attendance": "글로도: 조퇴 7 13:30 · 외출 7 13:30 14:30",
+    "more": "",
+}
+# 예전 '그 밖의 명령' 메시지(0.5.39~0.5.77)의 단추도 계속 받음
 MENU_MORE = ("자료 검색", "일정 추가", "요약", "새로고침", "상태", "취소")
+UNREAD_PAGE = 10
 P_ADD_EVENT = re.compile(r"^(?:/addevent(?:@\S+)?|일정\s*추가)(?:\s+(.*))?$", re.S)   # '일정 추가' 로 시작할 때만 (다른 말의 '일정' 은 가로채지 않음)
 EVENT_TEXT_LIMIT = 100
 
@@ -256,7 +306,10 @@ class Bot:
         chat_id = chat_id or self.chat_id
         if not (self.token and chat_id):
             return False
-        params = {"chat_id": chat_id, "text": text[:4000]}
+        parts = chunks(text) if len(text) > TEXT_LIMIT else [text]
+        for part in parts[:-1]:   # 긴 글은 줄 단위로 나눠 보내고, 단추는 마지막 조각에만
+            self.api("sendMessage", {"chat_id": chat_id, "text": part[:4000]}, timeout=15)
+        params = {"chat_id": chat_id, "text": parts[-1][:4000]}
         if buttons:
             params["reply_markup"] = {"inline_keyboard": buttons}
         elif keyboard:
@@ -312,6 +365,7 @@ class Bot:
         msg = update.get("message") or {}
         chat = msg.get("chat") or {}
         text = (msg.get("text") or "").strip()
+        text = KEY_TEXT.get(text, text)   # 아래 단추 판의 '📋 브리핑' 같은 단추 글 → 명령 글
         if not text or chat.get("type") != "private":
             return None
         cid = chat.get("id")
@@ -368,6 +422,9 @@ class Bot:
         if cmd == "lessons":
             self.dialog = None
             return self.reply(cid, self.lessons_text(""))
+        if cmd in MENU_COMMANDS:
+            self.dialog = None
+            return self.menu_command(cid, cmd)
         if cmd and len(words) == 1:
             self.dialog = None
             if cmd == "brief":
@@ -420,20 +477,178 @@ class Bot:
         return True
 
     def send_menu(self, cid, full=False):
-        text = (HELP if full else
-                "📋 업무 데스크\n아래 단추나 명령을 쓰세요. 조퇴증·외출증·결석계는 차례대로 입력할 수 있습니다.\n"
-                "자료 검색은 AI 없이 빠르게 찾고, 목록에 없는 질문은 AI 검색 여부를 먼저 묻습니다.")
-        self.send(text, cid, keyboard=True)
-        if not full:   # 아래 단추 판에 없는 것은 여기 단추로
-            self.send("그 밖의 명령", cid, [[{"text": name, "callback_data": f"mn:{name}"} for name in MENU_MORE[:3]],
-                                          [{"text": name, "callback_data": f"mn:{name}"} for name in MENU_MORE[3:]]])
+        if full:
+            self.send(HELP, cid, keyboard=True)
+            return HELP
+        # 아래 단추 판을 새것으로 바꾸고(예전 2줄 판이 남아 있을 수 있음), 같은 묶음의 인라인 메뉴를 한 번 더
+        self.send("📋 업무 데스크 — 아래 단추 판은 웹 화면 왼쪽 메뉴와 같은 순서입니다.", cid, keyboard=True)
+        text, buttons = self.main_menu()
+        self.send(text, cid, buttons)
         return text
+
+    # ---- 메뉴 단추 (0.5.78: 웹 화면 메뉴와 같은 묶음, 하위 메뉴는 같은 메시지를 고쳐 보여 줌) ----
+    @staticmethod
+    def menu_rows(rows):
+        return [[{"text": label, "callback_data": f"mn:{action}"} for label, action in row] for row in rows]
+
+    def main_menu(self):
+        return "☰ 메뉴 — 묶음을 누르면 그 안의 단추가 나옵니다.", self.menu_rows(MAIN_MENU)
+
+    def group_menu(self, name):
+        title, rows = SUBMENUS[name]
+        hint = GROUP_HINT.get(name)
+        return title + (f"\n{hint}" if hint else ""), self.menu_rows(rows) + [[{"text": "← 메뉴", "callback_data": "mn:home"}]]
+
+    def menu_button(self, cid, action, message_id):
+        """인라인 메뉴 단추. 정해 둔 이름만 받고, 나머지는 무시."""
+        if action == "home":
+            return self.show(cid, message_id, *self.main_menu())
+        if action.startswith("g:") and action[2:] in SUBMENUS:
+            return self.show(cid, message_id, *self.group_menu(action[2:]))
+        if action.startswith("unread:") and action[7:].isdigit():
+            return self.send_unread(cid, int(action[7:]))
+        if action in ("week:0", "week:1"):
+            return self.send_week(cid, nxt=action == "week:1", message_id=message_id)
+        text = MENU_ACTIONS.get(action) or (action if action in MENU_MORE else None)
+        if not text:
+            return None
+        return self.handle_update({"message": {"chat": {"id": cid, "type": "private"}, "text": text}})
+
+    def menu_command(self, cid, cmd):
+        if cmd.startswith("g-"):
+            text, buttons = self.group_menu(cmd[2:])
+            self.send(text, cid, buttons)
+            return text
+        if cmd == "week":
+            return self.send_week(cid)
+        if cmd == "unread":
+            return self.send_unread(cid, 0)
+        if cmd == "tomorrow":
+            return self.reply(cid, self.lessons_text("내일"))
+        if cmd == "myclass":
+            grade, no = str(self.config["grade"] or "").strip(), str(self.config["class_no"] or "").strip()
+            if not (grade.isdigit() and no.isdigit()):
+                return self.reply(cid, "담임 학급이 설정에 없습니다. 업무 데스크 ⚙ 설정 → 기본 설정에서 학년·반을 넣거나 '2-3 시간표'처럼 보내세요.")
+            return self.timetable_command(cid, "class_day", {"cls": f"{grade}-{no}", "text": "오늘"})
+        if cmd == "stats":
+            return self.reply(cid, self.month_stats_text())
+        if cmd == "ai-dialog":
+            return self.begin_dialog(cid, "general")
+        return None
+
+    def week_text(self, nxt=False, today=None):
+        """주간 계획 (웹 '주간 계획' 과 같은 자료, 읽기만). 오늘·마감·브리핑과 같은 조회 답이라 일정 제목은 가리지 않음 (2026-11-06 결정)."""
+        today = today or date.today()
+        plan = weekplan.week_plan(self.db, today + timedelta(days=7 if nxt else 0), 7)
+        counts = self.config["telegram_detail"] == "counts"
+        start, end = date.fromisoformat(plan["start"]), date.fromisoformat(plan["end"])
+        lines = [f"🗓 {'다음 주' if nxt else '이번 주'} 계획 {start.month}/{start.day}(월)~{end.month}/{end.day}(일)"]
+
+        def day_lines(col, note):
+            d = date.fromisoformat(col["date"])
+            out = [f"\n■ {d.month}/{d.day}({WD[d.weekday()]})" + (" · 오늘" if d == today else "") + (f" · {note}" if note else "")]
+            out += [f"  🏫 {cut(t, 40)}" for t in col["school"][:3]]
+            evs = col["events"]
+            if counts:
+                if evs or col["todos"]:
+                    out.append(f"  일정 {len(evs)}건 · 할 일 {len(col['todos'])}건")
+                return out
+            out += [f"  {'⏰' if e['kind'] == 'deadline' else '•'}{' ' + e['time'] if e.get('time') else ''} "
+                    f"{cut(e.get('item_title') or e['text'], 45)}" for e in evs[:8]]
+            if len(evs) > 8:
+                out.append(f"  … 그 외 {len(evs) - 8}건")
+            out += [f"  ☐ {cut(t['text'], 45)}" for t in col["todos"][:5]]
+            return out
+
+        for col in plan["cols"]:
+            lines += day_lines(col, f"⚠ {cut(col['check'], 20)}" if col.get("check") else "")
+        for col in plan["other"]:
+            d = date.fromisoformat(col["date"])
+            note = "주말" if d.weekday() >= 5 else ("수업 없음" + (f"({cut(col['reason'], 20)})" if col.get("reason") else ""))
+            lines += day_lines(col, note)
+        if plan["overdue"] and not counts:
+            lines.append(f"\n⚠ 지난 할 일 {len(plan['overdue'])}건")
+            lines += [f"  ☐ {cut(t['text'], 45)}" for t in plan["overdue"][:5]]
+        if plan["undated"] and not counts:
+            lines.append(f"\n꼭 할 일 (날짜 없음) {len(plan['undated'])}건")
+            lines += [f"  ☐ {cut(t['text'], 45)}" for t in plan["undated"][:5]]
+        if len(lines) == 1:
+            lines.append("이 주에는 일정·할 일이 없습니다.")
+        return "\n".join(lines)
+
+    def send_week(self, cid, nxt=False, message_id=None):
+        text = self.week_text(nxt)
+        buttons = [[{"text": "◀ 이번 주" if nxt else "다음 주 ▶", "callback_data": f"mn:week:{0 if nxt else 1}"}],
+                   [{"text": "← 메뉴", "callback_data": "mn:home"}]]
+        if len(text) <= TEXT_LIMIT:
+            return self.show(cid, message_id, text, buttons)
+        self.send(text, cid, buttons)
+        return text
+
+    def unread_text(self, offset=0):
+        """안 읽은 자료 (수신함 '안 읽음'), 제목까지·학생 이름 가림. (글, 단추)"""
+        rows = self.db.query("SELECT id, source, received_at, category, title FROM items "
+                             "WHERE status = 'new' AND source != 'paste' ORDER BY received_at DESC, id DESC")
+        if not rows:
+            self.set_refs([])
+            return "🆕 안 읽은 자료가 없습니다 👍", None
+        detail = self.config["telegram_detail"]
+        if detail == "counts":
+            self.set_refs([])
+            by = {}
+            for r in rows:
+                name = SOURCE_NAMES.get(r["source"], r["source"])
+                by[name] = by.get(name, 0) + 1
+            return f"🆕 안 읽은 자료 {len(rows)}건 (" + " · ".join(f"{k} {v}" for k, v in by.items()) + ")", None
+        offset = max(0, min(offset, len(rows) - 1))
+        page = rows[offset:offset + UNREAD_PAGE]
+        ids = [r["id"] for r in rows[:offset + UNREAD_PAGE]][:100]   # '원문 n' 번호가 앞 쪽부터 이어지게
+        self.set_refs(ids)
+        lines = [f"🆕 안 읽은 자료 {len(rows)}건" + (f" ({offset + 1}~{offset + len(page)})" if len(rows) > UNREAD_PAGE else "")]
+        for n, r in enumerate(page, offset + 1):
+            lines.append(f"\n{n}. [{SOURCE_NAMES.get(r['source'], r['source'])}] {r['received_at'][5:10].replace('-', '/')} · {r['category']}")
+            lines.append(cut(self.mask(r["title"]), 70))
+        lines.append("\n읽음 처리는 업무 데스크 수신함에서 합니다. 원문은 단추나 '원문 n'.")
+        buttons = self.item_buttons([r["id"] for r in page], ids) or []
+        if offset + UNREAD_PAGE < len(rows) and offset + UNREAD_PAGE < 100:
+            buttons.append([{"text": f"더보기 ▸ ({len(rows) - offset - UNREAD_PAGE}건 더)",
+                             "callback_data": f"mn:unread:{offset + UNREAD_PAGE}"}])
+        return "\n".join(lines), buttons
+
+    def send_unread(self, cid, offset=0):
+        text, buttons = self.unread_text(offset)
+        self.send(text, cid, buttons)
+        return text
+
+    def month_stats_text(self, today=None):
+        """이번 달 출결 통계 — 학급 합계 건수만 (학생 이름·번호·사유는 싣지 않음)."""
+        today = today or date.today()
+        first = today.replace(day=1)
+        last = (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        passes = self.db.query("SELECT kind, COUNT(*) AS n FROM passes WHERE date >= ? AND date <= ? AND status != 'cancelled' "
+                               "GROUP BY kind", (first.isoformat(), last.isoformat()))
+        count = {r["kind"]: r["n"] for r in passes}
+        rows = self.db.query("SELECT start_date, end_date, absence_type FROM absences WHERE start_date <= ? AND end_date >= ?",
+                             (last.isoformat(), first.isoformat()))
+        days = dict.fromkeys(absence.TYPES, 0)
+        for r in rows:
+            got = absence.school_dates(self.db, max(date.fromisoformat(r["start_date"]), first),
+                                       min(date.fromisoformat(r["end_date"]), last), self.config["grade"])
+            days[r["absence_type"]] = days.get(r["absence_type"], 0) + len(got)
+        kinds = " · ".join(f"{k} {v}" for k, v in days.items() if v)
+        return (f"📊 {today.month}월 출결 (학급 합계, {today.month}/{today.day} 까지 기록)\n"
+                f"🏃 조퇴 {count.get('early', 0)}건 · 🚶 외출 {count.get('out', 0)}건\n"
+                f"📝 결석계 {len(rows)}건 · 결석 {sum(days.values())}일" + (f" ({kinds})" if kinds else "")
+                + "\n학생별 통계는 업무 데스크 → 출결 → 월별 통계에서 봅니다.")
 
     def begin_dialog(self, cid, kind):
         self.dialog = {"id": secrets.token_hex(6), "kind": kind, "step": "query" if kind == "search" else "number",
                        "expires": time.monotonic() + DIALOG_TTL}
-        prompt = ("찾을 낱말을 보내세요. 예: 연수 신청\n자료만 검색하며 AI는 실행하지 않습니다."
-                  if kind == "search" else "학생 번호를 함께 보내세요. 예: 7\n명단에 있는 번호만 쓸 수 있습니다.")
+        if kind == "general":
+            self.dialog["step"] = "question"
+        prompt = ("찾을 낱말을 보내세요. 예: 연수 신청\n자료만 검색하며 AI는 실행하지 않습니다." if kind == "search" else
+                  "🤖 질문을 보내세요. 일반 질문 AI 로 답하며 업무자료는 붙이지 않습니다.\n학생 정보·비공개 자료는 쓰지 마세요."
+                  if kind == "general" else "학생 번호를 함께 보내세요. 예: 7\n명단에 있는 번호만 쓸 수 있습니다.")
         self.send(prompt + "\n10분 안에 입력하세요. 그만하려면 '취소'.", cid, keyboard=True)
         return prompt
 
@@ -452,6 +667,9 @@ class Bot:
             return self.send_search(cid, text)
         if kind == "event":
             return self.event_text_input(cid, dialog, text)
+        if kind == "general":
+            self.dialog = None
+            return self.offer_general(cid, text)
         if kind == "free":
             return self.free_pick(cid, dialog, text.strip())
         if step == "number":
@@ -891,6 +1109,8 @@ class Bot:
 
     def run_arg(self, cid, cmd, args):
         if cmd == "general":
+            if not args:
+                return self.begin_dialog(cid, "general")
             return self.offer_general(cid, " ".join(args))
         if cmd == "absence":
             if not args:
@@ -1283,8 +1503,8 @@ class Bot:
             if action == "absence":
                 return self.begin_dialog(cid, "absence")
             return self.run_arg(cid, action, [])
-        if kind == "mn" and rest in MENU_MORE:   # '메뉴' 의 단추: 같은 이름의 글을 보낸 것처럼 처리
-            return self.handle_update({"message": {"chat": {"id": cid, "type": "private"}, "text": rest}})
+        if kind == "mn":   # 메뉴 단추: 정해 둔 이름만 (같은 뜻의 글을 보낸 것처럼 처리)
+            return self.menu_button(cid, rest, msg.get("message_id"))
         if kind == "rg" and rest.isdigit():
             return self.register_item(cid, int(rest))
         if kind == "o" and rest.isdigit():
