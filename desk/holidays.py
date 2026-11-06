@@ -85,6 +85,12 @@ def holiday_name(d):
     return _HOLIDAYS.get(d)
 
 
+def year_range():
+    """공휴일 표가 다루는 (처음 해, 마지막 해)."""
+    years = [day.year for day in _HOLIDAYS]
+    return (min(years), max(years)) if years else (2026, 2028)
+
+
 def is_weekend(d):
     """토요일이나 일요일인지 돌려줍니다."""
     if type(d) is not date:

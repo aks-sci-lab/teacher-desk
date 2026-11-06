@@ -296,7 +296,7 @@ class TelegramAddEventTests(unittest.TestCase):
             }, message
 
         october, calendar = labels(2026, 10)
-        self.assertIn("🔴 일요일·공휴일", calendar["text"])
+        self.assertIn("🔴 일요일·공휴일  🔵 토요일 (공휴일 표: 2026~2028년)", calendar["text"])
         self.assertIn("🔵 토요일", calendar["text"])
         self.assertEqual(october[date(2026, 10, 3)], "🔴3")      # 개천절 토요일
         self.assertEqual(october[date(2026, 10, 5)], "🔴5")      # 대체공휴일
@@ -354,7 +354,7 @@ class TelegramAddEventTests(unittest.TestCase):
         self.pick(did, date(2026, 10, 5))
         self.bot.handle_update(msg("학년 협의회"))
         confirm = self.fake.sent[-1]
-        self.assertIn("⚠ 공휴일(대체공휴일(개천절))입니다", confirm["text"])
+        self.assertIn("⚠ 대체공휴일(개천절)입니다", confirm["text"])
         self.bot.handle_update(press(self.buttons(confirm)["날짜 바꾸기"]))
         self.pick(did, date(2026, 10, 6))
         changed = self.fake.edited[-1]
@@ -366,7 +366,8 @@ class TelegramAddEventTests(unittest.TestCase):
 
     def test_event_confirmation_warns_about_holidays_and_weekends(self):
         cases = (
-            (date(2026, 10, 5), "⚠ 공휴일(대체공휴일(개천절))입니다"),
+            (date(2026, 10, 5), "⚠ 대체공휴일(개천절)입니다"),
+            (date(2026, 10, 9), "⚠ 공휴일(한글날)입니다"),
             (date(2026, 10, 10), "⚠ 토요일입니다"),
             (date(2026, 10, 11), "⚠ 일요일입니다"),
             (date(2029, 1, 6), "⚠ 토요일입니다"),
@@ -378,6 +379,7 @@ class TelegramAddEventTests(unittest.TestCase):
                 self.pick(did, day)
                 confirm = self.fake.edited[-1]
                 self.assertIn(warning, confirm["text"])
+                self.assertNotIn("공휴일(대체공휴일", confirm["text"])
                 self.assertIn("등록할까요?", confirm["text"])
                 self.assertIn("등록", self.buttons(confirm))
                 self.bot.handle_update(press(self.buttons(confirm)["등록"]))
