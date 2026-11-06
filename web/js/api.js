@@ -3,7 +3,7 @@ const TOKEN = document.querySelector('meta[name="desk-token"]').content;
 
 // 이 화면의 번호: 서버가 '열려 있는 화면'과 '쓰는 화면'을 알 수 있게 모든 요청에 실어 보냄 (자동 인쇄 창은 제외)
 export const CLIENT_ID = new URLSearchParams(location.search).has('silent-print') ? null : crypto.randomUUID();
-// 선생님이 최근 5분 안에 이 화면을 누르거나 타자를 쳤으면 '쓰는 중' (켜 두기만 한 창은 접속으로 세지 않음 → 브리핑 '지난 접속 이후' 기준)
+// 선생님이 최근 5분 안에 이 화면을 누르거나 타자를 쳤으면 '쓰는 중' (켜 두기만 한 창은 접속으로 세지 않음 → 브리핑 '마지막으로 닫은 이후' 기준)
 let lastInput = Date.now();
 ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(ev => window.addEventListener(ev, () => { lastInput = Date.now(); }, { capture: true, passive: true }));
 const ACTIVE_MS = 5 * 60 * 1000;

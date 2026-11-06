@@ -272,7 +272,7 @@ def make_handler(app):
                     if window_mod.CLIENT_ID_RE.match(cid):
                         app.ui.touch(cid)   # 이 화면이 아직 열려 있다는 신호
                         if self.headers.get("X-Desk-Active") == "1":
-                            visits.record_active(app.db)   # 선생님이 화면을 쓰는 중 (브리핑 '지난 접속 이후' 기준)
+                            visits.record_active(app.db)   # 선생님이 화면을 쓰는 중 (브리핑 '마지막으로 닫은 이후' 기준)
                     q = {k: v[-1] for k, v in parse_qs(url.query).items()}
                     body = self.read_json() if method in ("POST", "PUT", "PATCH") else {}
                     result = route(app, method, url.path, q, body)
@@ -443,6 +443,8 @@ def ui_claim(app, q, body):
 def ui_bye(app, q, body):
     """화면이 닫힐 때 (바로 알려 줘야 다음에 켤 때 새 창을 엶)."""
     app.ui.bye(ui_id(body))
+    if not app.ui.state()["open"]:
+        visits.record_leave(app.db)   # 마지막 화면을 닫음 = 업무 데스크를 떠남 (브리핑 '마지막으로 닫은 이후' 기준)
     return {"ok": True}
 
 
@@ -1175,7 +1177,7 @@ def list_holidays(app, q, body):
 def get_today(app, q, body):
     s = queries.today_summary(app.db)
     s["lessons"] = queries.day_lessons(app.db, app.config, date.today())
-    # 지난 접속 이후 받은 자료 (AI 가 꺼져 있어도 보이게, 규칙만)
+    # 마지막으로 닫은 이후 받은 자료 (AI 가 꺼져 있어도 보이게, 규칙만)
     v = visits.info(app.db)
     rows = app.db.query(
         "SELECT id, source, title, category, received_at, ai_summary FROM items "
@@ -1569,7 +1571,7 @@ def ai_weekly_run(app, q, body):
     except ai.AIError as e:
         raise ApiError(400, str(e))
     kind = "new" if body.get("kind") == "new" else "full"
-    # 범위: visit(지난 접속 이후, 기본) / week(지난 1주일)
+    # 범위: visit(마지막으로 닫은 이후, 기본) / week(지난 1주일)
     since = visits.since(app.db) if body.get("range", "visit") == "visit" else None
     app.ai_job.start(kind, since=since)
     return app.ai_job.state()
