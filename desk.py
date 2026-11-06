@@ -15,7 +15,7 @@ import sys
 import types
 from contextlib import nullcontext
 
-from desk import VERSION, background, updater
+from desk import VERSION, background, updater, visits
 from desk.collect import SOURCES, Collector, diagnose
 from desk.config import APP_DIR, Config
 from desk.db import DB
@@ -104,6 +104,7 @@ def run(args, config, db):
         return 0
 
     app = App(db, config, collector, bot)
+    visits.app_started(db)   # 꺼져 있던 동안은 쓰지 않았음 → 브리핑 '마지막으로 닫은 이후' 기준
     bot.read_image = lambda src: read_item_image(app, src)   # 새 쿨메신저 사진을 텔레그램으로 보낼 때
     try:
         httpd = serve(app, open_browser=not args.no_browser)

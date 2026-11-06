@@ -109,7 +109,7 @@ def mask_names(text, names):
 
 
 def week_items(db, today=None, days=DAYS, since=None):
-    """요약할 자료: since('YYYY-MM-DD HH:MM', 지난 접속 이후)가 있으면 그 뒤, 없으면 지난 days 일."""
+    """요약할 자료: since('YYYY-MM-DD HH:MM', 마지막으로 닫은 이후)가 있으면 그 뒤, 없으면 지난 days 일."""
     today = today or date.today()
     since = since or (today - timedelta(days=days - 1)).isoformat()
     return db.query(
@@ -180,7 +180,7 @@ def pick_model(config):
 
 def weekly_summary(db, config, today=None, timeout=TIMEOUT, since=None):
     """요약을 만들어 저장하고 돌려줌 {at, text, count, used, model, days, ids, seen_id, range, since}.
-    since 가 있으면 '지난 접속 이후'(range=visit), 없으면 '지난 1주일'(range=week)."""
+    since 가 있으면 '마지막으로 닫은 이후'(range=visit), 없으면 '지난 1주일'(range=week)."""
     base = config["ai_base"]
     check_local(base)
     top = last_item_id(db)
@@ -387,14 +387,14 @@ class Job:
         self.started_at = None
         self.error = None
         self.kind = None   # full: 전체 다시 요약 / new: 새로 들어온 것만
-        self.since = None  # 지난 접속 이후로 요약할 때 시작 시각
+        self.since = None  # 마지막으로 닫은 이후로 요약할 때 시작 시각
 
     @property
     def running(self):
         return bool(self.thread and self.thread.is_alive())
 
     def start(self, kind="full", since=None):
-        """kind: full(전체 다시) / new(새로 들어온 것만). since 가 있으면 '지난 접속 이후' 범위로 전체 요약."""
+        """kind: full(전체 다시) / new(새로 들어온 것만). since 가 있으면 '마지막으로 닫은 이후' 범위로 전체 요약."""
         with self.lock:
             if self.running:
                 return False

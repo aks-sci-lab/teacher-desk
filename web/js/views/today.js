@@ -387,11 +387,11 @@ function appliedNote(res, updates) {
 // 'YYYY-MM-DD HH:MM' → '10/30(금) 16:20'
 const atLabel = s => (s ? `${dayLabel(s.slice(0, 10), false)} ${s.slice(11, 16)}`.trim() : '');
 
-// 지난 접속 이후 받은 자료 (AI 가 꺼져 있거나 요약 전에도 보이는 목록, 규칙만)
+// 마지막으로 닫은 이후 받은 자료 (AI 가 꺼져 있거나 요약 전에도 보이는 목록, 규칙만)
 function sinceList(sv) {
     const items = sv?.items || [];
     return el('div',
-        el('p.small.muted', sv?.first ? '처음 쓰는 날이라 지난 7일 자료입니다.' : `${atLabel(sv?.prev_end)} 이후 받은 자료 ${items.length}건`),
+        el('p.small.muted', sv?.first ? '처음 쓰는 날이라 지난 7일 자료입니다.' : `업무 데스크를 마지막으로 닫은 ${atLabel(sv?.prev_end)} 이후 받은 자료 ${items.length}건`),
         items.length
             ? el('ul.list.compact', items.map(it => el('li', { onclick: () => openItem(it.id) },
                 el('span.ttl', it.title), it.ai_line && el('span.ai-line', it.ai_line),
@@ -429,7 +429,7 @@ function aiCard(todoCard, sv) {
             el('div.row',
                 el('button.btn.small', { onclick: () => run('full', res?.range === 'week' ? 'week' : 'visit') }, '전체 다시 요약'),
                 res?.range === 'week'
-                    ? el('button.btn.small', { onclick: () => run('full', 'visit') }, '지난 접속 이후로 요약')
+                    ? el('button.btn.small', { onclick: () => run('full', 'visit') }, '마지막으로 닫은 이후로 요약')
                     : el('button.btn.small', { onclick: () => run('full', 'week') }, '지난 1주일로 요약')));
     };
     // 요약은 업무 데스크가 뒤에서 만듦 (몇 분 걸림). 화면은 5초마다 끝났는지만 확인
@@ -462,7 +462,7 @@ function aiCard(todoCard, sv) {
             show(st, st.error);
         }
     };
-    // kind: 'auto' (브리핑을 열 때) · 'new' (새 것만) · 'full' (전체 다시). range: 'visit'(지난 접속 이후, 기본) · 'week'(지난 1주일)
+    // kind: 'auto' (브리핑을 열 때) · 'new' (새 것만) · 'full' (전체 다시). range: 'visit'(마지막으로 닫은 이후, 기본) · 'week'(지난 1주일)
     const run = async (kind, range = 'visit') => {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
@@ -493,7 +493,7 @@ function aiCard(todoCard, sv) {
         }
     };
     setTimeout(() => run('auto').catch(e => { show({}, e.message); standalone(true); }), 0);  // 카드가 화면에 붙은 뒤 시작
-    return card(sv?.first ? '지난 1주일 요약' : `지난 접속 이후 요약 (${atLabel(sv?.prev_end)}부터)`, null, body, { cls: 'ai-card' });
+    return card(sv?.first ? '지난 1주일 요약' : `마지막 로그아웃(업무 데스크를 닫은) 이후 요약 (${atLabel(sv?.prev_end)}부터)`, null, body, { cls: 'ai-card' });
 }
 
 // 비어 있는 카드는 머리 아래 작은 한 줄로 모음 ('오늘 일정 없음 · 7일 안 마감 없음'), 내용 있는 카드만 칸을 차지

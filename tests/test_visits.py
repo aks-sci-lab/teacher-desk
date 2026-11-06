@@ -61,6 +61,64 @@ class VisitTests(unittest.TestCase):
         self.assertEqual(len(writes), 1)
 
 
+class LeaveTests(unittest.TestCase):
+    """0.5.77: '마지막 로그아웃' = 업무 데스크를 마지막으로 닫은(떠난) 시각부터."""
+    def setUp(self):
+        self.env = Env()
+        self.db = self.env.db
+        visits.record_active(self.db, T0 - timedelta(hours=8))           # 금요일 아침부터
+        visits.record_active(self.db, T0)                                  # 16:20 까지 씀
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_closing_starts_new_visit_from_close_time(self):
+        visits.record_leave(self.db, T0 + timedelta(minutes=5))            # 16:25 에 창을 닫고
+        back = T0 + timedelta(hours=1)                                     # 1시간 뒤(3시간 안) 다시 열면
+        self.assertTrue(visits.record_active(self.db, back))               # 새 접속
+        info = visits.info(self.db, back)
+        self.assertEqual((info["prev_end"], info["since"]), ("2026-10-30 16:25", "2026-10-30 16:25"))
+        self.assertNotIn("left_at", visits.current(self.db))
+
+    def test_refresh_does_not_shorten_the_range(self):
+        before = visits.info(self.db, T0)
+        visits.record_leave(self.db, T0)                                   # 새로 고침 = 닫혔다가
+        self.assertFalse(visits.record_active(self.db, T0 + timedelta(minutes=1)))   # 곧 다시 열림
+        self.assertNotIn("left_at", visits.current(self.db))               # 떠난 것이 아님
+        self.assertEqual(visits.info(self.db, T0)["since"], before["since"])
+        # 그 뒤 1시간 더 써도 같은 접속 (닫은 기록이 지워졌으므로)
+        self.assertFalse(visits.record_active(self.db, T0 + timedelta(hours=1)))
+        self.assertEqual(visits.info(self.db, T0)["since"], before["since"])
+
+    def test_return_within_ten_minutes_is_same_visit(self):
+        visits.record_leave(self.db, T0)
+        self.assertFalse(visits.record_active(self.db, T0 + timedelta(minutes=9)))
+        visits.record_leave(self.db, T0 + timedelta(minutes=9))
+        self.assertTrue(visits.record_active(self.db, T0 + timedelta(minutes=19)))
+        self.assertEqual(visits.info(self.db)["prev_end"], "2026-10-30 16:29")
+
+    def test_app_restart_counts_as_leaving_at_last_use(self):
+        visits.app_started(self.db)                                        # 프로그램을 끄고 다시 켬
+        self.assertEqual(visits.current(self.db)["left_at"], "2026-10-30 16:20")
+        self.assertTrue(visits.record_active(self.db, T0 + timedelta(minutes=40)))
+        self.assertEqual(visits.info(self.db)["prev_end"], "2026-10-30 16:20")
+
+    def test_quick_restart_after_update_is_same_visit(self):
+        visits.app_started(self.db)
+        self.assertFalse(visits.record_active(self.db, T0 + timedelta(minutes=2)))
+
+    def test_app_start_keeps_close_time(self):
+        visits.record_leave(self.db, T0 + timedelta(minutes=3))
+        visits.app_started(self.db)
+        self.assertEqual(visits.current(self.db)["left_at"], "2026-10-30 16:23")
+
+    def test_no_record_no_leave(self):
+        self.db.set_meta("visit", None)
+        visits.record_leave(self.db, T0)
+        visits.app_started(self.db)
+        self.assertEqual(visits.current(self.db), {})
+
+
 class VisitSummaryTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()
@@ -107,6 +165,16 @@ class VisitApiTests(unittest.TestCase):
         self.assertEqual(visits.current(self.env.db), {})
         self.req("GET", "/api/state", headers={"X-Desk-Client": CID, "X-Desk-Active": "1"})
         self.assertTrue(visits.current(self.env.db).get("last_active"))
+
+    def test_closing_last_screen_records_leave(self):
+        other = "dddddddd-1111-4222-8333-444444444444"
+        self.env.db.set_meta("visit", None)
+        self.req("GET", "/api/state", headers={"X-Desk-Client": CID, "X-Desk-Active": "1"})
+        self.req("GET", "/api/state", headers={"X-Desk-Client": other})
+        self.req("POST", "/api/ui/bye", {"id": CID}, headers={"X-Desk-Client": CID})
+        self.assertNotIn("left_at", visits.current(self.env.db))           # 다른 화면이 아직 열려 있음
+        self.req("POST", "/api/ui/bye", {"id": other}, headers={"X-Desk-Client": other})
+        self.assertTrue(visits.current(self.env.db).get("left_at"))        # 마지막 화면을 닫음
 
     def test_today_lists_items_since_last_visit(self):
         self.env.db.set_meta("visit", {"start": "2026-11-02 08:40", "prev_end": "2000-01-01 00:00", "last_active": "2026-11-02 08:40"})
