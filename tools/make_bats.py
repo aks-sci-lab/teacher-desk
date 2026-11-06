@@ -26,7 +26,8 @@ SHORTCUT_PS = (
     "$s.TargetPath = (Join-Path $dir 'start-desk.bat'); "
     "$s.WorkingDirectory = $dir; "
     "$s.WindowStyle = 7; "
-    "$s.IconLocation = (Join-Path $env:SystemRoot 'System32\\imageres.dll') + ',109'; "
+    "$ico = Join-Path $dir 'web\\icons\\desk.ico'; "
+    "if (Test-Path $ico) { $s.IconLocation = $ico } else { $s.IconLocation = (Join-Path $env:SystemRoot 'System32\\imageres.dll') + ',109' }; "
     "$s.Save(); "
     "Move-Item -LiteralPath $tmp -Destination (Join-Path $d '업무 데스크.lnk') -Force"
 )
