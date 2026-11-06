@@ -45,6 +45,7 @@ class TtlTests(unittest.TestCase):
         self.db = DB(Path(self.tmp.name) / "d.db")
 
     def tearDown(self):
+        self.db.close()
         self.tmp.cleanup()
 
     def logs(self):
