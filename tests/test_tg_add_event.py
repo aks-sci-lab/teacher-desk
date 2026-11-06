@@ -270,7 +270,8 @@ class TelegramAddEventTests(unittest.TestCase):
     def test_menu_button_and_preset_text_and_bad_preset(self):
         self.bot.send_menu(CHAT)
         menu = next(m for m in reversed(self.fake.sent) if "inline_keyboard" in m.get("reply_markup", {}))
-        self.bot.handle_update(press(self.buttons(menu)["일정 추가"]))                  # 메뉴 단추로 시작
+        self.bot.handle_update(press(self.buttons(menu)["📅 달력"]))                    # 메뉴 → 달력 묶음 (같은 메시지를 고침)
+        self.bot.handle_update(press(self.buttons(self.fake.edited[-1])["➕ 일정 추가"]))  # 메뉴 단추로 시작
         self.assertEqual(self.bot.dialog["kind"], "event")
         self.bot.dialog = None
         did = self.start("일정 추가 학년 협의회")
