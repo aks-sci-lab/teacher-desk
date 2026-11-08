@@ -44,7 +44,8 @@ DEFAULTS = {
     "ai_auto_item": True,         # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약 (이 PC 의 LM Studio 로만)
     "ai_base": "http://127.0.0.1:1234/v1",
     "ai_model": "",
-    "ai_input_size": "normal",     # normal: 14000자 / short: 6000자 (짧으면 빠름)
+    "ai_input_size": "normal",
+    "grade_ocr_model": "",         # 손글씨 채점: 글씨를 읽는 비전 모델(LM Studio, 이 PC 만). 비우면 기본 AI 모델 (0.5.80)     # normal: 14000자 / short: 6000자 (짧으면 빠름)
     "ai_provider": "local",       # 일반 질문 전용. 업무자료 요약·검색은 항상 로컬
     "ai_openai_model": "",
     "ai_anthropic_model": "",
@@ -73,7 +74,7 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "layout", "neis_key", "neis_school",
-    "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
+    "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size", "grade_ocr_model",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
 }
@@ -165,6 +166,10 @@ class Config:
             elif k in ("ai_openai_key", "ai_anthropic_key", "ai_gemini_key"):
                 if not isinstance(v, str) or len(v.strip()) > 512 or any(not 33 <= ord(c) <= 126 for c in v.strip()):
                     raise ValueError("API 키 형식이 잘못되었습니다")
+                clean[k] = v.strip()
+            elif k == "grade_ocr_model":
+                if not isinstance(v, str) or (v.strip() and not re.fullmatch(r"[A-Za-z0-9._:/@-]{1,200}", v.strip())):
+                    raise ValueError("손글씨 읽기 모델 이름은 LM Studio 에 보이는 이름 그대로(영문·숫자·/·@ 등) 넣으세요")
                 clean[k] = v.strip()
             elif k == "setup_wizard":
                 if v not in SETUP_WIZARD_STATES:

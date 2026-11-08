@@ -335,13 +335,20 @@ def _note_ttl_refused(base, db):
         db.log("AI 서버가 자동 해제(ttl)를 지원하지 않아 모델이 메모리에 계속 남습니다 (" + key + ")", "warn")
 
 
-def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None):
-    """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌."""
+def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None, images=()):
+    """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌.
+
+    images: 그림 주소('data:image/jpeg;base64,…') 목록. 비전 모델에 손글씨 답안을 읽힐 때 (0.5.80, 이 PC 의 LM Studio 로만).
+    """
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
+    content = prompt
+    if images:
+        content = [{"type": "text", "text": prompt}] + [
+            {"type": "image_url", "image_url": {"url": url}} for url in images]
     payload = {
         "model": model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
         "temperature": 0.2, "max_tokens": max_tokens, "stream": False,
     }
     # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)

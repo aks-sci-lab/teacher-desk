@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, visits, grading, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -134,6 +134,8 @@ class App:
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
         # 항목별 AI 요약 대기열: 새 항목은 자동으로, 눌렀거나 연 항목은 맨 앞으로 (브리핑 요약이 도는 중이면 기다림)
         self.item_ai = ai.ItemJob(db, config, busy=lambda: self.ai_job.running)
+        # 손글씨 채점: 답안지 읽기·점수 제안도 뒤에서 하나씩 (브리핑 요약이 도는 중이면 기다림, 0.5.80)
+        self.grading = grading.Job(db, config, busy=lambda: self.ai_job.running)
 
 
 def make_handler(app):
@@ -1602,6 +1604,122 @@ def ai_question(app, q, body):
     except ai.AIError as e:
         raise ApiError(400, str(e)) from e
     return {"text": text, "provider": provider}
+
+
+# ---------------------------------------------------------------- 손글씨 채점 (0.5.80)
+def grading_call(fn, *args):
+    try:
+        return fn(*args)
+    except (grading.GradeError, ai.AIError) as e:
+        raise ApiError(400, str(e)) from e
+
+
+def grading_ids(body, key):
+    ids = body.get(key)
+    need(isinstance(ids, list) and all(isinstance(i, int) and not isinstance(i, bool) for i in ids) and len(ids) <= 2000,
+         "고를 목록이 잘못되었습니다")
+    return ids
+
+
+@api("GET", "/api/grading/tasks")
+def grading_tasks(app, q, body):
+    return {"tasks": grading.list_tasks(app.db), "kinds": grading.KINDS,
+            "ocr_model": app.config["grade_ocr_model"], "ai_model": app.config["ai_model"]}
+
+
+@api("POST", "/api/grading/tasks")
+def grading_task_new(app, q, body):
+    return grading_call(grading.create_task, app.db, body)
+
+
+@api("GET", r"/api/grading/tasks/(\d+)")
+def grading_task_get(app, q, body, tid):
+    out = grading_call(grading.task, app.db, int(tid))
+    out["pending"] = app.grading.pending()
+    return out
+
+
+@api("PUT", r"/api/grading/tasks/(\d+)")
+def grading_task_put(app, q, body, tid):
+    return grading_call(grading.update_task, app.db, int(tid), body)
+
+
+@api("DELETE", r"/api/grading/tasks/(\d+)")
+def grading_task_del(app, q, body, tid):
+    grading_call(grading.delete_task, app.db, app.config.data_dir, int(tid))
+    return {"ok": True}
+
+
+@api("POST", r"/api/grading/tasks/(\d+)/sheets")
+def grading_upload(app, q, body, tid):
+    return grading_call(grading.add_sheets, app.db, app.config.data_dir, int(tid), body)
+
+
+@api("POST", r"/api/grading/tasks/(\d+)/ocr")
+def grading_ocr(app, q, body, tid):
+    """손글씨 읽기 시작: sheet_ids 가 없으면 아직 안 읽은(또는 실패한) 답안지 전부."""
+    tid = int(tid)
+    grading_call(grading.get_task_row, app.db, tid)
+    grading_call(ai.check_local, app.config["ai_base"])
+    rows = app.db.query("SELECT id, ocr_status FROM grade_sheets WHERE task_id = ?", (tid,))
+    if "sheet_ids" in body:
+        wanted = set(grading_ids(body, "sheet_ids"))
+        ids = [r["id"] for r in rows if r["id"] in wanted]
+    else:
+        ids = [r["id"] for r in rows if r["ocr_status"] in ("", "error")]
+    return {"added": app.grading.add("ocr", ids)}
+
+
+@api("POST", r"/api/grading/tasks/(\d+)/score")
+def grading_score(app, q, body, tid):
+    """AI 점수 제안 시작: answer_ids 가 없으면 아직 제안이 없는 답 전부 (선생님이 정한 점수는 바꾸지 않음)."""
+    tid = int(tid)
+    grading_call(grading.get_task_row, app.db, tid)
+    grading_call(ai.check_local, app.config["ai_base"])
+    rows = app.db.query("SELECT a.id, a.ai_status FROM grade_answers a JOIN grade_sheets s ON s.id = a.sheet_id "
+                        "WHERE s.task_id = ?", (tid,))
+    if "answer_ids" in body:
+        wanted = set(grading_ids(body, "answer_ids"))
+        ids = [r["id"] for r in rows if r["id"] in wanted]
+    else:
+        ids = [r["id"] for r in rows if r["ai_status"] in ("", "error")]
+    return {"added": app.grading.add("score", ids)}
+
+
+@api("GET", r"/api/grading/tasks/(\d+)/export")
+def grading_export(app, q, body, tid):
+    data, title = grading_call(grading.export_csv, app.db, int(tid))
+    from urllib.parse import quote
+    name = quote(f"채점-{title}.csv")
+    return (200, data, "text/csv; charset=utf-8",
+            {"Content-Disposition": f"attachment; filename=\"grading.csv\"; filename*=UTF-8''{name}", "Cache-Control": "no-store"})
+
+
+@api("PATCH", r"/api/grading/sheets/(\d+)")
+def grading_sheet_patch(app, q, body, sid):
+    return grading_call(grading.update_sheet, app.db, int(sid), body)
+
+
+@api("DELETE", r"/api/grading/sheets/(\d+)")
+def grading_sheet_del(app, q, body, sid):
+    return grading_call(grading.delete_sheet, app.db, app.config.data_dir, int(sid))
+
+
+@api("GET", r"/api/grading/sheets/(\d+)/image/(\d+)")
+def grading_sheet_image(app, q, body, sid, n):
+    data, ctype = grading_call(grading.sheet_image, app.db, app.config.data_dir, int(sid), int(n))
+    return (200, data, ctype, {"Cache-Control": "no-store"})
+
+
+@api("PATCH", r"/api/grading/answers/(\d+)")
+def grading_answer_patch(app, q, body, aid):
+    return grading_call(grading.update_answer, app.db, body, int(aid))
+
+
+@api("PATCH", r"/api/grading/sheets/(\d+)/questions/(\d+)")
+def grading_answer_new(app, q, body, sid, qid):
+    """AI 가 못 읽은 문항 칸에 선생님이 직접 답·점수를 넣을 때."""
+    return grading_call(grading.update_answer, app.db, body, None, int(sid), int(qid))
 
 
 @api("POST", "/api/ai/setup/spec")

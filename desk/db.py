@@ -121,6 +121,59 @@ CREATE TABLE IF NOT EXISTS todo_notes (
 );
 CREATE INDEX IF NOT EXISTS todo_notes_todo ON todo_notes(todo_id);
 
+-- 서술형·수행평가 손글씨 채점 (0.5.80): 답안지 그림·옮겨 적은 글·점수는 이 PC 에만
+CREATE TABLE IF NOT EXISTS grade_tasks (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'essay',   -- essay: 서술형 평가 / performance: 수행평가
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS grade_questions (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL REFERENCES grade_tasks(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL,
+    prompt TEXT,                     -- 문제 (OCR 이 답 칸을 찾는 데 참고)
+    answer TEXT,                     -- 모범 답안
+    rubric TEXT,                     -- 채점 기준
+    max_score REAL NOT NULL DEFAULT 0,
+    UNIQUE(task_id, number)
+);
+
+CREATE TABLE IF NOT EXISTS grade_sheets (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL REFERENCES grade_tasks(id) ON DELETE CASCADE,
+    student_number INTEGER,
+    student_name TEXT,
+    images TEXT NOT NULL,            -- data/grading/ 안의 그림 파일 이름 JSON 배열 (여러 쪽)
+    ocr_status TEXT DEFAULT '',      -- '' 아직 / waiting / running / done / error
+    ocr_error TEXT,
+    ocr_model TEXT,
+    ocr_at TEXT,
+    ocr_raw TEXT,                    -- AI 가 옮겨 적은 글 전체 (문항으로 못 나눴을 때 확인용)
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS grade_sheets_task ON grade_sheets(task_id);
+
+CREATE TABLE IF NOT EXISTS grade_answers (
+    id INTEGER PRIMARY KEY,
+    sheet_id INTEGER NOT NULL REFERENCES grade_sheets(id) ON DELETE CASCADE,
+    question_id INTEGER NOT NULL REFERENCES grade_questions(id) ON DELETE CASCADE,
+    ocr_text TEXT,                   -- AI 가 읽은 그대로
+    text TEXT,                       -- 선생님이 확인·고친 답 (채점에 씀)
+    edited INTEGER DEFAULT 0,        -- 1: 선생님이 고침 (다시 읽어도 덮어쓰지 않음)
+    score REAL,                      -- 선생님이 정한 점수 (NULL: 아직)
+    ai_score REAL,                   -- AI 가 제안한 점수 (참고용)
+    ai_reason TEXT,
+    ai_model TEXT,
+    ai_status TEXT DEFAULT '',       -- '' / waiting / running / done / error
+    ai_error TEXT,
+    comment TEXT,                    -- 선생님 메모 (학생에게 돌려줄 말 등)
+    updated_at TEXT,
+    UNIQUE(sheet_id, question_id)
+);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,

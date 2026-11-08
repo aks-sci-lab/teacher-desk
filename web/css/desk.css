@@ -1228,3 +1228,27 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .setup-summary li.ok .mark { color: var(--ok); }
 .setup-summary li.empty .mark { color: var(--muted); }
 .setup-toast .btn { margin-left: 6px; background: var(--surface); color: var(--ink); border-color: var(--surface); }
+/* 손글씨 채점 (0.5.80) */
+.field.inline { flex-direction: row; align-items: center; gap: 6px; margin-bottom: 0; }
+.grade-q textarea { width: 100%; margin-top: 6px; }
+.grade-tools { flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.grade-model { margin-bottom: 8px; }
+.grade-model summary { cursor: pointer; font-weight: 600; }
+.grade-model input[type=text] { flex: 1; min-width: 14em; }
+.grade-layout { display: grid; grid-template-columns: minmax(150px, 210px) minmax(0, 1fr); gap: 12px; align-items: start; }
+.grade-roster { border: 1px solid var(--line); border-radius: 8px; max-height: 75vh; overflow: auto; }
+.grade-who { flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.grade-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.grade-images { position: sticky; top: 0; max-height: 80vh; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.grade-img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.grade-answer { margin: 0 0 10px; }
+.grade-head { gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.grade-text { width: 100%; font-size: 1.05em; line-height: 1.5; }
+.grade-ai { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; color: var(--accent); }
+.grade-answer input[type=text] { width: 100%; }
+.grade-total { font-weight: 700; margin: 0 0 8px; }
+@media (max-width: 900px) {
+    .grade-layout, .grade-split { grid-template-columns: minmax(0, 1fr); }
+    .grade-images { position: static; max-height: none; }
+    .grade-roster { max-height: 30vh; }
+}
