@@ -1362,3 +1362,40 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .cl-big.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .cl-cast-stage .cl-bars { text-align: left; }
 @media print { .cl-print .cl-bar .fill { background: #555; opacity: 1; } .cl-print .cl-bar .track { border: 1px solid #000; } }
+
+/* ---------- 학급 제출물·상담 (0.5.82) ---------- */
+.cl-sections { display: grid; grid-template-columns: repeat(3, 1fr); margin: 8px var(--pad) 4px; }
+.cl-sections button { padding: 6px 4px; }
+.cl-mx-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.cl-mx { max-width: none; width: auto; min-width: 100%; }
+.cl-mx th.sticky { position: sticky; left: 0; background: var(--surface); z-index: 1; min-width: 7.5em; white-space: nowrap; }
+.cl-mx thead th { position: sticky; top: 0; background: var(--surface); z-index: 2; vertical-align: bottom; }
+.cl-mx thead th.sticky { z-index: 3; }
+.cl-mx-h { min-width: 7.5em; max-width: 12em; text-align: center; }
+.cl-mx-h .linkish { border: 0; background: none; padding: 0; font: inherit; font-weight: 700; color: var(--accent); cursor: pointer; text-align: center; }
+.cl-mx td.cl-mx-c { text-align: center; padding: 3px 6px; }
+.cl-mx tr:hover th.sticky, .cl-mx tr:hover td { background: var(--surface-2); }
+.cl-mark { width: 100%; min-width: 3.5em; min-height: 30px; border: 1px dashed var(--line-strong); border-radius: 6px; background: transparent; cursor: pointer; font-weight: 700; }
+.cl-mark.done { border: 1px solid transparent; background: var(--ok-soft); color: var(--ok); }
+.cl-mark.done.late { background: var(--warn-soft); color: var(--warn); }
+.cl-mark.late small { font-weight: 400; margin-left: 3px; }
+.cl-mark.exempt { border: 1px solid transparent; background: var(--surface-2); color: var(--muted); font-weight: 400; font-size: .85em; }
+.cl-mx .bad { color: var(--danger); }
+.cl-chips .cl-chip { cursor: pointer; font: inherit; }
+.cl-chips button.cl-chip:hover { border-color: var(--ok); }
+.tag.ok { color: var(--ok); background: var(--ok-soft); }
+.tag.warn { color: var(--warn); background: var(--warn-soft); }
+.tag.bad { color: var(--danger); background: var(--danger-soft); }
+.cl-private { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--radius); background: var(--accent-soft); font-size: var(--fs-small); }
+.cl-pending { max-width: 980px; margin-bottom: 12px; }
+.cl-pending h3 { margin: 0 0 6px; color: var(--warn); }
+.cl-cs-list { display: flex; flex-direction: column; gap: 6px; max-width: 1100px; }
+.cl-cs { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.cl-cs > summary { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 9px 12px; cursor: pointer; }
+.cl-cs-date { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 8.5em; }
+.cl-cs-topic { font-weight: 700; }
+.cl-cs-body { padding: 0 14px 12px; border-top: 1px solid var(--line); }
+.cl-cs-text { white-space: pre-wrap; line-height: 1.6; }
+.cl-cs-form { max-width: 760px; }
+.cl-cs-form .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+@media print { .cl-print td.pre { white-space: pre-wrap; } .cl-print .cl-table { font-size: 10pt; } }

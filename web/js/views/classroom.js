@@ -5,12 +5,15 @@ import { el, clear, guarded, toast, longDate, todayIso } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on, showView } from '../shell.js';
 import { store } from '../store.js';
 import { renderVotes, renderVoteSide } from './classvote.js';
+import { renderTasks, renderTaskSide, renderCounsel, renderCounselSide } from './classrecords.js';
 
 const SECTIONS = [
     { id: 'seats', label: '좌석' },
     { id: 'roles', label: '역할' },
     { id: 'groups', label: '모둠' },
     { id: 'votes', label: '투표' },
+    { id: 'tasks', label: '제출물' },
+    { id: 'counsel', label: '상담' },
 ];
 const ROLE_TABS = [
     { id: 'clean', label: '청소 구역' },
@@ -582,6 +585,8 @@ function render(pane, tab) {
     if (section === 'seats') renderSeats(pane);
     else if (section === 'roles') renderRoles(pane);
     else if (section === 'votes') renderVotes(pane);
+    else if (section === 'tasks') renderTasks(pane);
+    else if (section === 'counsel') renderCounsel(pane);
     else renderGroups(pane);
 }
 
@@ -593,7 +598,7 @@ export function openClassroom(sec, sub) {
 }
 
 function renderSide(body) {
-    body.append(el('div.seg.attendance-sections', SECTIONS.map(s => el('button', {
+    body.append(el('div.seg.attendance-sections.cl-sections', SECTIONS.map(s => el('button', {
         className: s.id === section ? 'on' : '', type: 'button',
         onclick: () => { if (s.id !== section) { section = s.id; picked = null; refreshSide(); openClassroom(); } },
     }, s.label))));
@@ -603,6 +608,8 @@ function renderSide(body) {
     }, el('span.ttl', t.label)))),
     el('p.small.muted.cl-side-p', '청소 구역·1인 1역은 주기마다 자동으로 돌고, 주번·당번은 번호 순서대로 돕니다.'));
     else if (section === 'votes') renderVoteSide(body);
+    else if (section === 'tasks') renderTaskSide(body);
+    else if (section === 'counsel') renderCounselSide(body);
     else body.append(el('p.small.muted.cl-side-p', '모둠 수나 인원을 정하고 나눕니다. 떼어 놓을 학생은 다른 모둠으로, 지난 모둠과는 덜 겹치게 나눕니다.'));
     body.append(el('p.small.muted.cl-side-p', '🔐 학급 자료는 이 PC 에만 저장되고 검색·AI·텔레그램으로 보내지 않습니다.'));
 }
