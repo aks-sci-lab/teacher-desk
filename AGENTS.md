@@ -84,6 +84,7 @@ Claude Code·GitHub Copilot 대화는 먼저 **개발**과 **머지** 역할로 
 | 출결·증 발급 | 조퇴·외출증, 결석계, 월별 통계, 인쇄, 학생 공유 페이지 | `absence.py` `printing.py` `passlink.py` `queries.py`(출결) · `views/passes.js` `views/absence.js` `views/attendance.js` · `pass/` |
 | 일정·시간표·주간 계획 | 달력·일정, 학사일정(파일·나이스), 시간표·교체·수업 알림, 주간 계획, 브리핑 일정 카드 | `schoolcal.py` `xlsx.py` `neis.py` `timetable.py` `bell.py` `weekplan.py` `ics.py` · `views/calendar.js` `views/schoolcal.js` `views/timetable.js` `views/week.js` `views/today.js`(일정 카드) |
 | 텔레그램 | 봇 명령·알림·대화형 입력 | `telegram.py` `assist.py` |
+| 학급 경영 | 좌석 배치도, 청소 구역·1인 1역·주번/일일 당번, 모둠, (다음) 교실 화면 투표·제출물 확인·상담 기록. 학생 명단은 출결 것을 번호로 씀 | `classroom.py` · `views/classroom.js` · `views/today.js` 의 학급 카드 |
 | 브라우저 확장·외부 연동 | 에듀파인·나이스 화면 보내기, 나이스 입력 칸 채우기(**보류**) | `browser-extension/` `capture.py` `neisfill.py` · `views/neisfill.js` |
 | UI·사용성 | 글자 크기·배치·가독성·정보 밀도·접근성·화면 간 일관성. 기능 동작은 해당 기능 담당과 조율 | `web/css/desk.css`(자기 영역 묶음) · 기능 화면의 표현 부분 |
 | 앱 기반·설정·배포·품질 | 화면 틀(탭·팝업·메뉴), 설정 화면, 전용 창, 업데이트, 윈도우 ZIP·CI, 성능·무결성 점검(코파일럿 계획 검토 포함) | `server.py`(공통 부분) `config.py` `db.py` `window.py` `background.py` `updater.py` `desk.py` · `shell.js` `ui.js` `api.js` `store.js` `singleton.js` `update.js` `main.js` `views/settings.js` · `tools/` `.github/` |

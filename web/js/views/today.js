@@ -8,6 +8,7 @@ import { openItem, openPaste, collectNow } from './inbox.js';
 import { openForm, openPass } from './passes.js';
 import { openCalendar } from './calendar.js';
 import { openTimetable } from './timetable.js';
+import { openClassroom } from './classroom.js';
 
 const KIND = { early: '조퇴', out: '외출' };
 
@@ -531,6 +532,21 @@ function statusChip(s, st) {
         `${last} 수집 · 다음 ${st?.next_collect || '-'}`);
 }
 
+// 학급: 오늘 당번·이번 주 주번·이번 기간 청소 (설정한 것만, 작게. 0.5.80)
+function classCard(c) {
+    if (!c) return null;
+    const names = list => list.map(x => x.name).join(', ');
+    const lines = [
+        c.day && el('div.cl-brief', el('b', '오늘 당번'), c.day.length ? names(c.day) : el('span.muted', '쉬는 날')),
+        c.week && el('div.cl-brief', el('b', '이번 주 주번'), names(c.week)),
+        c.clean && el('div.cl-brief.clean', el('b', `청소 (${c.clean.label})`),
+            c.clean.areas.filter(a => a.students.length).map(a => el('div', el('span.muted', a.name), ' ', names(a.students)))),
+    ].filter(Boolean);
+    if (!lines.length) return null;
+    return card('학급 당번 · 청소', null, el('div', { onclick: () => openClassroom('roles', c.day || c.week ? 'duty' : 'clean'),
+        title: '학급 메뉴에서 열기', className: 'cl-brief-box' }, lines), { cls: 'class-card' });
+}
+
 function renderToday(pane) {
     pane.append(el('p.muted', '불러오는 중…'));
     guarded(async () => {
@@ -592,6 +608,7 @@ function renderToday(pane) {
                             el('span.meta', KIND[p.kind], p.time_out || '', p.time_return ? `~${p.time_return}` : '',
                                 p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
                         : el('p.muted.small', '없음')),
+                    classCard(s.classroom),
                     newCard].filter(Boolean);
                 const l = emptyStrip(left), r = emptyStrip(right);
                 const strip = [l.strip, r.strip].filter(Boolean);

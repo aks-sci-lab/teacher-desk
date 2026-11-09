@@ -14,12 +14,13 @@ import './views/week.js';
 import './views/neisfill.js';
 import './views/search.js';
 import './views/ai.js';
+import './views/classroom.js';
 import { openSettings } from './views/settings.js';
 import { maybeStartSetup } from './views/setup.js';
 import { api } from './api.js';
 import { startUpdate } from './update.js';
 
-orderViews(['today', 'week', 'inbox', 'calendar', 'timetable', 'attendance', 'search', 'ai', 'neis-fill', 'settings']);
+orderViews(['today', 'week', 'inbox', 'calendar', 'timetable', 'attendance', 'classroom', 'search', 'ai', 'neis-fill', 'settings']);
 
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
