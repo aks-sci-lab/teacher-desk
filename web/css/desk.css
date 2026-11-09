@@ -1313,3 +1313,52 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
     .cl-print .cl-chip { border: 0; padding: 0 6px 0 0; }
     .cl-print .cl-group { border: 1px solid #000; padding: 4mm; break-inside: avoid; }
 }
+
+/* ---------- 학급 투표 (0.5.81): 교실 화면(TV) 투표 ---------- */
+.cl-vote-form .card { max-width: 760px; }
+.cl-vote-form .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.cl-vote-now { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.cl-vote-now .card { margin: 0; }
+.cl-vote-now h3 { margin: 0 0 8px; }
+.cl-vote-opts { margin: 0 0 8px; padding-left: 1.6em; line-height: 1.8; }
+.cl-vote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 8px; }
+.cl-vote-grid.small-grid { grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 4px; margin-bottom: 8px; }
+.cl-vote-grid.small-grid span { padding: 4px 0; text-align: center; border-radius: 6px; border: 1px solid var(--line-strong); }
+.cl-vote-grid.small-grid span.done { background: var(--ok-soft); color: var(--ok); border-color: transparent; font-weight: 700; }
+.cl-vote-manual { max-width: 560px; }
+.cl-result { max-width: 980px; margin-bottom: 12px; }
+.cl-verdict { margin: 0 0 4px; }
+.cl-verdict.tie { color: var(--warn); }
+.cl-bars { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.cl-bar { display: grid; grid-template-columns: minmax(6em, 14em) minmax(0, 1fr) 6.5em; gap: 10px; align-items: center; }
+.cl-bar .lbl { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-bar .track { height: 24px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+.cl-bar .fill { display: block; height: 100%; background: var(--accent); opacity: .55; border-radius: 6px; }
+.cl-bar.win .fill { opacity: 1; }
+.cl-bar.tie .fill { background: var(--warn); opacity: 1; }
+.cl-bar.abstain .fill { background: var(--muted); }
+.cl-bar .val { font-weight: 700; }
+.cl-bar .val small { font-weight: 400; color: var(--muted); }
+.cl-bars.big .cl-bar { grid-template-columns: minmax(0, 26%) minmax(0, 1fr) minmax(0, 18%); font-size: 1.6em; }
+.cl-bars.big .track { height: 44px; }
+
+/* 전체 화면 덮개: 교실 TV 에서 멀리서도 보이게 큰 글자 */
+.cl-cast { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; overflow: auto; outline: none; }
+.cl-cast-exit { position: absolute; top: 12px; right: 14px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: 0.9em; }
+.cl-cast-stage { margin: auto; width: min(1400px, 94vw); padding: 40px 0; text-align: center; font-size: clamp(18px, 1.6vw, 30px); }
+.cl-cast-stage h2 { font-size: 2em; margin: 10px 0 8px; }
+.cl-cast-title { color: var(--muted); font-weight: 700; font-size: 1.1em; }
+.cl-cast-sub { color: var(--muted); margin: 0 0 24px; font-size: 1.1em; }
+.cl-cast-stage .cl-vote-grid { grid-template-columns: repeat(auto-fill, minmax(clamp(70px, 7vw, 130px), 1fr)); gap: 12px; }
+.cl-cast-stage .cl-vote-grid button { padding: 0.7em 0; font-size: 1.5em; font-weight: 800; border: 2px solid var(--line-strong); border-radius: 12px; background: var(--surface); cursor: pointer; }
+.cl-cast-stage .cl-vote-grid button:hover { border-color: var(--accent); color: var(--accent); }
+.cl-cast-stage .cl-vote-grid button.done { opacity: .35; cursor: default; font-size: 1.1em; }
+.cl-cast-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(clamp(200px, 22vw, 420px), 1fr)); gap: 16px; }
+.cl-cast-opts button { padding: 1em 0.6em; font-size: 1.5em; font-weight: 800; border: 2px solid var(--line-strong); border-radius: 14px; background: var(--surface); cursor: pointer; }
+.cl-cast-opts button:hover { border-color: var(--accent); background: var(--accent-soft); }
+.cl-cast-opts button.abstain { color: var(--muted); font-weight: 600; }
+.cl-cast-row { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap; }
+.cl-big { min-width: 8em; padding: 0.6em 1.2em; font-size: 1.4em; font-weight: 700; border: 2px solid var(--line-strong); border-radius: 12px; background: var(--surface); cursor: pointer; }
+.cl-big.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.cl-cast-stage .cl-bars { text-align: left; }
+@media print { .cl-print .cl-bar .fill { background: #555; opacity: 1; } .cl-print .cl-bar .track { border: 1px solid #000; } }
