@@ -121,6 +121,21 @@ CREATE TABLE IF NOT EXISTS todo_notes (
 );
 CREATE INDEX IF NOT EXISTS todo_notes_todo ON todo_notes(todo_id);
 
+-- 학급 경영 (0.5.80): 좌석·청소·1인 1역·당번·모둠의 지금 자료(JSON)와 예전 배치 기록. 학생은 번호로 연결
+CREATE TABLE IF NOT EXISTS class_data (
+    kind TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS class_history (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL,
+    label TEXT,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS class_history_kind ON class_history(kind, id);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,

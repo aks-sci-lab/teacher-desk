@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, classroom, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -1172,6 +1172,20 @@ def list_holidays(app, q, body):
     return holidays.holidays_between(start, end)
 
 
+# ---- 학급 경영 (desk/classroom.py 의 기능을 등록) ----
+def _class_route(fn):
+    def handler(app, q, body, *groups):
+        try:
+            return fn(app.db, q, body, *groups)
+        except classroom.ClassError as e:
+            raise ApiError(400, str(e))
+    return handler
+
+
+for _m, _p, _fn in classroom.ROUTES:
+    api(_m, _p)(_class_route(_fn))
+
+
 # ---- 대시보드·검색·수집 ----
 @api("GET", "/api/today")
 def get_today(app, q, body):
@@ -1188,6 +1202,7 @@ def get_today(app, q, body):
         summary = r.pop("ai_summary")
         r["ai_line"] = ai.summary_line(summary) if show_ai else ""
     s["since_visit"] = {**v, "items": rows}
+    s["classroom"] = classroom.brief(app.db)   # 오늘 당번·이번 주 청소 (화면에만)
     return s
 
 

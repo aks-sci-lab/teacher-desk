@@ -1228,3 +1228,88 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .setup-summary li.ok .mark { color: var(--ok); }
 .setup-summary li.empty .mark { color: var(--muted); }
 .setup-toast .btn { margin-left: 6px; background: var(--surface); color: var(--ink); border-color: var(--surface); }
+
+/* ---------- 학급 경영 (0.5.80): 좌석·역할·모둠 ---------- */
+.cl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 10px; }
+.cl-head h1 { margin: 0; }
+.cl-head .seg button.on, .cl-subtabs button.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.cl-subtabs { margin-bottom: 14px; }
+.cl-tools { margin-bottom: 12px; }
+.cl-note { margin: 0 0 10px; color: var(--warn); }
+.cl-warn { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; margin-bottom: 12px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn); }
+.cl-empty { max-width: 640px; }
+.cl-side-p { padding: 8px var(--pad) 0; margin: 0; }
+.cl-num { width: 5.5em; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); }
+.cl-list { width: 100%; }
+.cl-settings { margin: 16px 0 8px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.cl-settings > summary { cursor: pointer; font-weight: 700; }
+.cl-settings[open] > summary { margin-bottom: 12px; }
+.cl-set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 20px; align-items: start; }
+.cl-chip { display: inline-flex; gap: 5px; align-items: baseline; padding: 3px 9px; margin: 2px 4px 2px 0; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); white-space: nowrap; }
+.cl-chip[draggable="true"] { cursor: grab; }
+.cl-chip b { color: var(--muted); font-size: var(--fs-small); }
+.drop-on { outline: 2px dashed var(--accent); outline-offset: 2px; background: var(--accent-soft); }
+
+/* 좌석 배치도: 칸 크기는 화면 폭에 맞춰 늘고 줄음 */
+.cl-room { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.cl-board { align-self: center; width: min(60%, 520px); padding: 6px; text-align: center; border-radius: 6px; background: #2f4f3a; color: #f2f5f0; font-weight: 700; letter-spacing: .2em; }
+.cl-grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 8px 6px; }
+.cl-seat { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 64px; padding: 6px 4px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); cursor: pointer; user-select: none; text-align: center; }
+.cl-seat.aisle { margin-right: 18px; }
+.cl-seat .no { font-size: var(--fs-small); color: var(--muted); }
+.cl-seat .nm { font-weight: 700; font-size: 1.05em; overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap; }
+.cl-seat.empty { border-style: dashed; background: transparent; }
+.cl-seat.off { border-color: transparent; background: repeating-linear-gradient(45deg, transparent 0 6px, var(--surface-2) 6px 12px); cursor: default; }
+.cl-seat.locked { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.cl-seat.picked { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cl-seat .lock { position: absolute; top: 2px; right: 2px; border: 0; background: none; padding: 0 2px; cursor: pointer; font-size: .8em; opacity: .35; }
+.cl-seat:hover .lock, .cl-seat.locked .lock { opacity: 1; }
+.cl-unseated { margin-top: 12px; padding: 10px 12px; min-height: 48px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+.cl-unseated > .muted { display: block; margin-bottom: 6px; }
+@media (min-width: 1900px) { .cl-seat { min-height: 76px; } .cl-seat .nm { font-size: 1.15em; } }
+
+/* 역할·당번 표 */
+.cl-table { border-collapse: collapse; width: 100%; max-width: 980px; background: var(--surface); }
+.cl-table th, .cl-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.cl-table thead th { font-size: var(--fs-small); color: var(--muted); }
+.cl-table tbody th { width: 11em; white-space: nowrap; }
+.cl-table td.num { width: 4.5em; color: var(--muted); }
+.cl-table td.num.short { color: var(--danger); font-weight: 700; }
+.cl-table tr.rest th, .cl-table tr.rest td { background: var(--surface-2); }
+.cl-table tr.today th { color: var(--accent); }
+.cl-table tr.today { box-shadow: inset 3px 0 0 var(--accent); }
+.cl-past { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-small); }
+.cl-duty-now { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.cl-duty-now .card { margin: 0; min-width: 260px; }
+.cl-duty-now h3 { margin: 0 0 6px; }
+.cl-duty-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.cl-duty-sets { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.cl-duty-sets .card { margin: 0; }
+
+/* 모둠 */
+.cl-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.cl-group { margin: 0; }
+.cl-group h3 { margin: 0 0 8px; }
+
+/* 브리핑 카드 */
+.cl-brief-box { cursor: pointer; }
+.cl-brief { display: flex; gap: 8px; padding: 3px 0; }
+.cl-brief b { flex: none; min-width: 6.5em; }
+.cl-brief.clean { flex-direction: column; gap: 2px; }
+
+/* 인쇄 */
+@media print {
+    .cl-print h1 { font-size: 18pt; margin: 0 0 10mm; text-align: center; }
+    .cl-print h1 small { font-size: 11pt; font-weight: 400; }
+    .cl-print .cl-room { border: 0; padding: 0; gap: 8mm; }
+    .cl-print .cl-board { background: #fff; color: #000; border: 1.5px solid #000; }
+    .cl-print .cl-seat { min-height: 18mm; border: 1.2px solid #000; break-inside: avoid; }
+    .cl-print .cl-seat.empty { border-style: dashed; }
+    .cl-print .cl-seat.off { border: 0; background: none; }
+    .cl-print .cl-seat .nm { font-size: 14pt; }
+    .cl-print .cl-seat .no { color: #000; }
+    .cl-print .cl-print-foot { margin-top: 8mm; text-align: right; }
+    .cl-print .cl-table th, .cl-print .cl-table td { border: 1px solid #000; }
+    .cl-print .cl-chip { border: 0; padding: 0 6px 0 0; }
+    .cl-print .cl-group { border: 1px solid #000; padding: 4mm; break-inside: avoid; }
+}
