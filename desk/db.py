@@ -135,6 +135,25 @@ CREATE TABLE IF NOT EXISTS class_history (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS class_history_kind ON class_history(kind, id);
+-- 학급 투표 (0.5.81): 비밀 투표라 '누가 투표했나'(번호)와 '몇 표'(counts)를 따로 두고, 누가 무엇을 골랐는지는 남기지 않음
+CREATE TABLE IF NOT EXISTS class_votes (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    mode TEXT NOT NULL,              -- secret: 교실 화면 비밀 투표 / manual: 손들기·종이 결과 입력
+    options TEXT NOT NULL,           -- JSON 배열
+    abstain INTEGER DEFAULT 0,       -- 1: 마지막 칸이 '기권'
+    counts TEXT NOT NULL,            -- JSON 배열 (선택지 순서, 기권은 끝)
+    status TEXT DEFAULT 'open',      -- open / closed
+    created_at TEXT NOT NULL,
+    closed_at TEXT,
+    drawn TEXT,                      -- 동점 제비뽑기 결과 JSON
+    parent_id INTEGER                -- 결선 투표면 원래 투표
+);
+CREATE TABLE IF NOT EXISTS class_vote_voters (
+    vote_id INTEGER NOT NULL,
+    number INTEGER NOT NULL,
+    PRIMARY KEY (vote_id, number)
+);
 
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY,

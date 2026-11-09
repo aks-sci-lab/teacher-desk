@@ -4,11 +4,13 @@ import { api } from '../api.js';
 import { el, clear, guarded, toast, longDate, todayIso } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on, showView } from '../shell.js';
 import { store } from '../store.js';
+import { renderVotes, renderVoteSide } from './classvote.js';
 
 const SECTIONS = [
     { id: 'seats', label: '좌석' },
     { id: 'roles', label: '역할' },
     { id: 'groups', label: '모둠' },
+    { id: 'votes', label: '투표' },
 ];
 const ROLE_TABS = [
     { id: 'clean', label: '청소 구역' },
@@ -579,6 +581,7 @@ function render(pane, tab) {
     tab.setTitle(`학급 · ${selected.label}`);
     if (section === 'seats') renderSeats(pane);
     else if (section === 'roles') renderRoles(pane);
+    else if (section === 'votes') renderVotes(pane);
     else renderGroups(pane);
 }
 
@@ -599,6 +602,7 @@ function renderSide(body) {
         className: t.id === roleTab ? 'on' : '', onclick: () => openClassroom('roles', t.id),
     }, el('span.ttl', t.label)))),
     el('p.small.muted.cl-side-p', '청소 구역·1인 1역은 주기마다 자동으로 돌고, 주번·당번은 번호 순서대로 돕니다.'));
+    else if (section === 'votes') renderVoteSide(body);
     else body.append(el('p.small.muted.cl-side-p', '모둠 수나 인원을 정하고 나눕니다. 떼어 놓을 학생은 다른 모둠으로, 지난 모둠과는 덜 겹치게 나눕니다.'));
     body.append(el('p.small.muted.cl-side-p', '🔐 학급 자료는 이 PC 에만 저장되고 검색·AI·텔레그램으로 보내지 않습니다.'));
 }
