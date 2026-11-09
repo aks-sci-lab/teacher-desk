@@ -24,8 +24,19 @@ class VoteTests(ApiBase):
         st, got = self.req("GET", f"/api/class/votes/{v['id']}")
         self.assertEqual(got["voters"], [1])
         self.assertNotIn("counts", got)          # 투표 중에는 몇 표인지 화면에 안 감
-        st, got = self.req("GET", f"/api/class/votes/{v['id']}?reveal=1")
-        self.assertEqual(got["counts"], [1, 0, 0])
+        st, got = self.req("GET", f"/api/class/votes/{v['id']}?reveal=1")   # 예전 시험용 길도 막힘
+        self.assertNotIn("counts", got)
+        self.assertNotIn("result", got)
+        st, lst = self.req("GET", "/api/class/votes")
+        self.assertNotIn("counts", str(lst))
+        st, b = self.req("POST", f"/api/class/votes/{v['id']}/ballot", {"number": 2, "choice": 1})
+        self.assertEqual(set(b), {"ok", "voted", "eligible"})          # 투표 답에도 표 수 없음
+        st, got = self.req("POST", f"/api/class/votes/{v['id']}/close", {})
+        self.assertEqual(got["counts"], [1, 1, 0])
+
+    def test_secure_delete_on(self):
+        # 표 수를 고쳐 쓸 때 예전 값이 DB 파일 빈 곳에 남지 않게
+        self.assertEqual(self.env.db.conn.execute("PRAGMA secure_delete").fetchone()[0], 1)
 
     def test_secret_no_link_between_voter_and_choice(self):
         v = self.make()

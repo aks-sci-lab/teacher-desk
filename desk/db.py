@@ -176,6 +176,8 @@ class DB:
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # 지우거나 고쳐 쓴 자료(예: 비밀 투표 중간 표 수)가 DB 파일의 빈 곳에 남지 않게 0으로 덮음 (0.5.81)
+        self.conn.execute("PRAGMA secure_delete = ON")
         self.conn.executescript(SCHEMA)
         self._migrate()
         self.conn.commit()

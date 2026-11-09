@@ -51,14 +51,15 @@ def result(v):
                      for o, c in zip(opts + (["기권"] if v["abstain"] else []), counts)]}
 
 
-def view(db, vid, reveal=False):
-    """투표 중에는 몇 표인지 숨김 (결과는 끝낸 뒤나 선생님이 reveal 할 때만)."""
+def view(db, vid):
+    """투표 중에는 몇 표인지 늘 숨김 (결과는 [끝내기] 뒤에만). 중간 합계를 보여 주면, 투표한 번호가 늘 때마다
+    합계를 비교해 누가 무엇을 골랐는지 짐작할 수 있기 때문 (0.5.81 검토)."""
     v = _row(db, vid)
     voters = _voters(db, v["id"])
     out = {k: v[k] for k in ("id", "title", "mode", "options", "abstain", "status", "created_at", "closed_at", "drawn", "parent_id")}
     out["voters"] = voters
     out["eligible"] = len(numbers_of(db))
-    if v["status"] == "closed" or reveal:
+    if v["status"] == "closed":
         out["counts"] = v["counts"]
         out["result"] = result(v)
     return out
@@ -188,7 +189,7 @@ def listing(db):
 ROUTES = [
     ("GET", "/api/class/votes", lambda db, q, b: {"votes": listing(db), "students": roster(db)}),
     ("POST", "/api/class/votes", lambda db, q, b: create(db, b)),
-    ("GET", r"/api/class/votes/(\d+)", lambda db, q, b, vid: {**view(db, vid, q.get("reveal") == "1"), "students": roster(db)}),
+    ("GET", r"/api/class/votes/(\d+)", lambda db, q, b, vid: {**view(db, vid), "students": roster(db)}),
     ("PATCH", r"/api/class/votes/(\d+)", lambda db, q, b, vid: update(db, vid, b)),
     ("DELETE", r"/api/class/votes/(\d+)", lambda db, q, b, vid: delete(db, vid, b)),
     ("POST", r"/api/class/votes/(\d+)/ballot", lambda db, q, b, vid: ballot(db, vid, b)),

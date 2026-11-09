@@ -171,7 +171,7 @@ function resultView(v, post) {
             el('button.btn.primary', { onclick: () => resultScreen(v) }, '▶ 교실 화면에 결과 보이기'),
             r.tie && !v.drawn && el('button.btn', { onclick: post('runoff', `동점인 ${r.winners.join(' · ')} 만으로 결선 투표를 새로 만들까요?`) }, '동점자 결선 투표'),
             r.tie && !v.drawn && el('button.btn', { onclick: post('draw', '동점인 것 중 하나를 제비뽑기로 뽑을까요? (뽑은 결과가 남습니다)') }, '제비뽑기'),
-            v.mode === 'secret' && el('button.btn', { onclick: post('reopen', '투표를 다시 받을까요? (지금까지 표는 그대로 이어집니다)') }, '투표 다시 받기'),
+            v.mode === 'secret' && el('button.btn', { onclick: post('reopen', '투표를 다시 받을까요? 지금까지 표는 그대로 이어집니다.\n주의: 결과를 이미 보았으므로, 다시 끝냈을 때 늦게 투표한 학생이 무엇을 골랐는지 짐작할 수 있습니다. 비밀이 중요하면 [처음부터 다시]를 쓰세요.') }, '투표 다시 받기'),
             v.mode === 'manual' && el('button.btn', { onclick: post('reset', '넣은 표 수를 지우고 다시 넣을까요?') }, '표 수 다시 넣기'),
             el('span.spacer'),
             el('button.btn', { onclick: () => {
