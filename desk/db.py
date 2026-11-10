@@ -149,6 +149,41 @@ CREATE TABLE IF NOT EXISTS class_votes (
     drawn TEXT,                      -- 동점 제비뽑기 결과 JSON
     parent_id INTEGER                -- 결선 투표면 원래 투표
 );
+-- 학급 제출물 확인·상담 기록 (0.5.82). 상담 기록은 특히 민감: 검색·브리핑·AI·텔레그램에 쓰지 않음
+CREATE TABLE IF NOT EXISTS class_tasks (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    due TEXT,
+    note TEXT,
+    closed INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS class_task_marks (
+    task_id INTEGER NOT NULL,
+    number INTEGER NOT NULL,
+    status TEXT NOT NULL,            -- done: 제출 / exempt: 면제 (줄이 없으면 미제출)
+    at TEXT NOT NULL,
+    PRIMARY KEY (task_id, number)
+);
+CREATE TABLE IF NOT EXISTS class_counsel (
+    id INTEGER PRIMARY KEY,
+    number INTEGER NOT NULL,
+    student_name TEXT NOT NULL,      -- 기록할 때의 이름 (명단이 바뀌어도 남게)
+    date TEXT NOT NULL,
+    time TEXT,
+    method TEXT NOT NULL,            -- 대면 / 전화 / 문자 / 온라인 / 기타
+    with_whom TEXT NOT NULL,         -- 학생 / 학부모 / 학생·학부모 / 기타
+    topic TEXT NOT NULL,
+    content TEXT,
+    followup TEXT,
+    followup_date TEXT,
+    followup_done INTEGER DEFAULT 0,
+    duration INTEGER,                -- 통화 길이(초), 통화 내역 불러오기용
+    source TEXT,                     -- manual / import
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS class_counsel_number ON class_counsel(number, date);
 CREATE TABLE IF NOT EXISTS class_vote_voters (
     vote_id INTEGER NOT NULL,
     number INTEGER NOT NULL,
