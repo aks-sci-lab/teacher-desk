@@ -46,8 +46,7 @@ def parent_map(db):
     """학부모 번호(숫자만) → [학생 번호] (형제가 같은 번호를 쓸 수 있음)."""
     out = {}
     for s in db.students():
-        d = digits(s.get("parent_phone"))
-        if d:
+        for d in {digits(s.get("parent_phone")), digits(s.get("parent_phone2"))} - {""}:   # 연락처 1·2 모두
             out.setdefault(d, []).append(s["number"])
     return out
 
@@ -361,7 +360,7 @@ def parse_upload(db, body):
             since = date.fromisoformat(body["since"])
         except (TypeError, ValueError):
             need(False, "시작 날짜 형식이 잘못되었습니다")
-    need(any(digits(s.get("parent_phone")) for s in db.students()),
+    need(any(parent_map(db)),
          "학생 명단에 학부모 연락처가 없습니다. 출결 메뉴의 학생 명단에 학부모 연락처를 먼저 넣으세요")
     entries, total = [], 0
     for f in files:
@@ -394,7 +393,7 @@ def expire_pending(db):
 def receive_file(db, raw, today=None):
     """텔레그램으로 받은 파일 하나 → 학부모 번호와 맞는 초안만 쌓아 둠. 돌려줌: 건수만 (이름·번호·내용 없음)."""
     expire_pending(db)
-    need(any(digits(s.get("parent_phone")) for s in db.students()),
+    need(any(parent_map(db)),
          "학생 명단에 학부모 연락처가 없습니다. 업무 데스크의 학생 명단에 학부모 연락처를 먼저 넣으세요")
     entries = read_file("보낸 파일", raw)   # 파일 이름(학생 이름이 들어 있을 수 있음)은 쓰지 않음
     since = (today or date.today()) - timedelta(days=TELEGRAM_SINCE_DAYS)
