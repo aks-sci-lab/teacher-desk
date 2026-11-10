@@ -221,7 +221,8 @@ export function renderCounsel(pane) {
         const d = counselData;
         clear(body,
             el('div.cl-head', el('h1', '상담 기록'), el('span.muted', '학생·학부모 상담을 날짜·방법·내용·후속 조치로 남깁니다. 왼쪽에서 학생을 고르면 그 학생의 기록을 모아 봅니다.'),
-                el('span.spacer'), el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록')),
+                el('span.spacer'), el('button.btn', { onclick: openCallImport, title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
+                el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록')),
             note,
             d.pending.length > 0 && el('div.card.cl-pending', el('h3', `후속 조치 남은 것 ${d.pending.length}`),
                 el('ul.list', d.pending.map(p => el('li', { onclick: () => { counselSel = p.number; refreshSide(); rerender(); } },
@@ -290,4 +291,104 @@ function openCounselForm(c) {
             (c.number == null ? number : topic).focus();
         },
     });
+}
+
+// ================================================================ 통화·문자 내역 → 상담 초안 (0.5.83)
+// 파일은 서버가 메모리에서만 읽고, 학부모 번호와 맞지 않는 것은 버림. 선생님이 고르고 고친 것만 저장.
+function toBase64(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+}
+
+function openCallImport() {
+    openPopup({
+        id: 'class-calllog', title: '통화·문자 내역 불러오기', refresh: true,
+        render(pane, tab) {
+            const files = el('input', { type: 'file', multiple: true, accept: '.xml,.csv,.txt' });
+            const since = el('input', { type: 'date', value: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); })() });
+            const result = el('div');
+            const load = guarded(async () => {
+                if (!files.files.length) return toast('파일을 고르세요', 'error');
+                if (files.files.length > 5) return toast('파일은 5개까지 고를 수 있습니다', 'error');
+                clear(result, el('p.muted', '읽는 중…'));
+                const payload = [];
+                for (const f of files.files) {
+                    if (f.size > 15 * 1024 * 1024) return toast(`'${f.name}' 파일이 너무 큽니다 (15MB 이하)`, 'error');
+                    payload.push({ name: f.name, data: toBase64(await f.arrayBuffer()) });
+                }
+                try {
+                    const r = await api.post('/api/class/calllog/parse', { files: payload, since: since.value || null });
+                    setStudents(store.students);
+                    clear(result, draftList(r, tab));
+                } catch (e) {
+                    clear(result);
+                    throw e;
+                }
+            });
+            pane.append(el('div.cl-call',
+                el('p', '휴대폰 백업 앱이 내보낸 파일을 고르면, 학생 명단의 ', el('b', '학부모 연락처'), '와 번호가 같은 통화·문자로 상담 기록 초안을 만듭니다.'),
+                el('ul.small.muted',
+                    el('li', '읽는 파일: SMS Backup & Restore 의 calls.xml·sms.xml, 통화 기록 CSV(첫 줄에 전화번호·날짜 같은 제목)'),
+                    el('li', '명단의 학부모 번호와 맞지 않는 번호는 버립니다 — 화면에 보이지도, 저장되지도 않습니다'),
+                    el('li', '파일은 이 PC 안에서만 읽고 따로 저장하지 않습니다. 아래에서 고른 것만 상담 기록이 됩니다')),
+                el('div.row', files, el('span.muted.small', '이 날짜부터'), since, el('button.btn.primary', { onclick: load }, '불러오기')),
+                result));
+        },
+    });
+}
+
+function draftList(r, tab) {
+    const s = r.stats;
+    const drafts = r.drafts;
+    const aiOn = !!store.settings?.ai_enabled;
+    const rows = drafts.map(d => {
+        const pick = el('input', { type: 'checkbox', checked: d.pick, disabled: !!d.already, 'aria-label': '저장할 것으로 고르기' });
+        const topic = el('input', { type: 'text', value: d.topic, maxLength: 80 });
+        const content = el('textarea', { rows: d.method === '문자' ? Math.min(6, d.content.split('\n').length + 1) : 2, value: d.content, maxLength: 5000 });
+        const follow = el('input', { type: 'text', placeholder: '후속 조치 (없어도 됨)', maxLength: 1000 });
+        const sum = aiOn && d.method === '문자' && !d.already && el('button.btn.small', { title: '이 PC 의 LM Studio 로 요약 (이름·번호는 가려서 보냄)', onclick: guarded(async e => {
+            e.currentTarget.disabled = true;
+            try {
+                const res = await api.post('/api/class/calllog/summarize', { text: content.value });
+                content.value = `요약: ${res.summary}\n\n--- 문자 원문 ---\n${content.value}`;
+                content.rows = Math.min(10, content.value.split('\n').length + 1);
+            } finally { e.currentTarget.disabled = false; }
+        }) }, 'AI 요약 넣기');
+        const card = el('div', { className: `cl-draft${d.already ? ' already' : ''}` },
+            el('label.cl-draft-head', pick,
+                el('span.cl-cs-date', `${d.date.slice(2).replace(/-/g, '.')} ${d.time}`),
+                el('b', `${d.number} ${d.name}`), el('span.tag', d.method), el('span.tag', d.with_whom),
+                d.already && el('span.tag.ok', '이미 저장함')),
+            !d.already && el('div.cl-draft-body', el('label.field', el('span', '주제'), topic), el('label.field', el('span', '내용'), content),
+                el('div.row', follow, sum)));
+        return { d, card, pick, topic, content, follow };
+    });
+    const count = el('b');
+    const update = () => { count.textContent = rows.filter(x => x.pick.checked && !x.d.already).length; };
+    rows.forEach(x => x.pick.addEventListener('change', update));
+    update();
+    const save = guarded(async () => {
+        const items = rows.filter(x => x.pick.checked && !x.d.already).map(x => ({
+            number: x.d.number, date: x.d.date, time: x.d.time, method: x.d.method, with_whom: x.d.with_whom,
+            topic: x.topic.value, content: x.content.value, followup: x.follow.value, duration: x.d.duration, import_key: x.d.import_key,
+        }));
+        if (!items.length) return toast('저장할 초안을 고르세요', 'error');
+        const res = await api.post('/api/class/calllog/save', { items });
+        toast(`상담 기록 ${res.saved}건을 저장했습니다${res.skipped ? ` (이미 있던 ${res.skipped}건은 건너뜀)` : ''}`);
+        tab.close();
+        rerender();
+    });
+    return el('div',
+        el('p.cl-call-stats', `통화 ${s.calls} · 문자 ${s.sms} 중 학부모 번호와 맞는 것 ${s.matched}건`,
+            el('span.muted', ` · 맞지 않아 버림 ${s.discarded}`, s.old ? ` · 시작 날짜 전 ${s.old}` : '', s.unreadable ? ` · 날짜를 못 읽음 ${s.unreadable}` : '', s.already ? ` · 이미 저장함 ${s.already}` : '')),
+        drafts.length ? el('div.cl-drafts', rows.map(x => x.card))
+            : el('div.card.cl-empty', el('p', '학부모 번호와 맞는 통화·문자가 없습니다. 학생 명단의 학부모 연락처와 시작 날짜를 확인하세요.')),
+        drafts.length > 0 && el('div.row.cl-draft-foot',
+            el('button.btn.small', { onclick: () => { rows.forEach(x => { if (!x.d.already) x.pick.checked = true; }); update(); } }, '모두 고르기'),
+            el('button.btn.small', { onclick: () => { rows.forEach(x => { x.pick.checked = false; }); update(); } }, '모두 빼기'),
+            el('span.spacer'),
+            el('span', '고른 것 ', count, '건'),
+            el('button.btn.primary', { onclick: save }, '고른 것 상담 기록으로 저장')));
 }

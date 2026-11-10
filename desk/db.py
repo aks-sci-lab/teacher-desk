@@ -234,6 +234,10 @@ class DB:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
         if "parent_phone" not in {r[1] for r in self.conn.execute("PRAGMA table_info(students)")}:
             self.conn.execute("ALTER TABLE students ADD COLUMN parent_phone TEXT")  # 0.5.46: 학부모 확인용 연락처
+        if "import_key" not in {r[1] for r in self.conn.execute("PRAGMA table_info(class_counsel)")}:
+            # 0.5.83: 통화·문자 내역에서 만든 상담 기록 (같은 통화를 두 번 저장하지 않게)
+            self.conn.execute("ALTER TABLE class_counsel ADD COLUMN import_key TEXT")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS class_counsel_import ON class_counsel(import_key)")
         if "sort" not in {r[1] for r in self.conn.execute("PRAGMA table_info(todos)")}:
             # 0.5.20: 꼭 할 일 순서를 끌어서 바꿈. 예전 것은 그때 보이던 순서(날짜 순)대로 번호를 매김
             self.conn.execute("ALTER TABLE todos ADD COLUMN sort REAL")

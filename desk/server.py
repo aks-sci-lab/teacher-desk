@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -1176,13 +1176,15 @@ def list_holidays(app, q, body):
 def _class_route(fn):
     def handler(app, q, body, *groups):
         try:
+            if getattr(fn, "with_config", False):   # AI 요약처럼 설정이 필요한 것
+                return fn(app.db, app.config, q, body, *groups)
             return fn(app.db, q, body, *groups)
         except classroom.ClassError as e:
             raise ApiError(400, str(e))
     return handler
 
 
-for _m, _p, _fn in classroom.ROUTES + classvote.ROUTES + classrecords.ROUTES:   # 투표는 classvote.py
+for _m, _p, _fn in classroom.ROUTES + classvote.ROUTES + classrecords.ROUTES + calllog.ROUTES:   # 투표는 classvote.py
     api(_m, _p)(_class_route(_fn))
 
 
