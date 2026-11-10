@@ -302,14 +302,18 @@ class TelegramAddEventTests(unittest.TestCase):
                 if button["callback_data"].startswith(f"dlg:{did}:cd:")
             }, message
 
+        def visible(text):   # 폰에서 보이는 글자 수 (이모지 하나 = 한 글자)
+            return len(text.replace("\ufe0f", ""))
+
         october, calendar = labels(2026, 10)
-        self.assertIn("🔴 일요일·공휴일  🔵 토요일 (공휴일 표: 2026~2028년)", calendar["text"])
-        self.assertIn("🔵 토요일", calendar["text"])
-        self.assertEqual(october[date(2026, 10, 3)], "🔴3")      # 개천절 토요일
-        self.assertEqual(october[date(2026, 10, 5)], "🔴5")      # 대체공휴일
-        self.assertEqual(october[date(2026, 10, 9)], "🔴9")      # 한글날
-        self.assertEqual(october[date(2026, 10, 10)], "🔵10")    # 토요일
-        self.assertEqual(october[date(2026, 10, 11)], "🔴11")    # 일요일
+        self.assertIn("🔴일 🔵토 칸이 주말 · 숫자 뒤 * 는 공휴일 (공휴일 표: 2026~2028년)", calendar["text"])
+        head = calendar["reply_markup"]["inline_keyboard"][1]
+        self.assertEqual([b["text"] for b in head], ["🔴일", "월", "화", "수", "목", "금", "🔵토"])
+        self.assertEqual(october[date(2026, 10, 3)], "3*")       # 개천절 토요일
+        self.assertEqual(october[date(2026, 10, 5)], "5*")       # 대체공휴일
+        self.assertEqual(october[date(2026, 10, 9)], "9*")       # 한글날
+        self.assertEqual(october[date(2026, 10, 10)], "10")      # 토요일: 칸은 숫자만 (요일 머리줄로 구분)
+        self.assertEqual(october[date(2026, 10, 11)], "11")      # 일요일
         self.assertEqual(october[date(2026, 10, 6)], "6")
         self.assertTrue(all(
             len(button["callback_data"].encode()) <= 64
@@ -318,7 +322,7 @@ class TelegramAddEventTests(unittest.TestCase):
         ))
 
         september, calendar = labels(2026, 9)
-        self.assertEqual([september[date(2026, 9, day)] for day in (24, 25, 26)], ["🔴24", "🔴25", "🔴26"])
+        self.assertEqual([september[date(2026, 9, day)] for day in (24, 25, 26)], ["24*", "25*", "26*"])   # 추석 연휴
         self.assertTrue(all(
             len(button["callback_data"].encode()) <= 64
             for row in calendar["reply_markup"]["inline_keyboard"]
@@ -327,8 +331,15 @@ class TelegramAddEventTests(unittest.TestCase):
 
         january_2029, calendar = labels(2029, 1)
         self.assertEqual(january_2029[date(2029, 1, 1)], "1")  # 표 밖의 신정도 추측하지 않음
-        self.assertEqual(january_2029[date(2029, 1, 6)], "🔵6")
-        self.assertEqual(january_2029[date(2029, 1, 7)], "🔴7")
+        self.assertEqual(january_2029[date(2029, 1, 6)], "6")
+        self.assertEqual(january_2029[date(2029, 1, 7)], "7")
+
+        for year in (2026, 2027, 2028):   # 모든 달의 모든 칸(날짜·요일·빈칸)이 3자 이하 — 7칸 폰 화면에서 잘리지 않게
+            for month in range(1, 13):
+                _, calendar = labels(year, month)
+                for row in calendar["reply_markup"]["inline_keyboard"][1:-1]:
+                    for button in row:
+                        self.assertLessEqual(visible(button["text"]), 3, (year, month, button["text"]))
         self.assertEqual(january_2029[date(2029, 1, 8)], "8")
         self.assertTrue(all(
             len(button["callback_data"].encode()) <= 64
@@ -342,7 +353,7 @@ class TelegramAddEventTests(unittest.TestCase):
         rows = self.bot.calendar_buttons(dialog, 2026, 10)
         self.assertEqual(rows[0][0]["callback_data"], f"dlg:{did}:cm:202609")
         self.assertEqual(rows[0][2]["callback_data"], f"dlg:{did}:cm:202611")
-        self.assertEqual([b["text"] for b in rows[1]], list("일월화수목금토"))
+        self.assertEqual([b["text"] for b in rows[1]], ["🔴일", "월", "화", "수", "목", "금", "🔵토"])   # 0.5.88 주말 색은 머리줄로
         day_buttons = [b for row in rows[2:-1] for b in row if ":cd:" in b["callback_data"]]
         self.assertTrue(all(len(row) == 7 for row in rows[1:-1]))
         self.assertEqual([b["callback_data"] for b in day_buttons],
@@ -355,6 +366,7 @@ class TelegramAddEventTests(unittest.TestCase):
                                  [b["callback_data"] for row in rows[2:-1] for b in row])
                 self.assertTrue(all(not b["text"].startswith(("🔴", "🔵"))
                                     for row in other[2:-1] for b in row))
+                self.assertEqual([b["text"] for b in other[1]], list("일월화수목금토"))   # 결석계·조퇴·외출 달력은 그대로
 
     def test_changing_holiday_to_weekday_removes_warning_and_keeps_text(self):
         did = self.start()

@@ -165,6 +165,7 @@ P_ADD_EVENT = re.compile(rf"^(?:/addevent(?:@\S+)?|{_EV_NOUN}\s*{_EV_VERB}{_EV_T
 P_ADD_EVENT_BARE = re.compile(rf"^(?:새\s*(?:일정|스케줄|스케쥴)|등록)(?:\s*(?:할게|할래|해\s*줘|하기|해요))?[.!~]*$")   # 뒤에 내용 없이만
 P_EVENT_QUESTION = re.compile(r"[?？]\s*$|방법|어떻게|언제|어디|뭐야|뭐지|무엇")   # 내용 자리가 질문이면 명령이 아님
 EVENT_TEXT_LIMIT = 100
+EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
 
 
 STALE_AFTER = 600    # PC 가 꺼져 있던 동안 쌓인 명령은 이보다 오래되면 실행하지 않음 (초)
@@ -816,7 +817,8 @@ class Bot:
         rows = [[{"text": "◀", "callback_data": f"dlg:{did}:cm:{prev_y:04d}{prev_m:02d}"},
                  {"text": f"{year}년 {month}월", "callback_data": f"dlg:{did}:nop"},
                  {"text": "▶", "callback_data": f"dlg:{did}:cm:{next_y:04d}{next_m:02d}"}],
-                [{"text": w, "callback_data": f"dlg:{did}:nop"} for w in "일월화수목금토"]]
+                [{"text": w, "callback_data": f"dlg:{did}:nop"}
+                 for w in (EVENT_WEEK_HEAD if dialog["kind"] == "event" else "일월화수목금토")]]
         last = calendar.monthrange(year, month)[1]
         # 학사일정 휴업일은 결석계·조퇴·외출에서만 사용하고, 일정 추가는 법정공휴일 표로 표시.
         closed = set() if dialog["kind"] == "event" else absence.closed_days(self.db, date(year, month, 1), date(year, month, last))
@@ -992,16 +994,13 @@ class Bot:
 
     @staticmethod
     def day_label(d, start, closed, event=False):
-        """달력 칸에 쓸 글. 일정 추가 달력은 주말·공휴일을 구분하고, 나머지는 기존 표시를 씁니다."""
+        """달력 칸에 쓸 글 (폰 7칸에서 잘리지 않게 보이는 글자 3자 이하, 0.5.88).
+        일정 추가 달력: 공휴일은 숫자 뒤 '*' ('15*'), 주말은 요일 머리줄(🔴일·🔵토)로 구분하고 칸에는 숫자만.
+        예전 '🔴15' 는 좁은 폰에서 '🔴1' 로 잘려 보였음 (선생님 신고 2026-11-10)."""
         if d == start:
             return f"▶{d.day}"
         if event:
-            holiday = holidays.holiday_name(d)
-            if holiday or (holidays.is_weekend(d) and d.weekday() == 6):
-                return f"🔴{d.day}"
-            if holidays.is_weekend(d):
-                return f"🔵{d.day}"
-            return str(d.day)
+            return f"{d.day}*" if holidays.holiday_name(d) else str(d.day)
         return f"({d.day})" if d in closed else str(d.day)
 
     def show_calendar(self, cid, dialog, message_id, year, month):
@@ -1010,7 +1009,7 @@ class Bot:
             preset = f"\n내용: {cut(self.mask(dialog['text']), 40)}" if dialog.get("text") else ""
             first, last = holidays.year_range()
             text = (f"📅 일정을 넣을 날짜를 누르세요 (하루만 고릅니다).{preset}\n"
-                    f"🔴 일요일·공휴일  🔵 토요일 (공휴일 표: {first}~{last}년)")
+                    f"🔴일 🔵토 칸이 주말 · 숫자 뒤 * 는 공휴일 (공휴일 표: {first}~{last}년)")
             return self.show(cid, message_id, text, self.calendar_buttons(dialog, year, month))
         if dialog["kind"] in KIND:
             dialog["cal_month"] = (year, month)
