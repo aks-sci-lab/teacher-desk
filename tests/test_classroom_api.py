@@ -5,6 +5,9 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 
+from datetime import date
+
+from desk import classrecords
 from desk.server import App, make_handler
 from tests.test_collect import Env
 
@@ -12,7 +15,12 @@ FAKE = [{"number": n, "name": f"가짜{n}"} for n in range(1, 13)]
 
 
 class ApiBase(unittest.TestCase):
+    # 상담 기록은 학년도(3월 1일)마다 나뉘므로, 날짜를 박아 둔 시험이 해가 바뀌어도 그대로 돌게 '오늘'을 고정
+    TODAY = date(2026, 11, 10)
+
     def setUp(self):
+        self._today = classrecords.today
+        classrecords.today = lambda: self.TODAY
         self.env = Env()
         self.app = App(self.env.db, self.env.config, self.env.collector, None)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), None)
@@ -26,6 +34,7 @@ class ApiBase(unittest.TestCase):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.env.close()
+        classrecords.today = self._today
 
     def req(self, method, path, body=None):
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)

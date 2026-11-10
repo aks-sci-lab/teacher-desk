@@ -3,7 +3,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from desk import calllog
+from desk import calllog, classrecords
 from desk.telegram import Bot
 from tests.fake_telegram import FakeTelegram
 from tests.test_collect import Env
@@ -23,6 +23,8 @@ SMS = f"""<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 
 class TelegramCallLogTests(unittest.TestCase):
     def setUp(self):
+        self._today = classrecords.today   # 3월 1일 바로 뒤에도 '어제·그제' 시험 자료가 같은 학년도에 들게
+        classrecords.today = lambda: (NOW - timedelta(days=3)).date()
         self.env = Env()
         self.fake = FakeTelegram()
         self.env.config.values.update(telegram_token="TEST:TOKEN", telegram_api_base=self.fake.base)
@@ -34,6 +36,7 @@ class TelegramCallLogTests(unittest.TestCase):
     def tearDown(self):
         self.fake.close()
         self.env.close()
+        classrecords.today = self._today
 
     def send_file(self, data, chat=CHAT, chat_type="private", msg_id=77, fid="f1", size=None):
         self.fake.files[fid] = data

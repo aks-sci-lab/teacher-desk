@@ -112,6 +112,30 @@ def task_mark(db, tid, body):
     return task_summary(db, t, numbers_of(db))
 
 
+# ---------------------------------------------------------------- 학년도 (3월 1일 시작, 선생님 결정 2026-11-10)
+# 학년도가 바뀌면 상담 기록은 보관만 하고 이관하지 않음: 새 학년도 상담 화면은 빈 상태, 지난 학년도는 보관함에서 읽기·인쇄만.
+today = date.today   # 시험에서 바꿔 끼움
+
+
+def school_year(d):
+    """'2026-02-28' → 2025, '2026-03-01' → 2026."""
+    d = date.fromisoformat(d) if isinstance(d, str) else d
+    return d.year if d.month >= 3 else d.year - 1
+
+
+def year_range(sy):
+    return f"{sy}-03-01", f"{sy + 1}-03-01"
+
+
+def current_year():
+    return school_year(today())
+
+
+def _readonly_check(d):
+    need(school_year(d) == current_year(),
+         f"{school_year(d)}학년도 상담 기록은 보관함에서 읽기·인쇄만 할 수 있습니다 (지금은 {current_year()}학년도, 3월 1일부터)")
+
+
 # ---------------------------------------------------------------- 상담 기록
 def counsel_fields(db, body, partial=False):
     f = {}
@@ -121,7 +145,8 @@ def counsel_fields(db, body, partial=False):
         need(n in names, "학생 명단에 없는 번호입니다")
         f["number"], f["student_name"] = n, names[n]
     if "date" in body or not partial:
-        f["date"] = _date(body.get("date") or date.today().isoformat(), "상담 날짜")
+        f["date"] = _date(body.get("date") or today().isoformat(), "상담 날짜")
+        _readonly_check(f["date"])   # 이번 학년도 날짜만 (지난 학년도는 보관함, 읽기 전용)
     if "time" in body:
         tm = body.get("time") or None
         need(tm is None or (isinstance(tm, str) and len(tm) == 5 and tm[2] == ":" and tm.replace(":", "").isdigit()),
@@ -154,19 +179,49 @@ def _counsel(db, cid):
     return c
 
 
+def _year_of(q):
+    y = q.get("year")
+    if y in (None, ""):
+        return current_year()
+    need(str(y).isdigit() and 2000 <= int(y) <= 2100, "학년도가 잘못되었습니다")
+    return int(y)
+
+
+def counsel_years(db):
+    """기록이 있는 학년도들 + 이번 학년도 (새로운 것부터)."""
+    years = {school_year(r["date"]) for r in db.query("SELECT DISTINCT date FROM class_counsel")}
+    years.add(current_year())
+    return sorted(years, reverse=True)
+
+
 def counsel_list(db, q):
-    """number 가 있으면 그 학생의 기록 전부(학생별 모아 보기), 없으면 최근 100개."""
+    """한 학년도(기본: 이번 학년도)의 상담. number 가 있으면 그 학생의 기록 전부, 없으면 최근 100개.
+    지난 학년도는 읽기 전용(보관함): 후속 조치 알림 없음, 학생 목록은 그때 기록에 적힌 번호·이름 (새 명단과 잇지 않음)."""
+    sy = _year_of(q)
+    lo, hi = year_range(sy)
+    span = "date >= ? AND date < ?"
     if q.get("number"):
         need(q["number"].isdigit(), "학생 번호가 잘못되었습니다")
-        rows = db.query("SELECT * FROM class_counsel WHERE number = ? ORDER BY date DESC, time DESC, id DESC",
-                        (int(q["number"]),))
+        rows = db.query(f"SELECT * FROM class_counsel WHERE number = ? AND {span} ORDER BY date DESC, time DESC, id DESC",
+                        (int(q["number"]), lo, hi))
     else:
-        rows = db.query("SELECT * FROM class_counsel ORDER BY date DESC, time DESC, id DESC LIMIT 100")
-    counts = {r["number"]: r["n"] for r in db.query("SELECT number, COUNT(*) AS n FROM class_counsel GROUP BY number")}
-    last = {r["number"]: r["d"] for r in db.query("SELECT number, MAX(date) AS d FROM class_counsel GROUP BY number")}
-    pending = db.query("SELECT id, number, student_name, date, topic, followup, followup_date FROM class_counsel "
-                       "WHERE followup != '' AND followup_done = 0 ORDER BY followup_date IS NULL, followup_date, date")
-    return {"records": rows, "counts": counts, "last": last, "pending": pending, "students": roster(db)}
+        rows = db.query(f"SELECT * FROM class_counsel WHERE {span} ORDER BY date DESC, time DESC, id DESC LIMIT 100", (lo, hi))
+    counts = {r["number"]: r["n"] for r in db.query(f"SELECT number, COUNT(*) AS n FROM class_counsel WHERE {span} GROUP BY number", (lo, hi))}
+    last = {r["number"]: r["d"] for r in db.query(f"SELECT number, MAX(date) AS d FROM class_counsel WHERE {span} GROUP BY number", (lo, hi))}
+    cur = current_year()
+    readonly = sy != cur
+    pending = [] if readonly else db.query(
+        f"SELECT id, number, student_name, date, topic, followup, followup_date FROM class_counsel "
+        f"WHERE followup != '' AND followup_done = 0 AND {span} ORDER BY followup_date IS NULL, followup_date, date", (lo, hi))
+    if readonly:   # 그 학년도 기록에 적힌 번호·이름 (마지막 이름)
+        people = {}
+        for r in db.query(f"SELECT number, student_name FROM class_counsel WHERE {span} ORDER BY date", (lo, hi)):
+            people[r["number"]] = r["student_name"]
+        students = [{"number": n, "name": people[n]} for n in sorted(people)]
+    else:
+        students = roster(db)
+    return {"records": rows, "counts": counts, "last": last, "pending": pending, "students": students,
+            "year": sy, "current_year": cur, "readonly": readonly, "years": counsel_years(db)}
 
 
 def counsel_create(db, body):
@@ -182,6 +237,7 @@ def counsel_create(db, body):
 
 def counsel_update(db, cid, body):
     c = _counsel(db, cid)
+    _readonly_check(c["date"])   # 지난 학년도 기록은 고칠 수 없음
     f = counsel_fields(db, body, partial=True)
     if f:
         f["updated_at"] = now_str()
@@ -191,20 +247,26 @@ def counsel_update(db, cid, body):
 
 def counsel_delete(db, cid):
     c = _counsel(db, cid)
+    _readonly_check(c["date"])   # 지난 학년도 기록은 지우지 않음 (보관)
     db.execute("DELETE FROM class_counsel WHERE id = ?", (c["id"],))
     return {"ok": True}
 
 
-def student_overview(db, number):
-    """학생별 모아 보기: 상담 기록 + 그 학생의 미제출 항목."""
+def student_overview(db, number, q=None):
+    """학생별 모아 보기: 그 학년도의 상담 기록 + (이번 학년도일 때만) 그 학생의 미제출 항목."""
+    q = q or {}
     need(number.isdigit(), "학생 번호가 잘못되었습니다")
     n = int(number)
+    sy = _year_of(q)
+    data = counsel_list(db, {"number": str(n), "year": str(sy)})
+    if data["readonly"]:
+        name = next((s["name"] for s in data["students"] if s["number"] == n), None)
+        return {"number": n, "name": name, "missing_tasks": [], "records": data["records"], "year": sy, "readonly": True}
     names = {r["number"]: r["name"] for r in roster(db)}
     open_tasks = db.query("SELECT * FROM class_tasks WHERE closed = 0 ORDER BY due IS NULL, due")
     missing = [t for t in open_tasks if not db.one("SELECT 1 AS x FROM class_task_marks WHERE task_id = ? AND number = ?",
                                                    (t["id"], n))] if n in names else []
-    return {"number": n, "name": names.get(n), "missing_tasks": missing,
-            "records": counsel_list(db, {"number": str(n)})["records"]}
+    return {"number": n, "name": names.get(n), "missing_tasks": missing, "records": data["records"], "year": sy, "readonly": False}
 
 
 # ---------------------------------------------------------------- API (server.py 가 등록)
@@ -218,5 +280,5 @@ ROUTES = [
     ("POST", "/api/class/counsel", lambda db, q, b: counsel_create(db, b)),
     ("PATCH", r"/api/class/counsel/(\d+)", lambda db, q, b, cid: counsel_update(db, cid, b)),
     ("DELETE", r"/api/class/counsel/(\d+)", lambda db, q, b, cid: counsel_delete(db, cid)),
-    ("GET", r"/api/class/student/(\d+)", lambda db, q, b, n: student_overview(db, n)),
+    ("GET", r"/api/class/student/(\d+)", lambda db, q, b, n: student_overview(db, n, q)),
 ]

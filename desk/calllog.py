@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta
 
 from . import ai
 from .classroom import need, roster
+from . import classrecords
 from .classrecords import counsel_fields
 from .db import now_str
 
@@ -295,6 +296,9 @@ def _key(*parts):
 def make_drafts(db, entries, since=None):
     """명단의 학부모 번호와 맞는 것만 초안으로. 맞지 않는 번호는 건수만 세고 버림.
     통화는 한 통마다, 문자는 학생·날짜마다 한 초안으로 묶음."""
+    floor = date.fromisoformat(classrecords.year_range(classrecords.current_year())[0])
+    if since and since > floor:
+        floor = since
     pmap = parent_map(db)
     names = {r["number"]: r["name"] for r in roster(db)}
     stats = {"calls": 0, "sms": 0, "matched": 0, "discarded": 0, "unreadable": 0, "already": 0, "old": 0}
@@ -309,7 +313,7 @@ def make_drafts(db, entries, since=None):
         if not nums:
             stats["discarded"] += 1   # 명단에 없는 번호: 내용·번호 모두 버림
             continue
-        if since and e["when"].date() < since:
+        if e["when"].date() < floor:   # 시작 날짜 전, 또는 지난 학년도(3월 1일 전) — 상담 기록은 이번 학년도만
             stats["old"] += 1
             continue
         stats["matched"] += 1
