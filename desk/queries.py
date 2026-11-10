@@ -30,6 +30,16 @@ def bump_events_rev(db):
     return rev
 
 
+def bump_attendance_rev(db):
+    """조퇴·외출증이나 결석계를 고치거나 취소할 때 올리는 변경 번호.
+    새로 발급하면 마지막 번호(MAX(id))가 바뀌지만, 취소·고치기는 그대로라 화면(다른 창 포함)이
+    못 알아채고 월별 통계가 예전 숫자로 남았음 → `/api/state.counts` 에 이 번호를 더해 알림."""
+    with db.lock:
+        rev = (db.get_meta("attendance_rev") or 0) + 1
+        db.set_meta("attendance_rev", rev)
+    return rev
+
+
 def insert_event(db, f):
     """따로 넣는 일정 한 건 저장 (화면의 POST /api/events 와 텔레그램 '일정 추가' 가 같이 씀). f 는 검사한 칸들."""
     eid = db.execute(f"INSERT INTO events({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))

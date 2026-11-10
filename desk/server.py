@@ -363,8 +363,11 @@ def get_state(app, q, body):
             "new_items": db.one("SELECT COUNT(*) AS n FROM items WHERE status = 'new'")["n"],
             "students": db.one("SELECT COUNT(*) AS n FROM students")["n"],
             # 텔레그램으로 발급하면 화면이 알아채고 목록을 새로 고침
-            "passes": db.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS last FROM passes")["last"],
-            "absences": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM absences")["last"],
+            # 마지막 번호 + 고치기·취소 변경 번호 (둘 다 줄지 않으므로 무엇이 바뀌든 값이 커짐)
+            "passes": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM passes")["last"]
+            + (db.get_meta("attendance_rev") or 0),
+            "absences": db.one("SELECT COALESCE(MAX(id), 0) AS last FROM absences")["last"]
+            + (db.get_meta("attendance_rev") or 0),
             # 텔레그램 '일정 추가'(따로 넣은 일정)가 더해지거나 취소되면 화면이 알아채고 새로 고침
             "manual_events": db.get_meta("events_rev") or 0,
         },
@@ -569,6 +572,7 @@ def update_pass(app, q, body, pid):
     need(app.db.one("SELECT id FROM passes WHERE id = ?", (pid,)), "없는 발급 기록입니다", 404)
     if f:
         app.db.execute(f"UPDATE passes SET {', '.join(k + ' = ?' for k in f)} WHERE id = ?", (*f.values(), pid))
+        queries.bump_attendance_rev(app.db)
     return app.db.one("SELECT * FROM passes WHERE id = ?", (pid,))
 
 
@@ -658,24 +662,20 @@ def attendance_month(app, q, body):
             "details": {key: [] for key in ("absence_forms", "absence_days", "early_count", "out_count")},
         }
 
+    # 학생 줄은 (번호, 이름) 한 쌍으로 구분. 번호만으로 묶으면 명단이 바뀐 뒤(전학·번호 변경)
+    # 예전 기록이 지금 그 번호인 다른 학생 줄에 붙고, 같은 번호가 둘이면 한 명이 사라졌음.
     rows = {}
     for student in app.db.students():
-        key = ("number", student["number"])
-        rows[key] = new_student(student["number"], student["name"])
+        rows.setdefault((student["number"], student["name"]), new_student(student["number"], student["name"]))
 
     def row_for(number, name):
-        if number is not None:
-            key = ("number", number)
-            if key not in rows:
-                rows[key] = new_student(number, name)
-            return rows[key]
-        named = [row for row in rows.values() if row["student_name"] == name]
-        if len(named) == 1:
-            return named[0]
-        key = ("name", name)
-        if key not in rows:
-            rows[key] = new_student(None, name)
-        return rows[key]
+        if (number, name) in rows:
+            return rows[(number, name)]
+        if number is None:   # 번호 없이 쓴 기록은 이름이 하나뿐일 때만 그 학생 줄로
+            named = [row for row in rows.values() if row["student_name"] == name]
+            if len(named) == 1:
+                return named[0]
+        return rows.setdefault((number, name), new_student(number, name))
 
     absences = app.db.query(
         "SELECT student_number, student_name, start_date, end_date, absence_type, reason FROM absences "
@@ -757,6 +757,7 @@ def update_absence(app, q, body, absence_id):
         need((date.fromisoformat(end) - date.fromisoformat(start)).days <= 366, "결석 기간은 1년 이내로 입력하세요")
         app.db.execute(f"UPDATE absences SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
                        (*fields.values(), absence_id))
+        queries.bump_attendance_rev(app.db)
     return absence.record(app.db, app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,)),
                           app.config["grade"])
 
