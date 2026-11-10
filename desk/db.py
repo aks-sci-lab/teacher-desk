@@ -241,6 +241,8 @@ class DB:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
         if "parent_phone" not in {r[1] for r in self.conn.execute("PRAGMA table_info(students)")}:
             self.conn.execute("ALTER TABLE students ADD COLUMN parent_phone TEXT")  # 0.5.46: 학부모 확인용 연락처
+        if "parent_phone2" not in {r[1] for r in self.conn.execute("PRAGMA table_info(students)")}:
+            self.conn.execute("ALTER TABLE students ADD COLUMN parent_phone2 TEXT")  # 0.5.89: 학부모 연락처 2
         if "import_key" not in {r[1] for r in self.conn.execute("PRAGMA table_info(class_counsel)")}:
             # 0.5.83: 통화·문자 내역에서 만든 상담 기록 (같은 통화를 두 번 저장하지 않게)
             self.conn.execute("ALTER TABLE class_counsel ADD COLUMN import_key TEXT")
@@ -293,17 +295,24 @@ class DB:
         return self.query("SELECT * FROM students ORDER BY number, name")
 
     def replace_students(self, rows):
-        """명단을 통째로 바꿈. 연락처를 주지 않은 줄은 같은 번호·이름의 예전 연락처를 이어 받음."""
+        """명단을 통째로 바꿈. 연락처(1·2)를 주지 않은(None) 줄은 같은 번호·이름의 예전 연락처를 이어 받고,
+        "" 이면 지움."""
+        def pick(r, key, old_value):
+            value = r.get(key)
+            return old_value if value is None else (value or None)
+
         with self.lock:
             self.conn.execute("BEGIN IMMEDIATE")
             try:
-                old = {(r[0], r[1]): r[2] for r in self.conn.execute(
-                    "SELECT number, name, parent_phone FROM students")}
+                old = {(r[0], r[1]): (r[2], r[3]) for r in self.conn.execute(
+                    "SELECT number, name, parent_phone, parent_phone2 FROM students")}
                 self.conn.execute("DELETE FROM students")
                 self.conn.executemany(
-                    "INSERT INTO students(number, name, parent_phone) VALUES(?, ?, ?)",
-                    [(r["number"], r["name"], r["parent_phone"] if r.get("parent_phone") is not None
-                      else old.get((r["number"], r["name"]))) for r in rows])
+                    "INSERT INTO students(number, name, parent_phone, parent_phone2) VALUES(?, ?, ?, ?)",
+                    [(r["number"], r["name"],
+                      pick(r, "parent_phone", old.get((r["number"], r["name"]), (None, None))[0]),
+                      pick(r, "parent_phone2", old.get((r["number"], r["name"]), (None, None))[1]))
+                     for r in rows])
                 self.conn.commit()
             except Exception:
                 self.conn.rollback()

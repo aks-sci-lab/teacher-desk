@@ -49,8 +49,8 @@ class DBMigrationTests(unittest.TestCase):
 
             db = DB(path)
             try:
-                self.assertEqual(db.one("SELECT name, parent_phone FROM students WHERE id = 1"),
-                                 {"name": "가상 학생", "parent_phone": None})
+                self.assertEqual(db.one("SELECT name, parent_phone, parent_phone2 FROM students WHERE id = 1"),
+                                 {"name": "가상 학생", "parent_phone": None, "parent_phone2": None})
                 self.assertEqual(db.one("SELECT title, registered, images, ai_summary FROM items WHERE id = 1"),
                                  {"title": "직접 입력", "registered": 1, "images": None, "ai_summary": None})
                 self.assertEqual(db.one("SELECT registered FROM items WHERE id = 2")["registered"], 0)
@@ -77,7 +77,7 @@ class DBMigrationTests(unittest.TestCase):
 
                 db.replace_students([{"number": 7, "name": "가상 학생"}])
                 self.assertEqual(db.students(), [{
-                    "id": 1, "number": 7, "name": "가상 학생", "parent_phone": "010-0000-0000",
+                    "id": 1, "number": 7, "name": "가상 학생", "parent_phone": "010-0000-0000", "parent_phone2": None,
                 }])
             finally:
                 db.close()

@@ -89,34 +89,56 @@ def month_range(v):
 
 
 P_PHONE = re.compile(r"0\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}")
+# 명단 붙여넣기에서 찾는 전화번호: 010-…, 01012345678, +82 10-… (앞뒤가 숫자면 아님)
+P_ROSTER_PHONE = re.compile(r"(?<![\d+])(?:\+\s?82[-. ]?\(?0?\)?|0)\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}(?!\d)")
 
 
 def clean_phone(value):
-    """전화번호 한 개를 010-1234-5678 꼴로. 아니면 None."""
+    """전화번호 한 개를 010-1234-5678 꼴로 ('+82 10-…' 은 010 으로). 아니면 None."""
     text = str(value or "").strip()
-    if not P_PHONE.fullmatch(text):
+    if not P_ROSTER_PHONE.fullmatch(text):
         return None
     digits = re.sub(r"\D", "", text)
+    if text.startswith("+"):
+        digits = "0" + digits[2:].lstrip("0")
+    if not P_PHONE.fullmatch(digits):
+        return None
     return f"{digits[:3]}-{digits[3:-4]}-{digits[-4:]}" if len(digits) >= 10 else None
 
 
 def parse_roster(text):
-    """엑셀에서 복사한 '번호  이름  학부모 연락처' 줄들 → [{number, name, parent_phone}]. 번호가 없으면 순서대로."""
+    """엑셀에서 복사한 '번호  이름  학부모 연락처(  연락처 2)' 줄들
+    → [{number, name, parent_phone, parent_phone2, warning?}]. 번호가 없으면 순서대로.
+    한 칸에 번호가 둘이면('010-… / 010-…', 쉼표·슬래시·공백) 1·2칸에 나눔.
+    번호처럼 보이는데 못 읽은 것이 있거나 셋 이상이면 조용히 버리지 않고 warning 에 적음."""
     rows, auto = [], 0
     for line in text.splitlines():
-        cells = [c.strip() for c in re.split(r"[\t,]+|\s{2,}", line.strip()) if c.strip()]
+        phones = [clean_phone(m.group()) for m in P_ROSTER_PHONE.finditer(line)]
+        phones = [p for p in phones if p]
+        rest = P_ROSTER_PHONE.sub("\t", line)          # 연락처를 빼고 번호·이름을 찾음
+        cells = [c.strip() for c in re.split(r"[\t,/;]+|\s{2,}", rest.strip()) if c.strip()]
         if len(cells) == 1 and " " in cells[0]:
             cells = cells[0].split()
         if not cells:
             continue
-        phone = next((clean_phone(c) for c in cells if clean_phone(c)), None)
         number = next((int(c) for c in cells if c.isdigit() and int(c) < 1000), None)
         name = next((c for c in cells if re.search(r"[가-힣A-Za-z]", c)
-                     and c not in ("번호", "이름", "성명")), None)
+                     and c not in ("번호", "이름", "성명") and not re.search(r"연락처|전화|학부모|보호자", c)), None)
         if not name:
             continue
         auto += 1
-        rows.append({"number": number if number is not None else auto, "name": name[:20], "parent_phone": phone})
+        warnings = []
+        leftover = [c for c in cells if c != name and (len(re.sub(r"\D", "", c)) >= 6 or "+82" in c)]
+        if leftover:
+            warnings.append(f"연락처로 읽지 못한 칸: {' '.join(leftover)[:40]}")
+        if len(phones) > 2:
+            warnings.append(f"연락처가 {len(phones)}개라 앞의 둘만 넣었습니다")
+        row = {"number": number if number is not None else auto, "name": name[:20],
+               "parent_phone": phones[0] if phones else None,
+               "parent_phone2": phones[1] if len(phones) > 1 else None}
+        if warnings:
+            row["warning"] = " · ".join(warnings)
+        rows.append(row)
     return rows
 
 
@@ -503,9 +525,13 @@ def put_students(app, q, body):
     for r in rows:
         need(isinstance(r, dict) and isinstance(r.get("number"), int), "번호가 잘못되었습니다")
         row = {"number": r["number"], "name": text_field(r.get("name"), "이름", 20, True)}
-        if r.get("parent_phone") not in (None, ""):
-            row["parent_phone"] = clean_phone(r["parent_phone"])
-            need(row["parent_phone"], "학부모 연락처는 010-1234-5678 처럼 입력하세요")
+        # 연락처: 없거나 None = 예전 값 그대로, "" = 지움, 값 = 바꿈 (직접 고치기에서 지울 수 있게)
+        for key, label in (("parent_phone", "학부모 연락처"), ("parent_phone2", "학부모 연락처 2")):
+            if r.get(key) == "":
+                row[key] = ""
+            elif r.get(key) is not None:
+                row[key] = clean_phone(r[key])
+                need(row[key], f"{label}는 010-1234-5678 처럼 입력하세요 ({r['number']}번)")
         clean.append(row)
     app.db.replace_students(clean)
     app.db.log(f"학생 명단 {len(clean)}명 저장")
