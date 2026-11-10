@@ -161,16 +161,23 @@ let studentView = null;
 let sideFilter = '';
 
 let tgPending = null;   // 텔레그램으로 받은 초안 (0.5.84)
+let counselYear = null; // 보는 학년도 (null: 이번 학년도). 지난 학년도는 보관함 — 읽기·인쇄만 (0.5.90)
+const yq = () => (counselYear ? `?year=${counselYear}` : '');
 async function loadCounsel() {
-    counselData = await api.get('/api/class/counsel');
-    tgPending = await api.get('/api/class/calllog/pending');
+    counselData = await api.get(`/api/class/counsel${yq()}`);
+    tgPending = counselData.readonly ? null : await api.get('/api/class/calllog/pending');
     setStudents(counselData.students);
-    studentView = counselSel != null ? await api.get(`/api/class/student/${counselSel}`) : null;
+    if (counselSel != null && !names.has(counselSel)) counselSel = null;
+    studentView = counselSel != null ? await api.get(`/api/class/student/${counselSel}${yq()}`) : null;
 }
 
 export function renderCounselSide(body) {
+    const ro = !!counselData?.readonly;
+    if (counselData) body.append(el('div.cl-side-p.cl-year', el('label.small.muted', '학년도 '),
+        el('select', { 'aria-label': '학년도 고르기', onchange: e => { counselYear = Number(e.target.value) === counselData.current_year ? null : Number(e.target.value); counselSel = null; rerender(); } },
+            counselData.years.map(y => el('option', { value: y, selected: y === counselData.year }, y === counselData.current_year ? `${y}학년도 (이번)` : `${y}학년도 · 보관함`)))));
     body.append(el('div.row.cl-side-p',
-        el('button.btn.primary.small', { onclick: () => openCounselForm({ number: counselSel }) }, '+ 상담 기록'),
+        !ro && el('button.btn.primary.small', { onclick: () => openCounselForm({ number: counselSel }) }, '+ 상담 기록'),
         el('button.btn.small', { className: `btn small${counselSel == null ? ' ok' : ''}`, onclick: () => { counselSel = null; refreshSide(); rerender(); } }, '최근 상담')));
     if (!counselData) return;
     const filter = el('input', { type: 'search', placeholder: '번호·이름 찾기', value: sideFilter, style: 'margin: 8px 12px; width: calc(100% - 24px)',
@@ -190,9 +197,9 @@ function counselLine(c, opts = {}) {
             opts.withName && el('b', `${c.number} ${c.student_name}`),
             el('span.tag', c.method), el('span.tag', c.with_whom),
             el('span.cl-cs-topic', c.topic),
-            c.followup && el('span', { className: `tag ${c.followup_done ? 'ok' : late ? 'bad' : 'warn'}` }, c.followup_done ? '후속 끝' : '후속 남음'),
+            c.followup && !opts.readonly && el('span', { className: `tag ${c.followup_done ? 'ok' : late ? 'bad' : 'warn'}` }, c.followup_done ? '후속 끝' : '후속 남음'),
             el('span.spacer'),
-            el('button.btn.small', { onclick: e => { e.preventDefault(); openCounselForm(c); } }, '고치기')),
+            !opts.readonly && el('button.btn.small', { onclick: e => { e.preventDefault(); openCounselForm(c); } }, '고치기')),
         el('div.cl-cs-body',
             c.content ? el('p.cl-cs-text', c.content) : el('p.muted.small', '내용 없음'),
             c.followup && el('p', el('b', '후속 조치 '), c.followup, c.followup_date && el('span.muted', ` (${c.followup_date})`))));
@@ -205,27 +212,37 @@ export function renderCounsel(pane) {
         await loadCounsel();
         refreshSide();
         if (!names.size) return clear(body, el('div.card.cl-empty', el('p', '학생 명단이 비어 있습니다. 출결 메뉴의 학생 명단을 먼저 넣으세요.')));
+        const ro = !!counselData.readonly;
         const note = el('p.cl-private', '🔐 상담 기록은 이 PC 에만 저장되고, 검색·브리핑·AI·텔레그램에는 나오지 않습니다. 내용은 줄을 눌러야 펼쳐집니다 — 교실 TV 에 화면을 띄울 때 주의하세요.');
+        const archive = ro && el('div.cl-archive', `📦 ${counselData.year}학년도 보관함 — 읽기·인쇄만 할 수 있습니다. 고치거나 지울 수 없고, 후속 조치 알림도 없습니다. 이름·번호는 그해 기록 그대로입니다(지금 명단과 잇지 않음).`,
+            el('button.btn.small', { onclick: () => { counselYear = null; counselSel = null; rerender(); } }, `${counselData.current_year}학년도로 돌아가기`));
         if (studentView) {
             const s = studentView;
             return clear(body,
-                el('div.cl-head', el('h1', `${s.number}번 ${s.name || '(명단에 없음)'}`), el('span.muted', `상담 ${s.records.length}회`), el('span.spacer'),
-                    el('button.btn.primary', { onclick: () => openCounselForm({ number: s.number }) }, '+ 이 학생 상담 기록'),
+                el('div.cl-head', el('h1', `${s.number}번 ${s.name || '(명단에 없음)'}`), el('span.muted', `${s.year}학년도 상담 ${s.records.length}회`), el('span.spacer'),
+                    !ro && el('button.btn.primary', { onclick: () => openCounselForm({ number: s.number }) }, '+ 이 학생 상담 기록'),
                     s.records.length > 0 && el('button.btn', { onclick: () => printNode(el('div',
-                        el('h1', `상담 기록 — ${classTitle()} ${s.number}번 ${s.name || ''}`, el('small', ` ${longDate(todayIso())}`)),
+                        el('h1', `상담 기록 — ${ro ? `${s.year}학년도 ` : classTitle()} ${s.number}번 ${s.name || ''}`, el('small', ` ${longDate(todayIso())} 인쇄`)),
                         el('table.cl-table', el('thead', el('tr', ['날짜', '방법·상대', '주제', '내용', '후속 조치'].map(h => el('th', h)))),
                             el('tbody', s.records.slice().reverse().map(c => el('tr', el('td', `${c.date}${c.time ? ' ' + c.time : ''}`), el('td', `${c.method} · ${c.with_whom}`),
                                 el('td', c.topic), el('td.pre', c.content || ''), el('td.pre', c.followup ? `${c.followup}${c.followup_done ? ' (끝)' : ''}` : ''))))))) }, '상담 기록 인쇄')),
-                note,
+                archive, note,
                 s.missing_tasks.length > 0 && el('div.cl-warn', el('b', '안 낸 제출물: '), s.missing_tasks.map(t => t.title + (t.due ? ` (마감 ${t.due.slice(5)})` : '')).join(' · ')),
-                s.records.length ? el('div.cl-cs-list', s.records.map(c => counselLine(c))) : el('div.card.cl-empty', el('p', '아직 상담 기록이 없습니다.')));
+                s.records.length ? el('div.cl-cs-list', s.records.map(c => counselLine(c, { readonly: ro }))) : el('div.card.cl-empty', el('p', ro ? '이 학년도에 이 학생의 상담 기록이 없습니다.' : '아직 상담 기록이 없습니다.')));
         }
         const d = counselData;
         clear(body,
-            el('div.cl-head', el('h1', '상담 기록'), el('span.muted', '학생·학부모 상담을 날짜·방법·내용·후속 조치로 남깁니다. 왼쪽에서 학생을 고르면 그 학생의 기록을 모아 봅니다.'),
-                el('span.spacer'), el('button.btn', { onclick: () => openCallImport(), title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
-                el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록')),
-            note,
+            el('div.cl-head', el('h1', ro ? `상담 기록 · ${d.year}학년도 보관함` : '상담 기록'),
+                el('span.muted', ro ? `${d.year}.3.1 ~ ${d.year + 1}.2.말` : `${d.year}학년도 (${d.year}.3.1부터) · 왼쪽에서 학생을 고르면 그 학생의 기록을 모아 봅니다. 지난 학년도는 왼쪽 위 '학년도'의 보관함에서 봅니다.`),
+                el('span.spacer'),
+                !ro && el('button.btn', { onclick: () => openCallImport(), title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
+                !ro && el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록'),
+                ro && d.records.length > 0 && el('button.btn', { onclick: () => printNode(el('div',
+                    el('h1', `상담 기록 — ${d.year}학년도 (보관함)`, el('small', ` ${longDate(todayIso())} 인쇄`)),
+                    el('table.cl-table', el('thead', el('tr', ['날짜', '학생', '방법·상대', '주제', '내용', '후속 조치'].map(h => el('th', h)))),
+                        el('tbody', d.records.slice().reverse().map(c => el('tr', el('td', `${c.date}${c.time ? ' ' + c.time : ''}`), el('td', `${c.number} ${c.student_name}`),
+                            el('td', `${c.method} · ${c.with_whom}`), el('td', c.topic), el('td.pre', c.content || ''), el('td.pre', c.followup || '')))))), true) }, '보관함 인쇄')),
+            archive, note,
             tgPending?.drafts.length > 0 && el('div.card.cl-tg-pending',
                 el('h3', `📱 텔레그램으로 받은 초안 ${tgPending.drafts.length}건`),
                 el('p.small.muted', `확인해 저장하기 전에는 상담 기록이 아닙니다. 저장하지 않은 초안은 받은 날부터 ${tgPending.keep_days}일 뒤 지워집니다.`),
@@ -239,8 +256,9 @@ export function renderCounsel(pane) {
             d.pending.length > 0 && el('div.card.cl-pending', el('h3', `후속 조치 남은 것 ${d.pending.length}`),
                 el('ul.list', d.pending.map(p => el('li', { onclick: () => { counselSel = p.number; refreshSide(); rerender(); } },
                     el('span.ttl', `${p.number} ${p.student_name} · ${p.topic}`), el('span.meta', p.followup.slice(0, 40), p.followup_date && ' · ', p.followup_date && dday(p.followup_date)))))),
-            el('h2', '최근 상담'),
-            d.records.length ? el('div.cl-cs-list', d.records.map(c => counselLine(c, { withName: true }))) : el('div.card.cl-empty', el('p', '아직 상담 기록이 없습니다. [+ 상담 기록]으로 시작하세요.')));
+            el('h2', ro ? `${d.year}학년도 상담 (최근 100개)` : '최근 상담'),
+            d.records.length ? el('div.cl-cs-list', d.records.map(c => counselLine(c, { withName: true, readonly: ro })))
+                : el('div.card.cl-empty', el('p', ro ? '이 학년도에는 상담 기록이 없습니다.' : `${d.year}학년도 상담 기록이 아직 없습니다. [+ 상담 기록]으로 시작하세요.`)));
     })();
 }
 

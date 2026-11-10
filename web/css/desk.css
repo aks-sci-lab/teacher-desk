@@ -1420,3 +1420,7 @@ td.roster-warn { font-size: .9em; }
 .roster-edit input { width: 100%; min-width: 0; box-sizing: border-box; }
 .roster-edit input.num { width: 4.5em; }
 .roster-edit td:last-child { width: 2.5em; }
+/* ---------- 상담 학년도·보관함 (0.5.90) ---------- */
+.cl-year { display: flex; align-items: center; gap: 6px; }
+.cl-year select { flex: 1; }
+.cl-archive { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; padding: 10px 14px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn); font-weight: 600; }
