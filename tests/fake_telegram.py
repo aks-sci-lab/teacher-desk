@@ -10,12 +10,25 @@ class FakeTelegram:
         self.updates, self.sent, self.calls, self.docs, self.edited = [], [], [], [], []
         self.files, self.deleted, self.fail_delete = {}, [], False   # 받은 파일 시험 (0.5.84)
         self.next_id = 1
+        self.connections = 0       # 새로 연 연결 수 (연결 다시 쓰기 시험)
+        self.connect_delay = 0.0   # 새 연결마다 기다리는 초 (실제 TLS 연결 비용 흉내)
+        self.drop_next = False     # 다음 답을 보낸 뒤 말없이 연결을 닫음 (오래 쉬어 서버가 닫은 연결 흉내)
         self.cond = threading.Condition()
         fake = self
 
         class H(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"   # 진짜 텔레그램처럼 연결을 계속 열어 둠 (Connection: close 면 닫음)
+            disable_nagle_algorithm = True   # 머리·본문을 따로 쓸 때 생기는 40ms 지연 없이
+
             def log_message(self, *a):
                 pass
+
+            def setup(self):
+                fake.connections += 1
+                if fake.connect_delay:
+                    import time
+                    time.sleep(fake.connect_delay)
+                super().setup()
 
             def do_POST(self):
                 raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
@@ -76,6 +89,9 @@ class FakeTelegram:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
+                if fake.drop_next:
+                    fake.drop_next = False
+                    self.close_connection = True
                 self.wfile.write(data)
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", port), H)

@@ -256,13 +256,19 @@ class TelegramAddEventTests(unittest.TestCase):
         self.assertEqual(self.events(), [])
 
     def test_only_starts_with_add_event_and_does_not_steal_other_commands(self):
-        for text in ("일정", "일정 추가해줘", "내일 일정 추가", "오늘 식단표", "일정 알려줘", "이번 주 일정"):
+        for text in ("일정", "내일 일정 추가", "오늘 식단표", "일정 알려줘", "이번 주 일정",
+                     # 0.5.87: 비슷한 말을 넓혔어도 질문·다른 말은 가로채지 않음
+                     "일정 등록 방법 알려줘", "등록 기간 언제야", "새 일정 있어?", "연수 등록", "스케줄 확인",
+                     "등록 학년 협의회", "일정 추가 언제까지?", "일정 등록됐어?", "수강 신청 등록 어떻게 해"):
             self.bot.handle_update(msg(text))
             self.assertIsNone(self.bot.dialog, text)
         self.assertIn("업무", self.bot.handle_update(msg("오늘")))                       # 기존 조회 명령은 그대로
         self.assertIn("업무", self.bot.handle_update(msg("오늘 일정")))
         self.assertIsNone(self.bot.dialog)
-        for text in ("일정 추가", "일정추가", "/addevent", "/addevent@desk_bot"):
+        for text in ("일정 추가", "일정추가", "/addevent", "/addevent@desk_bot",
+                     # 0.5.87 선생님 신고: '일정 등록' 을 알아듣지 못함 → 비슷한 명령 모양도 같은 흐름
+                     "일정 등록", "일정등록", "일정 등록해줘", "일정 추가해줘", "일정 넣기", "일정 넣어줘", "새 일정",
+                     "새 일정 추가", "스케줄 추가", "스케줄 등록", "등록", "등록할게", "일정 입력", "일정 만들기"):
             self.bot.dialog = None
             self.start(text)
             self.assertEqual(self.bot.dialog["kind"], "event", text)

@@ -9,6 +9,7 @@
 import calendar
 import hashlib
 import http.client
+import io
 import json
 import re
 import secrets
@@ -33,7 +34,7 @@ HELP = (
     "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
     "\n📅 달력\n"
     "오늘 — 오늘 일정·오늘 마감·외출 인원 · 마감 — 7일 안의 마감\n"
-    "일정 추가 — 달력에서 날짜를 누르고 내용을 보내면 등록 (등록 직후 취소 가능)\n"
+    "일정 추가 (일정 등록·새 일정도 됨) — 달력에서 날짜를 누르고 내용을 보내면 등록 (등록 직후 취소 가능)\n"
     "\n▦ 시간표\n"
     "내 수업 · 내일 수업 · 금요일 시간표 — 내 수업 · 우리 반 시간표\n"
     "2-3 시간표 · 2-3 내일 · 2학년 3반 목요일 — 그 학급 시간표(과목·선생님)\n"
@@ -156,7 +157,13 @@ GROUP_HINT = {
 # 예전 '그 밖의 명령' 메시지(0.5.39~0.5.77)의 단추도 계속 받음
 MENU_MORE = ("자료 검색", "일정 추가", "요약", "새로고침", "상태", "취소")
 UNREAD_PAGE = 10
-P_ADD_EVENT = re.compile(r"^(?:/addevent(?:@\S+)?|일정\s*추가)(?:\s+(.*))?$", re.S)   # '일정 추가' 로 시작할 때만 (다른 말의 '일정' 은 가로채지 않음)
+# 일정 추가 시작 말 (0.5.87: '일정 추가' 만 알아듣던 것을 넓힘). 문장 맨 앞이 명령 모양일 때만 — 다른 말의 '일정' 은 가로채지 않음
+_EV_NOUN = r"(?:새\s*)?(?:일정|스케줄|스케쥴)"
+_EV_VERB = r"(?:추가|등록|입력|만들기|넣기|넣어)"
+_EV_TAIL = r"(?:하기|해|해\s*줘|해\s*주세요|해\s*주라|해요|할게|할래|\s*줘|\s*주세요)?"
+P_ADD_EVENT = re.compile(rf"^(?:/addevent(?:@\S+)?|{_EV_NOUN}\s*{_EV_VERB}{_EV_TAIL})(?:\s+(.*))?$", re.S)
+P_ADD_EVENT_BARE = re.compile(rf"^(?:새\s*(?:일정|스케줄|스케쥴)|등록)(?:\s*(?:할게|할래|해\s*줘|하기|해요))?[.!~]*$")   # 뒤에 내용 없이만
+P_EVENT_QUESTION = re.compile(r"[?？]\s*$|방법|어떻게|언제|어디|뭐야|뭐지|무엇")   # 내용 자리가 질문이면 명령이 아님
 EVENT_TEXT_LIMIT = 100
 
 
@@ -286,6 +293,8 @@ class Bot:
         self.sync = False       # 시험: 질문의 답을 기다렸다가 돌려줌
         self.choice_requests = {}
         self.dialog = None
+        self.local = threading.local()   # 스레드마다 다시 쓰는 텔레그램 연결 (0.5.87)
+        self.direct_cache = {}
 
     # ---- 텔레그램 API ----
     @property
@@ -293,14 +302,70 @@ class Bot:
         return self.config["telegram_token"]
 
     def api(self, method, params=None, timeout=35):
-        url = f"{self.config['telegram_api_base'].rstrip('/')}/bot{self.token}/{method}"
+        base = self.config['telegram_api_base'].rstrip('/')
+        url = f"{base}/bot{self.token}/{method}"
         data = json.dumps(params or {}).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = json.loads(r.read().decode("utf-8"))
+        if self.direct(base):
+            raw = self.keepalive_post(base, url, data, timeout)
+        else:   # 프록시를 쓰는 PC: 예전 방식 (urllib 가 프록시 설정을 따름)
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read()
+        body = json.loads(raw.decode("utf-8"))
         if not body.get("ok"):
             raise RuntimeError(body.get("description", "텔레그램 오류"))
         return body["result"]
+
+    # ---- 연결 다시 쓰기 (0.5.87): 부를 때마다 새 HTTPS 연결(TCP+TLS)을 열면 단추 한 번에 왕복이 여러 번 늘어 느림 ----
+    def direct(self, base):
+        """프록시 없이 바로 연결하는 주소인지 (5분마다 다시 확인). 프록시가 있으면 예전 urllib 방식."""
+        now = time.monotonic()
+        hit = self.direct_cache.get(base)
+        if hit and now - hit[1] < 300:
+            return hit[0]
+        parts = urllib.parse.urlsplit(base)
+        try:
+            proxied = bool(urllib.request.getproxies().get(parts.scheme)) and not urllib.request.proxy_bypass(parts.hostname or "")
+        except Exception:
+            proxied = True   # 확인하지 못하면 안전하게 예전 방식
+        self.direct_cache[base] = (not proxied and parts.scheme in ("http", "https"), now)
+        return self.direct_cache[base][0]
+
+    def keepalive_post(self, base, url, data, timeout):
+        """같은 스레드에서는 한 연결을 계속 씀. 오래 쉬어 서버가 닫은 연결이면 새로 열어 한 번만 다시 보냄."""
+        parts = urllib.parse.urlsplit(url)
+        path = parts.path + (f"?{parts.query}" if parts.query else "")
+        conns = self.local.__dict__.setdefault("conns", {})
+        for attempt in (0, 1):
+            conn = conns.get(base)
+            reused = conn is not None
+            if conn is None:
+                cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
+                conn = conns[base] = cls(parts.hostname, parts.port, timeout=timeout)
+            try:
+                conn.timeout = timeout
+                if conn.sock:
+                    conn.sock.settimeout(timeout)
+                conn.request("POST", path, body=data, headers={"Content-Type": "application/json", "Connection": "keep-alive"})
+                r = conn.getresponse()
+                raw = r.read()
+            except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, http.client.CannotSendRequest) as e:
+                conn.close()
+                conns.pop(base, None)
+                if reused and attempt == 0:
+                    continue   # 쉬는 동안 닫힌 연결: 새 연결로 한 번만
+                raise urllib.error.URLError(e) from e
+            except BaseException:
+                conn.close()
+                conns.pop(base, None)
+                raise
+            if r.getheader("Connection", "").lower() == "close":
+                conn.close()
+                conns.pop(base, None)
+            if r.status >= 400:   # 예전과 같게 HTTPError (409 Conflict 처리·오류 문구가 그대로 동작)
+                raise urllib.error.HTTPError(url, r.status, r.reason, r.headers, io.BytesIO(raw))
+            return raw
+        raise urllib.error.URLError("연결 실패")
 
     def send(self, text, chat_id=None, buttons=None, keyboard=False):
         chat_id = chat_id or self.chat_id
@@ -398,9 +463,9 @@ class Bot:
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
             return self.dialog_input(cid, text)
-        added = P_ADD_EVENT.match(text)
-        if added:   # '일정 추가' 또는 메뉴 단추로만 시작
-            return self.begin_event(cid, added.group(1))
+        added = self.add_event_words(text)
+        if added is not None:   # '일정 추가'·'일정 등록'·'새 일정' 같은 명령 모양 또는 메뉴 단추로만 시작
+            return self.begin_event(cid, added)
         cmd = COMMANDS.get(text) or COMMANDS.get(head)
         if cmd and not self.plain_command(text, head, words, cmd):
             cmd = None   # '오늘 식단표' 는 오늘 브리핑이 아니라 자료 검색으로
@@ -789,12 +854,27 @@ class Bot:
         return self.show_calendar(cid, self.dialog, None, today.year, today.month)
 
     @staticmethod
+    def add_event_words(text):
+        """일정 추가를 시작하는 말이면 미리 적은 내용('' 이면 없음), 아니면 None.
+        '일정 등록 방법'·'새 일정 있어?' 처럼 뒤가 질문이면 None (검색·질문으로, 0.5.47 규칙)."""
+        text = (text or "").strip()
+        if P_ADD_EVENT_BARE.match(text):
+            return ""
+        m = P_ADD_EVENT.match(text)
+        if not m:
+            return None
+        preset = (m.group(1) or "").strip()
+        if preset and not text.startswith("/") and P_EVENT_QUESTION.search(preset):
+            return None
+        return preset
+
+    @staticmethod
     def event_text_error(text):
         if not text:
             return "일정 내용을 글 한 줄로 보내세요. 예: 학년 협의회"
         if len(text) > EVENT_TEXT_LIMIT:
             return f"일정 내용이 너무 깁니다 ({EVENT_TEXT_LIMIT}자 이하로 줄여 보내세요)."
-        if text.startswith("/") or text in COMMANDS or text in ARG_COMMANDS or P_ADD_EVENT.match(text):
+        if text.startswith("/") or text in COMMANDS or text in ARG_COMMANDS or Bot.add_event_words(text) is not None:
             return "명령어로 보이는 글은 일정 내용으로 쓸 수 없습니다. 내용을 다시 보내거나 '취소' 를 보내세요."
         return None
 
