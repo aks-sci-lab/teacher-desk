@@ -69,7 +69,11 @@ def parse_when(v):
     if m:
         pm = m.group(1).lower() in ("오후", "pm")
         s = P_AMPM.sub("", s)
+    s = re.sub(r"(\d{1,2})\s*시\s*(?:(\d{1,2})\s*분)?(?:\s*(\d{1,2})\s*초)?",
+               lambda m: f"{m[1]}:{int(m[2] or 0):02d}:{int(m[3] or 0):02d}", s)   # '오후 3시 10분' → '3:10:00'
     s = re.sub(r"\s+", " ", s.replace("년", "-").replace("월", "-").replace("일", " ")).strip()
+    # '2026. 11. 4. 9:00' (삼성 모양) → '2026-11-4 9:00' — 날짜 부분만 (시각과 붙지 않게)
+    s = re.sub(r"^(\d{4})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})\s*\.?(?=\s|$|T)", r"\1-\2-\3", s)
     m = re.match(r"^(\d{4})[-./](\d{1,2})[-./](\d{1,2})\.?(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?", s)
     if m:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -171,8 +175,42 @@ def safe_xml_check(raw):
         need(False, "XML 파일이 깨져 있습니다")
 
 
+P_CHARREF = re.compile(rb"&#(x[0-9a-fA-F]+|[0-9]+);")
+
+
+def fix_surrogate_refs(raw):
+    """SMS Backup & Restore 는 이모지를 UTF-16 서로게이트 두 개의 숫자 참조(&#55357;&#56842;)로 적는데,
+    XML 규칙상 잘못된 글자라 파서가 파일 전체를 거부함 (가짜 학급 끝까지 시험 2026-11-10). 짝이 맞으면 한 글자로,
+    짝이 없으면 '�' 로 바꿈."""
+    if b"&#" not in raw:
+        return raw
+
+    def val(m):
+        g = m.group(1)
+        try:
+            return int(g[1:], 16) if g[:1] in (b"x", b"X") else int(g)
+        except ValueError:
+            return None
+    refs = [(m, val(m)) for m in P_CHARREF.finditer(raw)]
+    refs = [(m, v) for m, v in refs if v is not None and 0xD800 <= v <= 0xDFFF]
+    out, pos, k = [], 0, 0
+    while k < len(refs):
+        m, v = refs[k]
+        out.append(raw[pos:m.start()])
+        nxt = refs[k + 1] if k + 1 < len(refs) else None
+        if v <= 0xDBFF and nxt and nxt[0].start() == m.end() and 0xDC00 <= nxt[1] <= 0xDFFF:   # 높은 쪽+낮은 쪽 → 한 글자
+            out.append(f"&#{0x10000 + ((v - 0xD800) << 10) + (nxt[1] - 0xDC00)};".encode())
+            pos, k = nxt[0].end(), k + 2
+            continue
+        out.append(b"&#65533;")   # 짝 없는 반쪽
+        pos, k = m.end(), k + 1
+    out.append(raw[pos:])
+    return b"".join(out)
+
+
 def read_xml(raw):
     """SMS Backup & Restore 형식: <calls><call .../></calls>, <smses><sms .../><mms ...>…</mms></smses>."""
+    raw = fix_surrogate_refs(raw)   # 숫자 참조만 고침 (엔티티를 펼치지 않음) — 그다음 안전 검사
     safe_xml_check(raw)
     try:
         root = ET.fromstring(raw)
@@ -190,15 +228,17 @@ def read_xml(raw):
         elif el.tag == "mms":
             text = " ".join(p.get("text") or "" for p in el.iter("part") if (p.get("ct") or "").startswith("text/plain")).strip()
             phone = a.get("address") or next((x.get("address") for x in el.iter("addr")), "")
-            out.append({"kind": "sms", "phone": (phone or "").split("~")[0], "when": parse_when(a.get("date")),
-                        "dir": "out" if a.get("msg_box") == "2" else "in", "body": text or "(사진·첨부 문자)"})
+            # 그룹 문자는 'a~b~c' — 받는 사람마다 (학부모 번호와 맞는 것만 남음)
+            for one in dict.fromkeys(p.strip() for p in (phone or "").split("~") if p.strip()):
+                out.append({"kind": "sms", "phone": one, "when": parse_when(a.get("date")),
+                            "dir": "out" if a.get("msg_box") == "2" else "in", "body": text or "(사진·첨부 문자)"})
     return out
 
 
 HEAD = {
     "phone": ("전화번호", "상대방번호", "상대방 번호", "연락처", "번호", "phone number", "phone", "number", "address", "전화"),
-    "when": ("통화일시", "일시", "날짜", "date", "datetime", "date time", "call date", "시간"),
-    "time": ("시각", "통화시각", "time"),
+    "when": ("통화일시", "일시", "날짜", "date", "datetime", "date time", "call date"),
+    "time": ("시각", "통화시각", "시간", "time"),   # 날짜와 따로 있는 시각 칸 (삼성 모양: 날짜 · 시간 · 통화 시간)
     "duration": ("통화시간", "통화 시간", "통화길이", "길이", "duration", "call duration"),
     "type": ("유형", "종류", "구분", "통화유형", "type", "call type", "direction"),
     "body": ("내용", "메시지", "문자내용", "body", "message", "text", "content"),
@@ -220,6 +260,8 @@ def read_csv(text):
             if name in head and head.index(name) not in col.values():
                 col[key] = head.index(name)
                 break
+    if "when" not in col and "time" in col:   # '시간' 한 칸에 날짜까지 들어 있는 모양
+        col["when"] = col.pop("time")
     need("phone" in col and "when" in col, "전화번호·날짜 칸을 찾지 못했습니다. 첫 줄에 '전화번호', '날짜' 같은 제목이 있는 CSV 여야 합니다")
     out = []
     for r in rows[1:]:
@@ -294,6 +336,8 @@ def make_drafts(db, entries, since=None):
                        "date": day.isoformat(), "time": msgs[0][1]["when"].strftime("%H:%M"), "duration": None, "dir": None,
                        "topic": f"학부모 문자 ({len(msgs)}건)", "content": "\n".join(lines)[:5000], "pick": True,
                        "import_key": _key("sms", n, day.isoformat(), *[f"{d}{e['when'].isoformat()}{e['dir']}" for d, e in msgs])})
+    # 같은 통화가 여러 파일(XML·CSV)이나 같은 파일 두 번으로 들어오면 한 초안만 (가짜 학급 끝까지 시험 2026-11-10)
+    drafts = list({d["import_key"]: d for d in reversed(drafts)}.values())[::-1]
     have = {r["import_key"] for r in db.query("SELECT import_key FROM class_counsel WHERE import_key IS NOT NULL")}
     for dr in drafts:
         if dr["import_key"] in have:

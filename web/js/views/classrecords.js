@@ -223,7 +223,7 @@ export function renderCounsel(pane) {
         const d = counselData;
         clear(body,
             el('div.cl-head', el('h1', '상담 기록'), el('span.muted', '학생·학부모 상담을 날짜·방법·내용·후속 조치로 남깁니다. 왼쪽에서 학생을 고르면 그 학생의 기록을 모아 봅니다.'),
-                el('span.spacer'), el('button.btn', { onclick: openCallImport, title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
+                el('span.spacer'), el('button.btn', { onclick: () => openCallImport(), title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
                 el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록')),
             note,
             tgPending?.drafts.length > 0 && el('div.card.cl-tg-pending',
