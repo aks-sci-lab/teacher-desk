@@ -184,6 +184,13 @@ CREATE TABLE IF NOT EXISTS class_counsel (
     updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS class_counsel_number ON class_counsel(number, date);
+-- 텔레그램으로 받은 통화·문자 파일에서 만든 상담 초안 (0.5.84): PC 에서 확인해야 저장, 14일 뒤 자동 삭제
+CREATE TABLE IF NOT EXISTS class_call_drafts (
+    id INTEGER PRIMARY KEY,
+    drafts TEXT NOT NULL,            -- JSON 배열 (학부모 번호와 맞는 것만)
+    stats TEXT,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS class_vote_voters (
     vote_id INTEGER NOT NULL,
     number INTEGER NOT NULL,

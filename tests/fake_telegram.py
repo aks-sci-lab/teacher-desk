@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class FakeTelegram:
     def __init__(self, port=0):
         self.updates, self.sent, self.calls, self.docs, self.edited = [], [], [], [], []
+        self.files, self.deleted, self.fail_delete = {}, [], False   # 받은 파일 시험 (0.5.84)
         self.next_id = 1
         self.cond = threading.Condition()
         fake = self
@@ -40,12 +41,34 @@ class FakeTelegram:
                     return self.reply({"message_id": len(fake.sent)})
                 if method == "editMessageText":
                     fake.edited.append(body)
+                if method == "getFile":
+                    return self.reply({"file_id": body["file_id"], "file_path": f"documents/{body['file_id']}"})
+                if method == "deleteMessage":
+                    if fake.fail_delete:
+                        return self.reply_error("message can't be deleted")
+                    fake.deleted.append(body)
                 return self.reply(True)
 
             def do_GET(self):
                 if self.path == "/_sent":
                     return self.reply(fake.sent)
+                if "/file/bot" in self.path:   # 파일 내려받기
+                    data = fake.files.get(self.path.rsplit("/", 1)[-1])
+                    if data is None:
+                        return self.send_error(404)
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    return self.wfile.write(data)
                 self.send_error(404)
+
+            def reply_error(self, description):
+                data = json.dumps({"ok": False, "description": description}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
 
             def reply(self, result):
                 data = json.dumps({"ok": True, "result": result}).encode()
