@@ -246,8 +246,9 @@ class ServerTests(unittest.TestCase):
 
     def test_roster(self):
         rows = parse_roster("번호\t이름\n1\t김가온\n2\t나하늘\n\n3  도윤서\n박지민")
-        self.assertEqual(rows, [{"number": 1, "name": "김가온", "parent_phone": None}, {"number": 2, "name": "나하늘", "parent_phone": None},
-                                {"number": 3, "name": "도윤서", "parent_phone": None}, {"number": 4, "name": "박지민", "parent_phone": None}])
+        none = {"parent_phone": None, "parent_phone2": None}
+        self.assertEqual(rows, [{"number": 1, "name": "김가온", **none}, {"number": 2, "name": "나하늘", **none},
+                                {"number": 3, "name": "도윤서", **none}, {"number": 4, "name": "박지민", **none}])
         st, saved = self.req("PUT", "/api/students", {"rows": rows})
         self.assertEqual(len(saved), 4)
         # 학부모 연락처: 붙여넣기에서 읽고, 비워 다시 저장해도 예전 연락처를 이어 받음

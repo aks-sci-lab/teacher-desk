@@ -1,6 +1,6 @@
 // 🎫 조퇴증·외출증: 명단 → 작성 → 미리보기 → 인쇄 → 기록 → 학생 공유(QR)
 import { api } from '../api.js';
-import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad, monthNav, monthKey, dayHead } from '../ui.js';
+import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad, monthNav, monthKey, dayHead, download } from '../ui.js';
 import { refreshSide, emit, on, showView, openPopup, popupOpen } from '../shell.js';
 import { openSettings } from './settings.js';
 import { store, loadStudents } from '../store.js';
@@ -100,6 +100,17 @@ export async function printPass(p, copies = 2) {
 // ---------------------------------------------------------------- 목록 패널
 async function loadDay() {
     dayPasses = await api.get(`/api/passes?month=${monthKey(sideDate)}`);
+}
+
+// 월별 통계와 같은 달을 봄 (한쪽에서 달을 바꾸면 다른 쪽도) — attendance.js 가 씀
+export function passesMonth() {
+    return monthKey(sideDate);
+}
+
+export async function setPassesMonth(key) {
+    if (key === monthKey(sideDate)) return;
+    sideDate = key === monthKey(todayIso()) ? todayIso() : `${key}-01`;
+    await loadDay();
 }
 
 export function renderPassesSide(body, actions) {
@@ -318,27 +329,74 @@ export function openPass(p, refresh = false) {
 }
 
 // ---------------------------------------------------------------- 학생 명단
+const phoneCell = v => v || '–';
+
+// 명단을 CSV(엑셀)로 내려받기 — 이 PC 안에서만 만들고 저장 (서버·인터넷으로 보내지 않음)
+function downloadRoster(rows) {
+    const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [['번호', '이름', '학부모 연락처', '학부모 연락처 2'],
+        ...rows.map(r => [r.number, r.name, r.parent_phone || '', r.parent_phone2 || ''])]
+        .map(row => row.map(cell).join(',')).join('\r\n');
+    download(new Blob(['\uFEFF', lines], { type: 'text/csv;charset=utf-8' }), '학생명단.csv');
+}
+
 export function openRoster() {
+    let editing = false;
     openPopup({
         id: 'roster', title: '학생 명단',
         render(pane, tab) {
             let parsed = null;
-            const area = el('textarea', { rows: 12, placeholder: '엑셀에서 번호·이름·학부모 연락처를 복사해 붙여넣으세요 (연락처는 없어도 됩니다)\n예)\n1\t김가온\t010-1234-5678\n2\t나하늘\t010-2345-6789' });
+            const area = el('textarea', { rows: 10, placeholder: '엑셀에서 번호·이름·학부모 연락처(·연락처 2)를 복사해 붙여넣으세요 (연락처는 없어도 됩니다)\n예)\n1\t김가온\t010-1234-5678\t010-9876-5432\n2\t나하늘\t+82 10-2345-6789\n3\t도윤서\t010-1111-2222 / 010-3333-4444' });
             const previewBox = el('div');
+            const saveRows = async rows => {
+                await api.put('/api/students', { rows });
+                await loadStudents();
+                toast(`명단 ${rows.length}명 저장`);
+                editing = false;
+                tab.rerender();
+                refreshSide();
+            };
             const showPreview = guarded(async () => {
                 parsed = await api.post('/api/students/parse', { text: area.value });
+                const warned = parsed.filter(r => r.warning);
                 clear(previewBox,
                     el('p', `${parsed.length}명을 읽었습니다. 맞으면 저장하세요 (기존 명단을 바꿉니다). 연락처를 비워 두면 같은 번호·이름의 예전 연락처를 그대로 둡니다.`),
-                    el('table.tbl', el('thead', el('tr', el('th', '번호'), el('th', '이름'), el('th', '학부모 연락처'))),
-                        el('tbody', parsed.map(r => el('tr', el('td', r.number), el('td', r.name), el('td', r.parent_phone || '-'))))),
-                    el('div.row', { style: 'margin-top: 8px' }, el('button.btn.primary', { disabled: !parsed.length, onclick: guarded(async () => {
-                        await api.put('/api/students', { rows: parsed });
-                        await loadStudents();
-                        toast(`명단 ${parsed.length}명 저장`);
-                        tab.rerender();
-                        refreshSide();
-                    }) }, '명단 저장')));
+                    warned.length ? el('p.roster-warn', `⚠ ${warned.length}명은 연락처를 다 읽지 못했습니다. 표의 ⚠ 를 보고 원본을 고치거나, 저장한 뒤 '직접 고치기'로 넣으세요.`) : null,
+                    el('table.tbl', el('thead', el('tr', ['번호', '이름', '학부모 연락처', '연락처 2', ''].map(t => el('th', t)))),
+                        el('tbody', parsed.map(r => el('tr', el('td', r.number), el('td', r.name),
+                            el('td', phoneCell(r.parent_phone)), el('td', phoneCell(r.parent_phone2)),
+                            el('td.roster-warn', r.warning ? `⚠ ${r.warning}` : ''))))),
+                    el('div.row', { style: 'margin-top: 8px' }, el('button.btn.primary', { disabled: !parsed.length,
+                        onclick: guarded(() => saveRows(parsed.map(({ warning, ...r }) => r))) }, '명단 저장')));
             });
+
+            // 직접 고치기: 표에서 번호·이름·연락처 1·2 를 고치고, 줄을 더하거나 뺌 (연락처를 비우면 지움)
+            const editBox = () => {
+                const rows = store.students.map(r => ({ number: r.number, name: r.name,
+                    parent_phone: r.parent_phone || '', parent_phone2: r.parent_phone2 || '' }));
+                const body = el('tbody');
+                const input = (r, key, attrs = {}) => el('input', { value: r[key] ?? '', ...attrs,
+                    oninput: e => { r[key] = key === 'number' ? (/^\d+$/.test(e.target.value) ? Number(e.target.value) : null) : e.target.value; } });
+                const draw = () => clear(body, rows.map((r, i) => el('tr',
+                    el('td', input(r, 'number', { className: 'num', inputMode: 'numeric', 'aria-label': '번호' })),
+                    el('td', input(r, 'name', { 'aria-label': '이름' })),
+                    el('td', input(r, 'parent_phone', { placeholder: '010-0000-0000', inputMode: 'tel', 'aria-label': '학부모 연락처' })),
+                    el('td', input(r, 'parent_phone2', { placeholder: '010-0000-0000', inputMode: 'tel', 'aria-label': '학부모 연락처 2' })),
+                    el('td', el('button.icon-btn', { title: '이 줄 빼기', onclick: () => { rows.splice(i, 1); draw(); } }, '✕')))));
+                draw();
+                return el('div',
+                    el('table.tbl.roster-edit', el('thead', el('tr', ['번호', '이름', '학부모 연락처', '연락처 2', ''].map(t => el('th', t)))), body),
+                    el('div.row', { style: 'margin-top: 8px' },
+                        el('button.btn', { onclick: () => { rows.push({ number: (Math.max(0, ...rows.map(r => r.number || 0)) + 1), name: '', parent_phone: '', parent_phone2: '' }); draw(); } }, '+ 학생 추가'),
+                        el('button.btn.primary', { onclick: guarded(async () => {
+                            const bad = rows.find(r => r.number == null || !String(r.name).trim());
+                            if (bad) return toast('번호와 이름을 모두 입력하세요', 'error');
+                            await saveRows(rows.map(r => ({ ...r, name: String(r.name).trim(),
+                                parent_phone: r.parent_phone.trim(), parent_phone2: r.parent_phone2.trim() })));
+                        }) }, '저장'),
+                        el('button.btn', { onclick: () => { editing = false; tab.rerender(); } }, '취소')));
+            };
+
             const s = store.settings;
             pane.append(
                 el('h1', '학생 명단'),
@@ -347,9 +405,16 @@ export function openRoster() {
                 el('div.row', el('button.btn', { onclick: showPreview }, '읽어 보기')),
                 previewBox,
                 el('h2', `지금 명단 (${store.students.length}명)`),
-                store.students.length
-                    ? el('table.tbl', el('tbody', store.students.map(r => el('tr', el('td', `${r.number}번`), el('td', r.name), el('td.muted', r.parent_phone || '연락처 없음')))))
-                    : el('p.muted', '아직 없습니다.'));
+                el('p.small.muted', '조퇴·외출 학부모 확인 알림(텔레그램)에는 첫 번째 연락처만 씁니다.'),
+                editing ? editBox() : el('div',
+                    store.students.length
+                        ? el('table.tbl', el('thead', el('tr', ['번호', '이름', '학부모 연락처', '연락처 2'].map(t => el('th', t)))),
+                            el('tbody', store.students.map(r => el('tr', el('td', `${r.number}번`), el('td', r.name),
+                                el('td.muted', r.parent_phone || '연락처 없음'), el('td.muted', phoneCell(r.parent_phone2))))))
+                        : el('p.muted', '아직 없습니다.'),
+                    el('div.row', { style: 'margin-top: 8px' },
+                        el('button.btn', { onclick: () => { editing = true; tab.rerender(); } }, store.students.length ? '직접 고치기' : '직접 입력'),
+                        store.students.length ? el('button.btn', { onclick: () => downloadRoster(store.students) }, 'CSV 내려받기') : null)));
         },
     });
 }

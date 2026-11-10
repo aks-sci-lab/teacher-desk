@@ -1,8 +1,8 @@
 // 출결 메뉴에서 조퇴·외출, 결석계, 월별 통계를 함께 제공
 import { api } from '../api.js';
-import { el, clear, guarded, todayIso, modal } from '../ui.js';
+import { el, clear, guarded, modal, monthNav, monthKey } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on } from '../shell.js';
-import { renderPassesSide, openForm } from './passes.js';
+import { renderPassesSide, openForm, passesMonth, setPassesMonth } from './passes.js';
 import { renderAbsenceSide, openAbsenceForm } from './absence.js';
 
 const SECTIONS = [
@@ -11,7 +11,7 @@ const SECTIONS = [
     { id: 'month', label: '월별 통계' },
 ];
 let section = 'passes';
-let month = todayIso().slice(0, 7);
+// 기준 월은 왼쪽 조퇴·외출 목록의 ◀ 월 ▶ 과 같은 값 (passes.js 가 가짐)
 let latestReport = null;
 let reportRequest = 0;
 
@@ -60,18 +60,13 @@ function renderSide(body, actions) {
     if (section === 'passes') renderPassesSide(body, actions);
     else if (section === 'absences') renderAbsenceSide(body, actions);
     else {
-        body.append(el('div.filters',
-            el('input', {
-                type: 'month',
-                value: month,
-                'aria-label': '통계 기준 월',
-                onchange: e => {
-                    month = e.target.value || todayIso().slice(0, 7);
-                    latestReport = null;
-                    reportRequest++;
-                    openAttendance();
-                },
-            })));
+        body.append(monthNav(`${passesMonth()}-01`, guarded(async iso => {
+            await setPassesMonth(monthKey(iso));
+            latestReport = null;
+            reportRequest++;
+            refreshSide();
+            openAttendance();
+        })));
     }
 }
 
@@ -168,13 +163,13 @@ function renderMonthlyReport(pane) {
         onclick: () => latestReport && downloadCsv(latestReport),
     }, 'CSV 내려받기');
     const reload = guarded(async () => {
-        const selectedMonth = month;
+        const selectedMonth = passesMonth();
         const request = ++reportRequest;
         exportButton.disabled = true;
         latestReport = null;
         clear(reportBox, el('p.muted', `${selectedMonth} 출결을 불러오는 중…`));
         const report = await api.get(`/api/attendance/month?month=${encodeURIComponent(selectedMonth)}`);
-        if (request !== reportRequest || selectedMonth !== month) return;
+        if (request !== reportRequest || selectedMonth !== passesMonth()) return;
         latestReport = report;
         exportButton.disabled = false;
         clear(reportBox,
