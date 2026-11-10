@@ -13,6 +13,7 @@ import io
 import json
 import re
 import secrets
+import ssl
 import threading
 import time
 import uuid
@@ -171,6 +172,8 @@ EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 
 STALE_AFTER = 600    # PC 가 꺼져 있던 동안 쌓인 명령은 이보다 오래되면 실행하지 않음 (초)
 WATCH_EVERY = 30     # 폴링 스레드가 죽었는지 살펴 되살리는 간격 (초)
 # 메시지를 화면·텔레그램·기록에 그대로 보여 줘도 되는 오류 (연결·응답 오류). 그 밖의 오류는 이름만
+# 다시 쓴 연결이 이미 닫혀 있을 때 나는 오류 (RemoteDisconnected 는 ConnectionResetError 의 한 종류)
+STALE_ERRORS = (ConnectionError, http.client.RemoteDisconnected, http.client.CannotSendRequest)
 SAFE_ERRORS = (OSError, http.client.IncompleteRead, http.client.RemoteDisconnected)
 P_BOT_TOKEN = re.compile(r"/bot[^/\s]*")          # URL 속 '/bot<번호>:<토큰>'
 P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번호:글자)
@@ -350,16 +353,17 @@ class Bot:
                 conn.request("POST", path, body=data, headers={"Content-Type": "application/json", "Connection": "keep-alive"})
                 r = conn.getresponse()
                 raw = r.read()
-            except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError, http.client.CannotSendRequest) as e:
+            except BaseException as e:
                 conn.close()
                 conns.pop(base, None)
+                # 쉬는 동안 서버가 닫은 연결 (0.5.88: 윈도우는 ConnectionAbortedError·WinError 10053 으로 옴 → ConnectionError 전체).
+                # TLS 가 끊겨 SSL 오류로 오는 것은 다시 쓴 연결일 때만 (새 연결의 SSL 오류는 인증서 문제일 수 있어 그대로)
+                stale = isinstance(e, STALE_ERRORS) or (reused and isinstance(e, ssl.SSLError))
+                if not stale:
+                    raise
                 if reused and attempt == 0:
-                    continue   # 쉬는 동안 닫힌 연결: 새 연결로 한 번만
+                    continue   # 새 연결로 한 번만
                 raise urllib.error.URLError(e) from e
-            except BaseException:
-                conn.close()
-                conns.pop(base, None)
-                raise
             if r.getheader("Connection", "").lower() == "close":
                 conn.close()
                 conns.pop(base, None)
