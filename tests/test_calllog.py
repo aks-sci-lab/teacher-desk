@@ -48,6 +48,23 @@ class ParseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             calllog.read_file("evil.xml", evil)
 
+    def test_utf16_and_entity_xml_refused(self):   # 검토 2026-11-10: UTF-16 이면 바이트 검사를 빠져나가던 것
+        bomb = '<?xml version="1.0"?><!DOCTYPE c [<!ENTITY a "' + "x" * 100 + '">]><calls><call number="010-1111-0003" date="1" body="&a;&a;"/></calls>'
+        for raw in (bomb.encode("utf-16-le"), bomb.encode("utf-16"), bomb.encode("utf-32"),
+                    '<calls><call number="1"/></calls>'.encode("utf-16-le")):
+            with self.assertRaises(ValueError):
+                calllog.read_file("x.xml", raw)
+        # 바이트 검사가 없어도 expat 단계에서 DOCTYPE·ENTITY 를 거부
+        old = calllog.P_DOCTYPE
+        calllog.P_DOCTYPE = __import__("re").compile(rb"(?!)")
+        try:
+            with self.assertRaises(ValueError) as e:
+                calllog.safe_xml_check(bomb.encode("utf-8"))
+            self.assertIn("DOCTYPE", str(e.exception))
+        finally:
+            calllog.P_DOCTYPE = old
+        self.assertTrue(calllog.read_file("ok.xml", "\ufeff<calls><call number=\"010\" date=\"1\"/></calls>".encode("utf-8")) is not None)
+
     def test_csv_needs_headers(self):
         with self.assertRaises(ValueError):
             calllog.read_file("x.csv", "a,b\n1,2\n".encode("utf-8"))
@@ -82,6 +99,22 @@ class ApiTests(ApiBase):
         self.assertEqual(by[(5, "전화", "2026-11-07")]["duration"], 125)        # CSV(CP949, 오후 4:10, 2분 5초)
         # 아무것도 저장되지 않음
         self.assertEqual(self.env.db.one("SELECT COUNT(*) AS n FROM class_counsel")["n"], 0)
+
+    def test_utf16_bomb_refused_by_api(self):
+        bomb = '<?xml version="1.0"?><!DOCTYPE c [<!ENTITY a "' + "x" * 1000 + '">]><smses><sms address="010-1111-0003" date="1" type="1" body="&a;"/></smses>'
+        st, r = self.parse(("sms.xml", bomb.encode("utf-16-le")))
+        self.assertEqual(st, 400)
+        self.assertNotIn("xxxxxxxx", str(r))
+
+    def test_total_size_limit(self):
+        old = calllog.MAX_TOTAL
+        calllog.MAX_TOTAL = len(CALLS_XML) + 10
+        try:
+            st, r = self.parse(("a.xml", CALLS_XML), ("b.xml", CALLS_XML))
+        finally:
+            calllog.MAX_TOTAL = old
+        self.assertEqual(st, 400)
+        self.assertIn("14MB", r["error"])
 
     def test_since_filter(self):
         st, r = self.parse(("calls.xml", CALLS_XML), since="2026-11-05")

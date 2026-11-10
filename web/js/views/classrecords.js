@@ -314,8 +314,10 @@ function openCallImport() {
                 if (files.files.length > 5) return toast('파일은 5개까지 고를 수 있습니다', 'error');
                 clear(result, el('p.muted', '읽는 중…'));
                 const payload = [];
+                // 서버 요청 한도(20MB) 안에 들게 파일을 합쳐서 14MB 까지 (base64 로 보내면 4/3배)
+                const total = [...files.files].reduce((a, f) => a + f.size, 0);
+                if (total > 14 * 1024 * 1024) { clear(result); return toast('파일을 합쳐서 14MB 이하로 골라 주세요', 'error'); }
                 for (const f of files.files) {
-                    if (f.size > 15 * 1024 * 1024) return toast(`'${f.name}' 파일이 너무 큽니다 (15MB 이하)`, 'error');
                     payload.push({ name: f.name, data: toBase64(await f.arrayBuffer()) });
                 }
                 try {
@@ -330,7 +332,7 @@ function openCallImport() {
             pane.append(el('div.cl-call',
                 el('p', '휴대폰 백업 앱이 내보낸 파일을 고르면, 학생 명단의 ', el('b', '학부모 연락처'), '와 번호가 같은 통화·문자로 상담 기록 초안을 만듭니다.'),
                 el('ul.small.muted',
-                    el('li', '읽는 파일: SMS Backup & Restore 의 calls.xml·sms.xml, 통화 기록 CSV(첫 줄에 전화번호·날짜 같은 제목)'),
+                    el('li', '읽는 파일: SMS Backup & Restore 의 calls.xml·sms.xml(UTF-8), 통화 기록 CSV(첫 줄에 전화번호·날짜 같은 제목) — 5개, 합쳐서 14MB 까지'),
                     el('li', '명단의 학부모 번호와 맞지 않는 번호는 버립니다 — 화면에 보이지도, 저장되지도 않습니다'),
                     el('li', '파일은 이 PC 안에서만 읽고 따로 저장하지 않습니다. 아래에서 고른 것만 상담 기록이 됩니다')),
                 el('div.row', files, el('span.muted.small', '이 날짜부터'), since, el('button.btn.primary', { onclick: load }, '불러오기')),

@@ -16,6 +16,7 @@ import hashlib
 import io
 import re
 import xml.etree.ElementTree as ET
+from xml.parsers import expat
 from datetime import date, datetime
 
 from . import ai
@@ -23,7 +24,7 @@ from .classroom import need, roster
 from .classrecords import counsel_fields
 from .db import now_str
 
-MAX_FILE = 15 * 1024 * 1024    # 파일 하나 (base64 풀기 전 기준으로 서버 전체 한도 20MB 안)
+MAX_TOTAL = 14 * 1024 * 1024   # 파일들을 합친 크기. base64(4/3배)+JSON 이 서버 요청 한도 20MB 안에 들게 (검토 2026-11-10)
 MAX_FILES = 5
 MAX_DRAFTS = 500
 P_DOCTYPE = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
@@ -140,9 +141,37 @@ def decode_text(raw):
     raise ValueError("글자를 읽지 못했습니다 (UTF-8·CP949 가 아닌 파일)")
 
 
+class _Refused(Exception):
+    pass
+
+
+def _refuse(*_args):
+    raise _Refused()
+
+
+def safe_xml_check(raw):
+    """엔티티 폭탄 등을 막는 검사 (검토 2026-11-10: 바이트 정규식만으로는 UTF-16 XML 이 빠져나감).
+    ① UTF-8(BOM 허용)이 아닌 XML 은 받지 않음 — NUL 바이트·UTF-16/32 BOM 이 있으면 거부.
+    ② expat 으로 먼저 훑어 DOCTYPE·ENTITY 선언을 만나면 인코딩과 상관없이 거부."""
+    need(not raw.startswith((b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")) and b"\x00" not in raw,
+         "UTF-8 이 아닌 XML 파일은 읽지 않습니다 (백업 앱에서 UTF-8 로 내보내세요)")
+    need(not P_DOCTYPE.search(raw), "이 XML 파일은 읽을 수 없는 형식입니다 (DOCTYPE·ENTITY 포함)")
+    p = expat.ParserCreate()
+    p.StartDoctypeDeclHandler = _refuse
+    p.EntityDeclHandler = _refuse
+    p.UnparsedEntityDeclHandler = _refuse
+    p.ExternalEntityRefHandler = lambda *a: _refuse()
+    try:
+        p.Parse(raw, True)
+    except _Refused:
+        need(False, "이 XML 파일은 읽을 수 없는 형식입니다 (DOCTYPE·ENTITY 포함)")
+    except expat.ExpatError:
+        need(False, "XML 파일이 깨져 있습니다")
+
+
 def read_xml(raw):
     """SMS Backup & Restore 형식: <calls><call .../></calls>, <smses><sms .../><mms ...>…</mms></smses>."""
-    need(not P_DOCTYPE.search(raw[:4096]) and not P_DOCTYPE.search(raw), "이 XML 파일은 읽을 수 없는 형식입니다 (DOCTYPE·ENTITY 포함)")
+    safe_xml_check(raw)
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:
@@ -206,9 +235,10 @@ def read_csv(text):
 
 
 def read_file(name, raw):
-    need(len(raw) <= MAX_FILE, f"'{name}' 파일이 너무 큽니다 (15MB 이하)")
-    head = raw.lstrip()[:200]
-    if head.startswith(b"<") or head.startswith(b"\xef\xbb\xbf<"):
+    need(len(raw) <= MAX_TOTAL, f"'{name}' 파일이 너무 큽니다 (14MB 이하)")
+    head = raw.lstrip(b" \t\r\n\x00")[:200]
+    # '<' 로 시작하면 XML (UTF-16 처럼 '<' 뒤에 NUL 이 오는 것도 XML 로 보고 safe_xml_check 에서 거부)
+    if head.startswith((b"<", b"\xef\xbb\xbf<", b"\xff\xfe<", b"\xfe\xff\x00<")):
         return read_xml(raw)
     return read_csv(decode_text(raw))
 
@@ -283,7 +313,7 @@ def parse_upload(db, body):
             need(False, "시작 날짜 형식이 잘못되었습니다")
     need(any(digits(s.get("parent_phone")) for s in db.students()),
          "학생 명단에 학부모 연락처가 없습니다. 출결 메뉴의 학생 명단에 학부모 연락처를 먼저 넣으세요")
-    entries = []
+    entries, total = [], 0
     for f in files:
         need(isinstance(f, dict) and isinstance(f.get("data"), str), "파일 자료가 잘못되었습니다")
         name = str(f.get("name") or "파일")[:80]
@@ -291,6 +321,8 @@ def parse_upload(db, body):
             raw = base64.b64decode(f["data"], validate=True)
         except (binascii.Error, ValueError):
             need(False, f"'{name}' 파일을 읽지 못했습니다")
+        total += len(raw)
+        need(total <= MAX_TOTAL, "파일을 합쳐서 14MB 이하로 골라 주세요")
         try:
             entries += read_file(name, raw)
         except ValueError as e:
