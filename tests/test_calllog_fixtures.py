@@ -4,9 +4,8 @@
 '시간' 칸 날짜 못 읽음, 그룹 문자(a~b) 첫 사람만, 같은 통화가 여러 파일에 있으면 초안 중복."""
 import base64
 import json
-import os
-import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from desk import calllog
@@ -18,25 +17,20 @@ NOT_PARENTS = ["010-0000-9001", "01000009001", "010-0000-9002", "010-0000-9003",
                "[광고] 비밀특가 할인", "스팸문자 대출", "Hello from abroad", "(Unknown)", "모르는 번호"]
 
 
+KST = timezone(timedelta(hours=9))
+
+
+def local_hm(*kst):
+    """시험 자료의 시각은 한국 시간으로 만든 밀리초 — 이 PC(시험 기계)의 시간대로 바꾼 '시:분'.
+    선생님 PC(한국 시간)에서는 그대로, 윈도우 CI(UTC)에서는 9시간 앞 (time.tzset 이 윈도우에 없어서)."""
+    return datetime(*kst, tzinfo=KST).astimezone().strftime("%H:%M")
+
+
 def b64(name):
     return base64.b64encode((FIX / name).read_bytes()).decode()
 
 
 class FixtureFileTests(unittest.TestCase):
-    def setUp(self):   # 날짜(밀리초)를 만든 곳과 같은 시간대로 읽음
-        self._tz = os.environ.get("TZ")
-        os.environ["TZ"] = "Asia/Seoul"
-        if hasattr(time, "tzset"):
-            time.tzset()
-
-    def tearDown(self):
-        if self._tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = self._tz
-        if hasattr(time, "tzset"):
-            time.tzset()
-
     def test_real_app_sms_with_emoji_is_read(self):
         e = calllog.read_file("sms.xml", (FIX / "sms.xml").read_bytes())
         bodies = [x["body"] for x in e]
@@ -73,22 +67,9 @@ class ButtonTests(unittest.TestCase):
 class FixtureApiTests(ApiBase):
     def setUp(self):
         super().setUp()
-        self._tz = os.environ.get("TZ")
-        os.environ["TZ"] = "Asia/Seoul"
-        if hasattr(time, "tzset"):
-            time.tzset()
         rows = json.loads((FIX / "roster.json").read_text(encoding="utf-8"))
         st, saved = self.req("PUT", "/api/students", {"rows": rows})
         self.assertEqual(st, 200, saved)
-
-    def tearDown(self):
-        if self._tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = self._tz
-        if hasattr(time, "tzset"):
-            time.tzset()
-        super().tearDown()
 
     def test_end_to_end(self):
         st, r = self.req("POST", "/api/class/calllog/parse",
@@ -106,7 +87,7 @@ class FixtureApiTests(ApiBase):
         self.assertEqual(sib, {5, 6})                                      # 같은 번호를 쓰는 형제
         s1 = next(d for d in drafts if d["number"] == 1 and d["method"] == "문자")
         self.assertEqual(s1["topic"], "학부모 문자 (3건)")
-        self.assertIn("[10:00 받음] 감사합니다 😊", s1["content"])
+        self.assertIn(f"[{local_hm(2026, 11, 8, 10, 0)} 받음] 감사합니다 😊", s1["content"])
         self.assertEqual(sorted(d["number"] for d in drafts if "현장체험학습" in d["content"]), [11, 12])
         self.assertEqual(r["stats"]["old"], 1)
         st, s = self.req("POST", "/api/class/calllog/save", {"items": [d for d in drafts if d["pick"]]})
