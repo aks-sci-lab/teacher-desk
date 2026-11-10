@@ -160,8 +160,10 @@ let counselSel = null;       // 고른 학생 번호 (null: 최근 상담)
 let studentView = null;
 let sideFilter = '';
 
+let tgPending = null;   // 텔레그램으로 받은 초안 (0.5.84)
 async function loadCounsel() {
     counselData = await api.get('/api/class/counsel');
+    tgPending = await api.get('/api/class/calllog/pending');
     setStudents(counselData.students);
     studentView = counselSel != null ? await api.get(`/api/class/student/${counselSel}`) : null;
 }
@@ -224,6 +226,16 @@ export function renderCounsel(pane) {
                 el('span.spacer'), el('button.btn', { onclick: openCallImport, title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
                 el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록')),
             note,
+            tgPending?.drafts.length > 0 && el('div.card.cl-tg-pending',
+                el('h3', `📱 텔레그램으로 받은 초안 ${tgPending.drafts.length}건`),
+                el('p.small.muted', `확인해 저장하기 전에는 상담 기록이 아닙니다. 저장하지 않은 초안은 받은 날부터 ${tgPending.keep_days}일 뒤 지워집니다.`),
+                el('div.row',
+                    el('button.btn.primary', { onclick: () => openCallImport(tgPending) }, '확인하고 저장하기'),
+                    el('button.btn.danger', { onclick: guarded(async () => {
+                        if (!confirm('텔레그램으로 받은 초안을 모두 버릴까요? (상담 기록에는 영향 없음)')) return;
+                        await api.post('/api/class/calllog/pending/drop', {});
+                        rerender();
+                    }) }, '모두 버리기'))),
             d.pending.length > 0 && el('div.card.cl-pending', el('h3', `후속 조치 남은 것 ${d.pending.length}`),
                 el('ul.list', d.pending.map(p => el('li', { onclick: () => { counselSel = p.number; refreshSide(); rerender(); } },
                     el('span.ttl', `${p.number} ${p.student_name} · ${p.topic}`), el('span.meta', p.followup.slice(0, 40), p.followup_date && ' · ', p.followup_date && dday(p.followup_date)))))),
@@ -302,10 +314,15 @@ function toBase64(buf) {
     return btoa(bin);
 }
 
-function openCallImport() {
+function openCallImport(pending = null) {
     openPopup({
-        id: 'class-calllog', title: '통화·문자 내역 불러오기', refresh: true,
+        id: 'class-calllog', title: pending ? '텔레그램으로 받은 초안' : '통화·문자 내역 불러오기', refresh: true,
         render(pane, tab) {
+            if (pending) {   // 텔레그램으로 받아 둔 초안: 파일 고르기 없이 바로 확인
+                setStudents(store.students);
+                pane.append(el('div.cl-call', draftList({ drafts: pending.drafts, stats: null }, tab)));
+                return;
+            }
             const files = el('input', { type: 'file', multiple: true, accept: '.xml,.csv,.txt' });
             const since = el('input', { type: 'date', value: (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); })() });
             const result = el('div');
@@ -383,8 +400,9 @@ function draftList(r, tab) {
         rerender();
     });
     return el('div',
-        el('p.cl-call-stats', `통화 ${s.calls} · 문자 ${s.sms} 중 학부모 번호와 맞는 것 ${s.matched}건`,
-            el('span.muted', ` · 맞지 않아 버림 ${s.discarded}`, s.old ? ` · 시작 날짜 전 ${s.old}` : '', s.unreadable ? ` · 날짜를 못 읽음 ${s.unreadable}` : '', s.already ? ` · 이미 저장함 ${s.already}` : '')),
+        s ? el('p.cl-call-stats', `통화 ${s.calls} · 문자 ${s.sms} 중 학부모 번호와 맞는 것 ${s.matched}건`,
+            el('span.muted', ` · 맞지 않아 버림 ${s.discarded}`, s.old ? ` · 시작 날짜 전 ${s.old}` : '', s.unreadable ? ` · 날짜를 못 읽음 ${s.unreadable}` : '', s.already ? ` · 이미 저장함 ${s.already}` : ''))
+            : el('p.cl-call-stats', `텔레그램으로 받은 초안 ${drafts.length}건`, el('span.muted', ' · 고른 것을 저장하면 목록에서 빠집니다')),
         drafts.length ? el('div.cl-drafts', rows.map(x => x.card))
             : el('div.card.cl-empty', el('p', '학부모 번호와 맞는 통화·문자가 없습니다. 학생 명단의 학부모 연락처와 시작 날짜를 확인하세요.')),
         drafts.length > 0 && el('div.row.cl-draft-foot',

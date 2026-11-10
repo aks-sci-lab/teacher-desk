@@ -5,7 +5,8 @@
 
 - 파일은 이 PC 의 서버가 메모리에서만 읽고 저장하지 않습니다. 초안도 선생님이 [저장]을 누른 것만 상담 기록이 됩니다.
 - 명단의 학부모 번호와 맞지 않는 번호는 **버립니다** (화면에 보내지도, 저장하지도, 기록에 남기지도 않음 — 건수만 셈).
-- 텔레그램으로 파일 받기는 없음 (개인정보 예외 결정 전, 총괄 지시 2026-11-09).
+- 텔레그램으로 받기(0.5.84, 사용자 결정 2026-11-10): 설정 `telegram_calllog`(기본 끔)을 켠 경우, 연결된 선생님 채팅의
+  파일만. 초안은 바로 저장하지 않고 class_call_drafts 에 쌓아 두었다가 PC 에서 확인해야 저장, 14일 뒤 자동 삭제.
 - 문자 요약은 선택이며 이 PC 의 LM Studio(127.0.0.1)로만, 학생 이름·전화번호는 가려서 보냄.
 """
 
@@ -14,10 +15,11 @@ import binascii
 import csv
 import hashlib
 import io
+import json
 import re
 import xml.etree.ElementTree as ET
 from xml.parsers import expat
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from . import ai
 from .classroom import need, roster
@@ -331,6 +333,77 @@ def parse_upload(db, body):
     return {"drafts": drafts, "stats": stats}
 
 
+# ---------------------------------------------------------------- 텔레그램으로 받은 초안 (0.5.84)
+PENDING_DAYS = 14          # 이 날수가 지나면 확인하지 않은 초안을 지움
+TELEGRAM_SINCE_DAYS = 60   # 텔레그램으로 받은 파일은 최근 60일 것만 (전체 백업에 몇 년 치가 들어 있어도)
+
+
+def expire_pending(db):
+    cut = (datetime.now() - timedelta(days=PENDING_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    db.execute("DELETE FROM class_call_drafts WHERE created_at < ?", (cut,))
+
+
+def receive_file(db, raw, today=None):
+    """텔레그램으로 받은 파일 하나 → 학부모 번호와 맞는 초안만 쌓아 둠. 돌려줌: 건수만 (이름·번호·내용 없음)."""
+    expire_pending(db)
+    need(any(digits(s.get("parent_phone")) for s in db.students()),
+         "학생 명단에 학부모 연락처가 없습니다. 업무 데스크의 학생 명단에 학부모 연락처를 먼저 넣으세요")
+    entries = read_file("보낸 파일", raw)   # 파일 이름(학생 이름이 들어 있을 수 있음)은 쓰지 않음
+    since = (today or date.today()) - timedelta(days=TELEGRAM_SINCE_DAYS)
+    drafts, stats = make_drafts(db, entries, since)
+    waiting = {d["import_key"] for d in pending_drafts(db)}
+    drafts = [d for d in drafts if not d.get("already") and d["import_key"] not in waiting]
+    if drafts:
+        db.execute("INSERT INTO class_call_drafts(drafts, stats, created_at) VALUES(?, ?, ?)",
+                   (json.dumps(drafts, ensure_ascii=False), json.dumps(stats), now_str()))
+    db.log(f"텔레그램으로 받은 통화·문자 파일에서 상담 초안 {len(drafts)}건 만듦")   # 이름·번호·내용 없음
+    return {"drafts": len(drafts), "discarded": stats["discarded"], "already": stats["already"], "old": stats["old"]}
+
+
+def pending_drafts(db):
+    out = []
+    for row in db.query("SELECT drafts FROM class_call_drafts ORDER BY id"):
+        out += json.loads(row["drafts"])
+    return out
+
+
+def pending_state(db):
+    """상담 화면의 '텔레그램으로 받은 초안': 이미 저장한 것은 빼고 보여 줌."""
+    expire_pending(db)
+    have = {r["import_key"] for r in db.query("SELECT import_key FROM class_counsel WHERE import_key IS NOT NULL")}
+    seen, drafts = set(), []
+    for d in pending_drafts(db):
+        if d["import_key"] in have or d["import_key"] in seen:
+            continue
+        seen.add(d["import_key"])
+        drafts.append(d)
+    drafts.sort(key=lambda x: (x["date"], x["time"]), reverse=True)
+    first = db.one("SELECT MIN(created_at) AS t FROM class_call_drafts")["t"]
+    return {"drafts": drafts, "oldest": first, "keep_days": PENDING_DAYS}
+
+
+def pending_drop(db, keys=None):
+    """keys 가 없으면 모두 지움, 있으면 그 초안만 뺌 (저장했거나 버린 것)."""
+    if keys is None:
+        db.execute("DELETE FROM class_call_drafts")
+        return {"ok": True}
+    keys = set(keys)
+    with db.lock, db.conn:
+        for row in db.conn.execute("SELECT id, drafts FROM class_call_drafts").fetchall():
+            rest = [d for d in json.loads(row["drafts"]) if d["import_key"] not in keys]
+            if rest:
+                db.conn.execute("UPDATE class_call_drafts SET drafts = ? WHERE id = ?", (json.dumps(rest, ensure_ascii=False), row["id"]))
+            else:
+                db.conn.execute("DELETE FROM class_call_drafts WHERE id = ?", (row["id"],))
+    return {"ok": True}
+
+
+def _drop_body(db, body):
+    keys = body.get("keys")
+    need(keys is None or (isinstance(keys, list) and all(isinstance(k, str) for k in keys)), "초안 자료가 잘못되었습니다")
+    return pending_drop(db, keys)
+
+
 def save_drafts(db, body):
     """선생님이 확인·보충한 초안만 상담 기록으로 저장 (source='import')."""
     items = body.get("items")
@@ -352,6 +425,7 @@ def save_drafts(db, body):
     with db.lock, db.conn:
         for f in rows:
             db.conn.execute(f"INSERT INTO class_counsel({', '.join(f)}) VALUES({', '.join('?' * len(f))})", tuple(f.values()))
+    pending_drop(db, [f["import_key"] for f in rows if f["import_key"]])   # 텔레그램으로 받은 초안이었으면 목록에서 뺌
     db.log(f"학급 상담 기록 {len(rows)}건 저장 (통화·문자 내역에서)")   # 이름·번호·내용 없음
     return {"saved": len(rows), "skipped": len(items) - len(rows)}
 
@@ -386,5 +460,7 @@ def _needs_config(fn):
 ROUTES = [
     ("POST", "/api/class/calllog/parse", lambda db, q, b: parse_upload(db, b)),
     ("POST", "/api/class/calllog/save", lambda db, q, b: save_drafts(db, b)),
+    ("GET", "/api/class/calllog/pending", lambda db, q, b: pending_state(db)),
+    ("POST", "/api/class/calllog/pending/drop", lambda db, q, b: _drop_body(db, b)),
     ("POST", "/api/class/calllog/summarize", _needs_config(lambda db, config, q, b: summarize(db, config, b))),
 ]

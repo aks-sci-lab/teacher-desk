@@ -60,6 +60,7 @@ DEFAULTS = {
     "telegram_api_base": "https://api.telegram.org",
     "telegram_photos": True,   # 새 쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보냄 (0.5.52)
     "telegram_cool_text": False,   # 새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 켠 경우만, 0.5.61)
+    "telegram_calllog": False,   # 통화·문자 기록 파일을 텔레그램으로 받아 상담 초안으로 (선생님이 켠 경우만, 0.5.84)
     # 화면 배치 (🧩 화면 배치 모드에서 저장)
     "layout": {},
     # 첫 실행 설정 도우미 (0.5.79): '' 처음 · later 나중에 · done 마침 · notified 기존 사용자에게 한 번 안내함
@@ -72,13 +73,13 @@ SECRET_KEYS = {"capture_key", "telegram_token", "neis_key", "ai_openai_key", "ai
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
-    "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "layout", "neis_key", "neis_school",
+    "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "telegram_calllog", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
 }
 SETUP_WIZARD_STATES = ("", "later", "done", "notified")
-BOOL_KEYS = {"telegram_photos", "telegram_cool_text", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
+BOOL_KEYS = {"telegram_photos", "telegram_cool_text", "telegram_calllog", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)

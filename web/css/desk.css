@@ -1411,3 +1411,5 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .cl-draft-body .field { margin-bottom: 6px; }
 .cl-draft-body .row input[type=text] { flex: 1; min-width: 14em; }
 .cl-draft-foot { position: sticky; bottom: 0; margin-top: 10px; padding: 10px 0 0; background: var(--surface); border-top: 1px solid var(--line); }
+.cl-tg-pending { max-width: 980px; margin-bottom: 12px; border-color: var(--accent); background: var(--accent-soft); }
+.cl-tg-pending h3 { margin: 0 0 4px; }

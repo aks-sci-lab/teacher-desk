@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import VERSION, absence, ai, assist, holidays, passlink, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, calllog, assist, holidays, passlink, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -363,6 +363,8 @@ class Bot:
         if update.get("callback_query"):
             return self.handle_button(update["callback_query"])
         msg = update.get("message") or {}
+        if msg.get("document"):
+            return self.handle_calllog_file(msg)   # 통화·문자 기록 파일 (0.5.84)
         chat = msg.get("chat") or {}
         text = (msg.get("text") or "").strip()
         text = KEY_TEXT.get(text, text)   # 아래 단추 판의 '📋 브리핑' 같은 단추 글 → 명령 글
@@ -1826,6 +1828,48 @@ class Bot:
     def reply(self, cid, text):
         self.send(text, cid)
         return text
+
+    # ---- 통화·문자 기록 파일 받기 (0.5.84, 사용자 결정 2026-11-10 예외: 기본 끔, 선생님 채팅만, 처리 후 삭제, 답은 건수만) ----
+    def handle_calllog_file(self, msg):
+        chat = msg.get("chat") or {}
+        cid = chat.get("id")
+        if chat.get("type") != "private" or cid is None or cid != self.chat_id:
+            return None   # 연결된 선생님이 아닌 사람의 파일은 받지도, 답하지도 않음
+        if not self.config["telegram_calllog"]:
+            return self.reply(cid, "파일은 받지 않았습니다. 통화·문자 기록 파일을 받으려면 업무 데스크 설정 → 텔레그램에서 "
+                                   "'통화·문자 기록 파일을 텔레그램으로 받기'를 켜세요.")
+        doc = msg["document"]
+        try:
+            if (doc.get("file_size") or 0) > calllog.MAX_TOTAL:
+                raise ValueError("파일이 너무 큽니다 (14MB 이하)")
+            info = self.api("getFile", {"file_id": doc.get("file_id")}, timeout=30)
+            raw = self.download_file(info["file_path"])   # 메모리에서만 읽음 (디스크에 쓰지 않음)
+            r = calllog.receive_file(self.db, raw)
+            extra = [f"학부모 번호와 맞지 않아 버림 {r['discarded']}건"]
+            if r["already"]:
+                extra.append(f"이미 저장한 것 {r['already']}건")
+            if r["old"]:
+                extra.append(f"{calllog.TELEGRAM_SINCE_DAYS}일보다 오래된 것 {r['old']}건")
+            text = (f"📱 통화·문자 기록에서 상담 초안 {r['drafts']}건을 만들었습니다 ({', '.join(extra)}).\n"
+                    f"업무 데스크 → 학급 → 상담 화면에서 확인해 저장하세요. 확인하지 않은 초안은 {calllog.PENDING_DAYS}일 뒤 지워집니다.")
+        except ValueError as e:   # 파일 형식 문제 (안내 글에는 파일 내용·이름이 들어가지 않음)
+            text = f"파일을 읽지 못했습니다: {e}"
+        except Exception as e:
+            self.db.log(f"텔레그램 통화·문자 파일 받기 오류: {type(e).__name__}", "error")
+            text = "파일을 받지 못했습니다. 잠시 뒤 다시 보내거나 업무 데스크에서 직접 불러오세요."
+        try:
+            self.api("deleteMessage", {"chat_id": cid, "message_id": msg.get("message_id")}, timeout=15)
+        except Exception:
+            text += "\n⚠ 보낸 파일 메시지를 지우지 못했습니다. 텔레그램 대화에서 직접 지워 주세요."
+        return self.reply(cid, text)
+
+    def download_file(self, file_path):
+        url = f"{self.config['telegram_api_base'].rstrip('/')}/file/bot{self.token}/{file_path}"
+        with urllib.request.urlopen(url, timeout=60) as r:
+            raw = r.read(calllog.MAX_TOTAL + 1)
+        if len(raw) > calllog.MAX_TOTAL:
+            raise ValueError("파일이 너무 큽니다 (14MB 이하)")
+        return raw
 
     def send_answer(self, cid, cmd):
         text = self.answer(cmd)
