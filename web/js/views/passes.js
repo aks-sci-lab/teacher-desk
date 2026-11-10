@@ -222,6 +222,7 @@ export function openForm(init = {}) {
                 await loadDay();
                 refreshSide();
                 emit('data-changed');
+                emit('passes-changed');   // 월별 통계도 새로 고침
                 tab.close();
                 openPass(saved, true);
                 if (printAfter) await printPass(saved);
@@ -276,6 +277,7 @@ export function openPass(p, refresh = false) {
                 await loadDay();
                 refreshSide();
                 emit('data-changed');
+                emit('passes-changed');   // 월별 통계도 새로 고침
                 tab.rerender();
             };
             const previewBox = el('div.preview-box.wide', slipNode(p, null, null));
