@@ -1399,3 +1399,15 @@ ul.todo-list { list-style: none; margin: 0 0 6px; padding: 0; }
 .cl-cs-form { max-width: 760px; }
 .cl-cs-form .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 @media print { .cl-print td.pre { white-space: pre-wrap; } .cl-print .cl-table { font-size: 10pt; } }
+
+/* ---------- 통화·문자 내역 → 상담 초안 (0.5.83) ---------- */
+.cl-call ul { margin: 0 0 12px; padding-left: 1.2em; }
+.cl-call-stats { margin: 14px 0 8px; font-weight: 600; }
+.cl-drafts { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }
+.cl-draft { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.cl-draft.already { opacity: .6; }
+.cl-draft-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 12px; cursor: pointer; }
+.cl-draft-body { padding: 0 12px 10px 38px; }
+.cl-draft-body .field { margin-bottom: 6px; }
+.cl-draft-body .row input[type=text] { flex: 1; min-width: 14em; }
+.cl-draft-foot { position: sticky; bottom: 0; margin-top: 10px; padding: 10px 0 0; background: var(--surface); border-top: 1px solid var(--line); }
