@@ -102,9 +102,11 @@ function renderMonth(pane, tab) {
         el('p.small.muted', '공휴일 표: 2026~2028년. 2028년은 한국천문연구원의 공식 발표 전 자료입니다. 그 밖의 연도와 임시공휴일은 직접 확인해 주세요.'),
         el('p.small.muted', '날짜 칸을 두 번 누르면 일정을 추가합니다. 일정을 누르면 원래 메시지·공문이 열립니다.'));
     guarded(async () => {
-        const [evs, holidayNames] = await Promise.all([
+        const [evs, holidayNames, gevs] = await Promise.all([
             api.get(`/api/events?from=${days[0]}&to=${days[41]}`),
             api.get(`/api/holidays?from=${days[0]}&to=${days[41]}`),
+            // 선생님 구글 캘린더에서 가져온 일정 (설정에서 켠 경우만, 읽기 전용). 못 읽어도 달력은 그대로
+            api.get(`/api/gcal/events?from=${days[0]}&to=${days[41]}`).catch(() => []),
         ]);
         for (const [d, name] of Object.entries(holidayNames)) {
             const cell = cells.get(d);
@@ -126,6 +128,18 @@ function renderMonth(pane, tab) {
                     title: `${e.time ? e.time + ' ' : ''}${e.text}`,
                     onclick: () => openEvent(e),
                 }, `${e.kind === 'deadline' ? '마감 ' : ''}${e.time && d === e.date ? e.time + ' ' : ''}${e.item_title || e.text}`));
+            }
+        }
+        for (const g of gevs) {
+            const last = g.end_date ? (g.end_date < days[41] ? g.end_date : days[41]) : g.date;
+            for (let d = g.date < days[0] ? days[0] : g.date; d <= last; d = addDays(d, 1)) {
+                const cell = cells.get(d);
+                if (!cell) continue;
+                cell.append(el('button.chipev.gcal', {
+                    type: 'button',
+                    title: `구글 캘린더 일정 (읽기 전용 — 고치려면 구글 캘린더에서): ${g.time ? g.time + ' ' : ''}${g.text}`,
+                    onclick: () => toast('구글 캘린더에서 가져온 일정입니다. 고치거나 지우려면 구글 캘린더에서 하세요.', 'info', 4000),
+                }, el('span.gcal-tag', '구글'), `${g.time && d === g.date ? g.time + ' ' : ''}${g.text}`));
             }
         }
     })();

@@ -126,6 +126,7 @@ def run(args, config, db):
     bot.start()
     bell = LessonBell(db, config, bot)   # 수업 시작 알림 (시간표의 교시 시간)
     bell.start()
+    app.gcal.start()   # 선생님 구글 캘린더 가져오기·올리기 (설정에서 켠 경우만 실제로 보냄)
     db.log("업무 데스크 시작")
     try:
         httpd.serve_forever()
@@ -137,6 +138,7 @@ def run(args, config, db):
         watcher.stop()
         bot.stop()
         bell.stop()
+        app.gcal.stop()
         app.update_checker.stop()
         httpd.server_close()
         db.log("업무 데스크 종료")
