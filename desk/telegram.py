@@ -2,7 +2,9 @@
 
 - 학교 PC 를 밖에 공개하지 않도록, 이 프로그램이 텔레그램에 '새 명령 있나?' 하고 묻는 방식(롱 폴링)입니다.
 - 화면에 표시된 연결 코드를 보낸 텔레그램 계정 하나만 명령할 수 있습니다.
-- 학생 이름·조퇴 사유는 텔레그램으로 보내지 않습니다 (인원수만). 증 발급은 번호로, 답장의 이름은 '김○○' 처럼.
+- 조퇴·외출 사유는 텔레그램으로 보내지 않습니다. 증 발급은 번호로.
+- 학생 이름은 선생님 본인 채팅이라 그대로 씁니다 (0.5.93 선생님 결정). 설정 '텔레그램에서 학생 이름 가리기' 를 켜면 '김○○' 처럼 가림.
+  기록(db.log)·오류 문구의 이름은 설정과 관계없이 늘 가림.
 - 브리핑·검색은 제목과 요약까지, 원문·파일은 단추나 '원문 n'·'파일 n' 으로 달라고 할 때만 (사용자 결정 2026-10-28).
 """
 
@@ -219,7 +221,7 @@ def fmt_range(start, end):
 
 
 def masked(name):
-    """'김민준' → '김○○' (텔레그램에는 이름을 다 쓰지 않음)."""
+    """'김민준' → '김○○' (설정 '텔레그램에서 학생 이름 가리기' 를 켰을 때)."""
     name = (name or "").strip()
     return name[:1] + "○" * max(len(name) - 1, 1) if name else "○○"
 
@@ -658,7 +660,7 @@ class Bot:
         return text
 
     def unread_text(self, offset=0):
-        """안 읽은 자료 (수신함 '안 읽음'), 제목까지·학생 이름 가림. (글, 단추)"""
+        """안 읽은 자료 (수신함 '안 읽음'), 제목까지. (글, 단추)"""
         rows = self.db.query("SELECT id, source, received_at, category, title FROM items "
                              "WHERE status = 'new' AND source != 'paste' ORDER BY received_at DESC, id DESC")
         if not rows:
@@ -1609,7 +1611,7 @@ class Bot:
             buttons.append([{"text": "사유 없이 발급", "callback_data": f"pr:{pid}:-"},
                             {"text": "취소", "callback_data": f"px:{pid}"}])
             return self.show(cid, msg.get("message_id"),
-                             f"🎫 {p['number']}번 {masked(students[0]['name'])} {KIND[p['kind']]}증 {self.pass_when(p)}\n"
+                             f"🎫 {p['number']}번 {self.student_name(students[0]['name'])} {KIND[p['kind']]}증 {self.pass_when(p)}\n"
                              "사유를 고르면 발급합니다.", buttons)
         if kind == "evu":
             eid, _, token = rest.partition(":")
@@ -1700,13 +1702,13 @@ class Bot:
         if notes:   # 신청할 때 이미 있는 기록이 있으면 먼저 알리고, [그래도 신청] 을 눌러야 사유 고르기로 감
             pending[pid]["stage"] = "dup"
             self.db.set_meta("telegram_pending", dict(list(pending.items())[-20:]))
-            self.show_duplicate_warning(cid, f"{number}번 {masked(students[0]['name'])} {word}증 {when} — 중복 신청일 수 있습니다",
+            self.show_duplicate_warning(cid, f"{number}번 {self.student_name(students[0]['name'])} {word}증 {when} — 중복 신청일 수 있습니다",
                                         notes, "그래도 신청", f"dk:{pid}:1", f"px:{pid}")
             return "중복 확인"
         buttons = [[{"text": r, "callback_data": f"pr:{pid}:{i}"}] for i, r in enumerate(REASONS[kind])]
         buttons.append([{"text": "사유 없이 발급", "callback_data": f"pr:{pid}:-"},
                         {"text": "취소", "callback_data": f"px:{pid}"}])
-        text = f"🎫 {number}번 {masked(students[0]['name'])} {word}증 {when}\n사유를 고르면 발급합니다."
+        text = f"🎫 {number}번 {self.student_name(students[0]['name'])} {word}증 {when}\n사유를 고르면 발급합니다."
         self.send(text, cid, buttons)
         return text
 
@@ -1731,7 +1733,7 @@ class Bot:
         students = [s for s in self.db.students() if s["number"] == p["number"]]
         if len(students) != 1:
             return f"학생 명단에 {p['number']}번이 없습니다."
-        who = f"{p['number']}번 {masked(students[0]['name'])}"
+        who = f"{p['number']}번 {self.student_name(students[0]['name'])}"
         when = self.pass_when(p)
         if stage == "reason":
             if p.get("stage") == "dup":
@@ -2036,8 +2038,19 @@ class Bot:
         return HELP
 
     def mask(self, text):
-        """텔레그램으로 나가는 글에서 학생 이름은 가림."""
+        """텔레그램으로 나가는 글의 학생 이름: 설정 '텔레그램에서 학생 이름 가리기' 를 켰을 때만 가림.
+        0.5.93 선생님 결정(2026-11-11): 선생님 본인 채팅(연결된 chat_id 하나)이라 기본은 그대로 씀."""
+        if not self.config["telegram_mask_names"]:
+            return text or ""
+        return self.mask_always(text)
+
+    def mask_always(self, text):
+        """설정과 관계없이 가림 — 기록(db.log)·오류 문구처럼 텔레그램 밖에도 남는 글."""
         return ai.mask_names(text or "", [s["name"] for s in self.db.students()])
+
+    def student_name(self, name):
+        """증 발급 답장의 학생 이름 (설정을 켜면 '김○○')."""
+        return masked(name) if self.config["telegram_mask_names"] else (name or "").strip()
 
     def collect_message(self, stats, today=None):
         """수집 결과 알림 (0.5.39). 새 자료가 없으면 None.
@@ -2281,7 +2294,7 @@ class Bot:
         text = P_BOT_TOKEN.sub("/bot***", text)
         text = P_TOKEN_LIKE.sub("***", text)
         try:
-            text = self.mask(text)
+            text = self.mask_always(text)   # 기록·상태에도 남으므로 설정과 관계없이 가림
         except Exception:
             return name
         text = " ".join(text.split())[:80]

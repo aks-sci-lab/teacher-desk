@@ -37,7 +37,7 @@ class TelegramCoolPhotoTests(unittest.TestCase):
     def run_notify(self, *ids, reason="scheduled"):
         self.bot.notify_collect({"items": len(ids), "new_ids": list(ids), "deadlines": 0}, reason)
 
-    def test_new_cool_photos_are_sent_with_masked_caption(self):
+    def test_new_cool_photos_are_sent_with_title_caption(self):
         a = self.item("최별빛 학생 체험학습 안내", [DATA, DATA])
         self.item("사진 없는 쪽지", [])
         self.run_notify(a)
@@ -45,7 +45,7 @@ class TelegramCoolPhotoTests(unittest.TestCase):
         raw = b"".join(self.fake.docs)
         self.assertIn("📷".encode(), raw)
         self.assertIn("(1/2)".encode(), raw)
-        self.assertNotIn("최별빛".encode(), raw)       # 제목 속 학생 이름은 가림
+        self.assertIn("최별빛".encode(), raw)          # 0.5.93: 제목 그대로 (설정을 켜면 가림)
 
     def test_cool_text_is_off_by_default_and_when_on_sends_body_in_chunks(self):
         """0.5.61: 쿨메신저 쪽지 원문은 선생님이 설정에서 켠 경우에만, 원문 그대로 (제목 머리줄은 이름 가림)."""
@@ -61,7 +61,7 @@ class TelegramCoolPhotoTests(unittest.TestCase):
         joined = "".join(texts)
         self.assertIn("나" * 10, joined)                       # 원문 끝까지 빠짐없이
         self.assertGreaterEqual(len([t for t in texts if "가" in t]), 2)   # 긴 글은 여러 번에 나눠 보냄
-        self.assertNotIn("최별빛", joined)                    # 머리줄의 이름은 가림
+        self.assertIn("최별빛", joined)                       # 0.5.93: 머리줄 이름 그대로
         self.env.config.values["telegram_cool_text"] = False
 
     def test_nothing_sent_when_off_unpaired_not_cool_or_old(self):
