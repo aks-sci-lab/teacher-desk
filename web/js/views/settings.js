@@ -4,7 +4,7 @@
 import { api } from '../api.js';
 import { el, clear, toast, guarded, download } from '../ui.js';
 import { registerView, openTab, findTab, on, toggleLayoutMode, menuList, setMenuOn } from '../shell.js';
-import { store, loadState } from '../store.js';
+import { store, loadState, saveSettings } from '../store.js';
 import { openAI } from './ai.js';
 import { checkUpdate, startUpdate } from '../update.js';
 import { openTimetable } from './timetable.js';
@@ -137,6 +137,116 @@ function captureBox() {
     return box;
 }
 
+// 선생님 본인 구글 캘린더와 일정 공유 (0.5.91): 가져오기(비공개 iCal 주소) · 올리기(내 계정의 Apps Script 웹 앱)
+function gcalStatusLine(g) {
+    const st = g.status || {};
+    const lines = [];
+    if (g.import_on) {
+        const s = st.import || {};
+        lines.push(el('p.small.gcal-st', { className: `small gcal-st${s.ok === false ? ' bad' : ''}` },
+            !g.ical_set ? '가져오기: 주소를 넣어 주세요'
+                : s.ok === false ? `가져오기 실패: ${s.error} (${s.retry || ''})`
+                    : s.at ? `가져오기: ${s.at} 에 ${s.count ?? 0}건 가져옴 (30분마다)` : '가져오기: 곧 가져옵니다'));
+    }
+    if (g.push_on) {
+        const s = st.push || {};
+        lines.push(el('p.small.gcal-st', { className: `small gcal-st${s.ok === false ? ' bad' : ''}` },
+            !(g.push_set && g.key_set) ? '올리기: 스크립트를 만들고 웹 앱 주소를 넣어 주세요'
+                : s.ok === false ? `올리기 실패: ${s.error} — 보낼 것 ${g.pending ?? '?'}건은 ${s.retry || '잠시 뒤'} 다시 보냅니다`
+                    : `올리기: ${s.at ? `${s.at} 에 마지막으로 보냄` : '아직 보내지 않음'} · 보낼 것 ${g.pending ?? 0}건`));
+    }
+    if (!lines.length) lines.push(el('p.small.muted', '꺼져 있습니다. 아래에서 켜면 그때부터 선생님 구글 계정과 주고받습니다.'));
+    return lines;
+}
+
+function gcalBox() {
+    const status = el('div');
+    const scriptArea = el('div');
+    const types = el('div.gcal-types');
+    let g = null;
+    const draw = data => {
+        g = data;
+        clear(status, gcalStatusLine(g));
+        clear(types, g.type_labels.map(([k, label]) => el('label.check',
+            el('input', { type: 'checkbox', checked: g.types.includes(k), onchange: guarded(async ev => {
+                const on = new Set(g.types);
+                if (ev.target.checked) on.add(k); else on.delete(k);
+                await saveSettings({ gcal_push_types: [...on] });
+                toast(`${label}: ${ev.target.checked ? '올림' : '올리지 않음'}`, 'info', 1500);
+                draw(await api.get('/api/gcal'));
+            }) }),
+            el('span', label))));
+    };
+    const refresh = guarded(async () => draw(await api.get('/api/gcal')));
+    const act = (action, done) => guarded(async () => {
+        const r = await api.post('/api/gcal', { action });
+        draw(r);
+        done?.(r);
+    });
+    const checkBtn = el('button.btn.small', { type: 'button', onclick: act('check', r => {
+        const c = r.check || {};
+        const msg = [
+            c.import && (c.import.ok === true ? `가져오기 성공 (${c.import.count}건)` : c.import.ok === false ? `가져오기 실패: ${c.import.error}` : '가져오기는 꺼져 있음'),
+            c.push && (c.push.ok ? `올리기 연결 성공 (캘린더: ${c.push.calendar})` : `올리기 실패: ${c.push.error}`),
+        ].filter(Boolean).join(' · ');
+        toast(msg, c.push?.ok === false || c.import?.ok === false ? 'error' : 'info', 7000);
+    }) }, '연결 확인');
+    const makeScript = guarded(async () => {
+        if (g?.key_set && !confirm('비밀 키를 새로 만들면 이미 배포한 스크립트는 더 이상 쓸 수 없습니다. 새 스크립트를 붙여 넣고 "새 버전"으로 다시 배포해야 합니다. 새로 만들까요?')) return;
+        const r = await api.post('/api/gcal', { action: 'script' });
+        draw(r);
+        const ta = el('textarea.gcal-script', { readonly: true, onclick: e => e.target.select() }, r.script);
+        clear(scriptArea,
+            el('p.small', '아래 글 전체를 복사해 Apps Script 편집기에 붙여 넣으세요. 이 글에는 비밀 키가 들어 있어 이 화면을 닫으면 다시 보여 주지 않습니다 (필요하면 새로 만들기).'),
+            ta,
+            el('div.row', el('button.btn.small.primary', { type: 'button', onclick: guarded(async () => {
+                await navigator.clipboard.writeText(r.script);
+                toast('스크립트를 복사했습니다');
+            }) }, '스크립트 복사')));
+    });
+    refresh();
+    return el('div.gcal-box',
+        item('구글 캘린더 상태 연결 확인 동기화', el('div.field', el('span', '지금 상태')), status,
+            el('div.row', checkBtn,
+                el('button.btn.small', { type: 'button', onclick: act('import', () => toast('구글 캘린더 일정을 가져왔습니다')) }, '지금 가져오기'),
+                el('button.btn.small', { type: 'button', onclick: act('push', r => toast(`${r.result.sent}건 보냈습니다${r.result.pending ? ` (남은 것 ${r.result.pending}건)` : ''}`)) }, '지금 보내기'))),
+        el('h3', '① 가져오기: 구글 캘린더 → 업무 데스크 달력'),
+        checkField('gcal_import', '구글 캘린더 일정을 달력에 보이기',
+            '켜면 30분마다(켤 때도) 선생님 구글 캘린더를 읽어 달력에 "구글" 표시로 보여 줍니다. 읽기만 하며, 업무 데스크가 올린 일정은 다시 가져오지 않습니다.'),
+        item('비공개 주소 iCal 구글 캘린더 설정',
+            el('ol.small',
+                el('li', '컴퓨터에서 구글 캘린더(calendar.google.com)를 엽니다.'),
+                el('li', '왼쪽 "내 캘린더"에서 내 이름 캘린더 옆 ⋮ → "설정 및 공유"를 누릅니다.'),
+                el('li', '아래쪽 "캘린더 통합"의 "비공개 주소(iCal 형식)" 옆 복사 단추를 누릅니다. ("공개 주소"가 아닙니다.)'),
+                el('li', '아래 칸에 붙여 넣고 [저장]을 누릅니다. 이 주소를 아는 사람은 일정을 볼 수 있으니 다른 곳에 붙여 넣지 마세요.'))),
+        secretField('gcal_ical_url', '비공개 주소(iCal 형식)', '이 PC 의 설정 파일에만 저장되고 화면에 다시 보이지 않습니다.',
+            'https://calendar.google.com/calendar/ical/…/basic.ics', refresh),
+        el('h3', '② 올리기: 업무 데스크 일정 → 선생님 구글 캘린더'),
+        checkField('gcal_push', '업무 데스크 일정을 내 구글 캘린더에 올리기',
+            '새로 만들기·고치기·지우기를 1분 안에 반영합니다. 인터넷이 끊겨도 업무 데스크는 그대로 쓰고, 못 보낸 것은 나중에 저절로 다시 보냅니다. 선생님 본인 계정에만 올라갑니다.'),
+        item('Apps Script 웹 앱 배포 스크립트 비밀 키',
+            el('ol.small',
+                el('li', ['아래 [스크립트 만들기]를 누르고 [스크립트 복사]를 누릅니다.']),
+                el('li', '내 구글 계정으로 script.google.com 을 열고 "새 프로젝트"를 누릅니다. 이름은 "업무 데스크 일정" 처럼 정합니다.'),
+                el('li', '편집기에 원래 있던 글을 모두 지우고 복사한 스크립트를 붙여 넣은 뒤 저장(💾)합니다.'),
+                el('li', '오른쪽 위 "배포" → "새 배포" → 톱니(⚙) → "웹 앱"을 고릅니다.'),
+                el('li', '"다음 사용자 인증 정보로 실행: 나", "액세스 권한이 있는 사용자: 모든 사용자"로 하고 "배포"를 누릅니다.'),
+                el('li', '"액세스 승인" → 내 계정 → "고급" → "(안전하지 않음)으로 이동" → "허용"을 누릅니다. 내가 만든 스크립트라 이렇게 나옵니다.'),
+                el('li', '나온 "웹 앱 URL"(…/exec)을 복사해 아래 칸에 붙여 넣고 [저장] → 위의 [연결 확인]을 누릅니다.')),
+            el('div.row', el('button.btn.small', { type: 'button', onclick: makeScript }, '스크립트 만들기 (새 비밀 키)')),
+            scriptArea),
+        secretField('gcal_push_url', '웹 앱 URL', '이 PC 의 설정 파일에만 저장되고 화면에 다시 보이지 않습니다.',
+            'https://script.google.com/macros/s/…/exec', refresh),
+        item('올릴 일정 종류 학사일정 마감 회의 직접 추가',
+            el('div.field', el('span', '올릴 일정 종류'),
+                el('span.hint', '한 일정이 여러 종류에 들면 하나만 켜져 있어도 올립니다. 끄면 그 종류는 구글에서도 지웁니다. 수신함에서 체크하지 않은 일정 후보, 출결·상담 기록은 올리지 않습니다.')),
+            types),
+        checkField('gcal_mask', '올릴 때 학생 이름 가리기',
+            '켜면 일정 제목·설명의 학생 이름(명단에 있는 이름)을 ○○○ 로 바꿔 올립니다. 선생님 본인 계정이라 기본은 끔.'),
+        el('div.row', el('button.btn.small', { type: 'button', onclick: act('clear_ical', () => toast('가져오기 주소를 지웠습니다')) }, '가져오기 주소 지우기'),
+            el('button.btn.small', { type: 'button', onclick: act('clear_push', () => toast('웹 앱 주소를 지웠습니다')) }, '웹 앱 주소 지우기')));
+}
+
 // 고급 항목 접기 (보통은 그대로 두는 칸)
 function advanced(...children) {
     return el('details.set-adv', el('summary', '고급 — 보통은 그대로 두세요'), el('div', children));
@@ -189,8 +299,9 @@ const GROUPS = [
         ],
     },
     {
-        id: 'schedule', icon: '📅', title: '일정·시간표', desc: '시간표 엑셀, 학사일정(파일·나이스)',
-        status: s => (s.neis_school?.name ? `나이스: ${s.neis_school.name}` : (s.neis_key_set ? '나이스 인증키 있음' : '파일로 불러오기')),
+        id: 'schedule', icon: '📅', title: '일정·시간표', desc: '시간표 엑셀, 학사일정(파일·나이스), 내 구글 캘린더와 공유',
+        status: s => [s.neis_school?.name ? `나이스: ${s.neis_school.name}` : (s.neis_key_set ? '나이스 인증키 있음' : '파일로 불러오기'),
+            (s.gcal_import || s.gcal_push) && '구글 캘린더'].filter(Boolean).join(' · '),
         build: () => [
             item('시간표 엑셀 불러오기 내 수업 수업 알림',
                 el('div.field', el('span', '시간표'),
@@ -206,6 +317,9 @@ const GROUPS = [
             item('나이스 학교', el('p.small.muted', store.settings.neis_school?.name
                 ? `고른 학교: ${store.settings.neis_school.name} (학사일정 가져오기 → 🏫 나이스 에서 바꿉니다)`
                 : '학교는 학사일정 가져오기 → 🏫 나이스 에서 고릅니다.')),
+            el('h3.gcal-head', '📆 내 구글 캘린더와 공유 (선택, 기본 끔)'),
+            el('p.small.muted', '선생님 본인 구글 계정에만 주고받습니다. 다른 사람·공개 캘린더·다른 서버로는 보내지 않습니다.'),
+            gcalBox(),
         ],
     },
     {
