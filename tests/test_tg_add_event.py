@@ -179,14 +179,24 @@ class TelegramAddEventTests(unittest.TestCase):
         self.assertEqual(len(self.events()), 1)                                      # 화면에서 만든 일정은 텔레그램으로 못 지움
         self.assertIn("이미 취소했거나", self.fake.edited[-1]["text"])
 
-    def test_student_name_is_masked_in_replies_but_saved_as_typed(self):
+    def test_student_name_shown_by_default_and_masked_when_setting_on(self):
         did = self.start()
         self.pick(did)
         self.bot.handle_update(msg("한가람 학부모 상담"))
         self.bot.handle_update(press(self.buttons(self.fake.sent[-1])["등록"]))
         self.assertEqual(self.events()[0]["text"], "한가람 학부모 상담")                # 저장은 그대로
-        self.assertNotIn("한가람", self.all_text())                                   # 텔레그램 글은 모두 가림
-        self.assertIn("○○○ 학부모 상담", self.all_text())          # 이름 자리는 ○ 로 가려짐
+        self.assertIn("한가람 학부모 상담 등록했습니다", self.all_text())   # 0.5.93: 본인 채팅이라 이름 그대로
+        self.bot.handle_update(press(self.undo_button()))
+        self.assertIn("취소했습니다", self.all_text())
+        self.env.config.values["telegram_mask_names"] = True                         # 설정을 켜면 예전처럼 가림
+        self.fake.sent.clear(); self.fake.edited.clear()
+        did = self.start()
+        self.pick(did)
+        self.bot.handle_update(msg("한가람 학부모 상담"))
+        self.bot.handle_update(press(self.buttons(self.fake.sent[-1])["등록"]))
+        self.assertEqual(self.events()[0]["text"], "한가람 학부모 상담")
+        self.assertNotIn("한가람", self.all_text())
+        self.assertIn("○○○ 학부모 상담", self.all_text())
         self.bot.handle_update(press(self.undo_button()))
         self.assertNotIn("한가람", self.all_text())
 

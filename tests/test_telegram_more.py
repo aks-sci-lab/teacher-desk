@@ -53,7 +53,7 @@ class TelegramMoreTests(unittest.TestCase):
         waiting = self.bot.handle_update(press(reason))
         self.assertIsNone(self.env.db.one("SELECT * FROM passes"))      # 확인 전에는 발급하지 않음
         self.assertIn("010-1111-2222", waiting)
-        self.assertIn("7번 김○○", waiting)
+        self.assertIn("7번 김민준", waiting)  # 0.5.93 선생님 결정: 본인 채팅이라 이름 그대로 (사유는 계속 안 보냄)
         self.assertNotIn("병원", waiting)
         self.assertIn("확인 대기 1건", self.bot.brief_text())
         self.assertEqual(self.bot.handle_update(press(reason)), waiting)   # 사유 단추 두 번 눌러도 그대로
@@ -80,7 +80,7 @@ class TelegramMoreTests(unittest.TestCase):
     def test_issue_pass_by_number_and_button(self):
         self.assertEqual(masked("김민준"), "김○○")
         reply = self.bot.handle_update(msg("조퇴 7 13:30"))
-        self.assertIn("7번 김○○ 조퇴증 13:30", reply)
+        self.assertIn("7번 김민준 조퇴증 13:30", reply)  # 0.5.93 선생님 결정: 본인 채팅이라 이름 그대로 (사유는 계속 안 보냄)
         buttons = self.fake.sent[-1]["reply_markup"]["inline_keyboard"]
         self.assertEqual(buttons[0][0]["text"], "병원 진료")
         data = buttons[0][0]["callback_data"]
@@ -93,8 +93,8 @@ class TelegramMoreTests(unittest.TestCase):
         self.assertEqual((p["student_name"], p["student_number"], p["kind"], p["time_out"], p["reason"]),
                          ("김민준", 7, "early", "13:30", "병원 진료"))
         self.assertIn(p["serial"], self.fake.edited[-1]["text"])
-        # 학생 이름·사유는 텔레그램으로 나가지 않음
-        self.assertNotIn("김민준", self.sent_text())
+        # 사유는 텔레그램으로 나가지 않음 (이름은 0.5.93 부터 그대로)
+        self.assertIn("김민준", self.sent_text())
         self.assertNotIn("병원 진료", self.fake.edited[-1]["text"])
         print_choice = self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
         self.assertIn("기본 프린터로 인쇄", self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["text"])
@@ -103,13 +103,12 @@ class TelegramMoreTests(unittest.TestCase):
         self.assertIn("기본 프린터", requested)
         start_print.assert_called_once_with(self.env.config, p["id"])
         self.assertEqual(self.env.db.get_meta("telegram_print_queue"), [p["id"]])
-        self.assertNotIn("김민준", self.sent_text())
         self.assertNotIn("병원 진료", self.sent_text())
         self.assertIn("이미 처리", self.bot.handle_update(press(data)))     # 두 번 누르면
 
     def test_natural_pass_and_cancel(self):
         reply = self.bot.handle_update(msg("12번 학생 외출 2시~3시"))
-        self.assertIn("12번 이○○ 외출증 14:00~15:00", reply)
+        self.assertIn("12번 이서연 외출증 14:00~15:00", reply)
         cancel = self.fake.sent[-1]["reply_markup"]["inline_keyboard"][-1][1]["callback_data"]
         self.assertIn("취소", self.bot.handle_update(press(cancel)))
         self.assertIsNone(self.env.db.one("SELECT * FROM passes"))

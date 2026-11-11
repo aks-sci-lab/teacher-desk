@@ -110,7 +110,7 @@ class TelegramMenuTests(unittest.TestCase):
         self.env.config.values["telegram_detail"] = "counts"
         self.assertNotIn("상담", self.bot.week_text())
 
-    def test_unread_masks_names_pages_and_keeps_reference_numbers(self):
+    def test_unread_shows_names_pages_and_keeps_reference_numbers(self):
         ids = []
         for n in range(13):
             it = add_text_item(self.env.db, "cool", f"{NAME} 관련 안내 {n}번 내용입니다", title=f"{NAME} 안내 {n}",
@@ -118,7 +118,7 @@ class TelegramMenuTests(unittest.TestCase):
             ids.append(it)
         out = self.bot.handle_update(msg("안 읽은 자료"))
         self.assertIn("안 읽은 자료 13건 (1~10)", out)
-        self.assertNotIn(NAME, self.all_text())
+        self.assertIn(f"{NAME} 안내", out)   # 0.5.93: 이름 그대로
         more = self.labels(self.fake.sent[-1])
         self.assertIn("더보기 ▸ (3건 더)", more)
         self.bot.handle_update(press(more["더보기 ▸ (3건 더)"]))

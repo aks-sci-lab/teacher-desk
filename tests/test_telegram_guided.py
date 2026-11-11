@@ -102,7 +102,7 @@ class TelegramGuidedTests(unittest.TestCase):
         self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
         record = self.env.db.one("SELECT * FROM passes")
         self.assertEqual((record["date"], record["time_out"], record["guardian_ok"]), (target.isoformat(), "13:30", 1))
-        self.assertNotIn("최별빛", self.texts() + "\n".join(m["text"] for m in self.fake.edited))
+        self.assertIn("7번 최별빛", self.texts() + "\n".join(m["text"] for m in self.fake.edited))  # 0.5.93 선생님 결정: 본인 채팅이라 이름 그대로 (사유는 계속 안 보냄)
 
     def test_pass_calendar_back_to_today_and_out_pass_with_return_time(self):
         row = self.start_pass_dialog("외출증")
@@ -149,11 +149,11 @@ class TelegramGuidedTests(unittest.TestCase):
 
     def test_arg_commands_only_when_arguments_fit(self):
         self.school_calendar()
-        self.assertIn("7번 최○○ 조퇴증", self.bot.handle_update(msg("7번 조퇴 1시 반")) or "")   # 자연스러운 말은 그대로
+        self.assertIn("7번 최별빛 조퇴증", self.bot.handle_update(msg("7번 조퇴 1시 반")) or "")   # 자연스러운 말은 그대로
         self.bot.handle_update(msg("/cancel"))
-        self.assertIn("최○○", self.bot.handle_update(msg("조퇴 7 13:30")))
+        self.assertIn("최별빛", self.bot.handle_update(msg("조퇴 7 13:30")))
         self.assertIn("번호를 함께", self.bot.handle_update(msg("조퇴 1시 반")))      # 숫자로 시작하면 명령이 안내
-        self.assertIn("최○○", self.bot.handle_update(msg("외출 7 13:30 14:30")))
+        self.assertIn("최별빛", self.bot.handle_update(msg("외출 7 13:30 14:30")))
         text = self.bot.handle_update(msg("결석계 최별빛 7 병결 2026-10-29~2026-11-03"))
         self.assertIn("저장", text)
         self.assertEqual(self.bot.handle_update(msg("결석계")) is None, False)        # 인자 없으면 단계별 입력
@@ -180,7 +180,7 @@ class TelegramGuidedTests(unittest.TestCase):
         self.assertIn("중복", warning["text"])
         self.assertIn("조퇴증", warning["text"])
         self.assertIn(self.env.db.one("SELECT serial FROM passes")["serial"], warning["text"])
-        self.assertNotIn("최별빛", warning["text"])
+        self.assertIn("7번 최별빛", warning["text"])  # 0.5.93 선생님 결정: 본인 채팅이라 이름 그대로 (사유는 계속 안 보냄)
         buttons = {b["text"]: b["callback_data"] for row in warning["reply_markup"]["inline_keyboard"] for b in row}
         self.assertEqual(set(buttons), {"그래도 신청", "취소"})
         pid = buttons["그래도 신청"].split(":")[1]
@@ -277,7 +277,8 @@ class TelegramGuidedTests(unittest.TestCase):
         self.bot.handle_update(press(self.fake.edited[-1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]))
         record = self.env.db.one("SELECT * FROM passes")
         self.assertEqual((record["student_number"], record["time_out"], record["time_return"]), (7, "13:30", "14:30"))
-        self.assertNotIn("최별빛", self.texts())
+        self.assertIn("7번 최별빛", self.texts())  # 0.5.93 선생님 결정: 본인 채팅이라 이름 그대로 (사유는 계속 안 보냄)
+        self.assertNotIn(record["reason"], self.texts() + "\n".join(m["text"] for m in self.fake.edited))   # 사유는 글에 없음
 
     def test_now_button_auth_expiry_and_stale_step(self):
         self.bot.handle_update(msg("조퇴증"))

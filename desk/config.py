@@ -61,6 +61,7 @@ DEFAULTS = {
     "telegram_photos": True,   # 새 쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보냄 (0.5.52)
     "telegram_cool_text": False,   # 새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 켠 경우만, 0.5.61)
     "telegram_calllog": False,   # 통화·문자 기록 파일을 텔레그램으로 받아 상담 초안으로 (선생님이 켠 경우만, 0.5.84)
+    "telegram_mask_names": False,   # 텔레그램 글의 학생 이름을 김○○ 로 가림 (0.5.93 선생님 결정: 본인 채팅이라 기본 끔)
     # 선생님 본인 구글 캘린더와 일정 공유 (0.5.91, 기본 끔, desk/gcal.py)
     "gcal_import": False,          # 구글 → 업무 데스크 (비공개 iCal 주소를 읽어 달력에 '구글' 표시)
     "gcal_ical_url": "",
@@ -82,14 +83,14 @@ SECRET_KEYS = {"gcal_ical_url", "gcal_push_url", "gcal_push_key", "capture_key",
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
-    "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "telegram_calllog", "layout", "neis_key", "neis_school",
+    "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
     "gcal_import", "gcal_ical_url", "gcal_push", "gcal_push_url", "gcal_push_types", "gcal_mask",
 }
 SETUP_WIZARD_STATES = ("", "later", "done", "notified")
-BOOL_KEYS = {"gcal_import", "gcal_push", "gcal_mask", "telegram_photos", "telegram_cool_text", "telegram_calllog", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
+BOOL_KEYS = {"gcal_import", "gcal_push", "gcal_mask", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)

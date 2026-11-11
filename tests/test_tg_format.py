@@ -86,11 +86,14 @@ class CollectNoticeTests(unittest.TestCase):
         self.assertEqual([l for l in lines if l[:2] in ("1.", "2.", "3.", "4.")], ["1. [쿨메신저] 연수 신청 · 연수부"])   # 마감 있는 것만
         self.assertNotIn("쪽지 3", text)
 
-    def test_counts_only_and_student_names_masked(self):
+    def test_counts_only_and_student_names_shown_unless_setting_on(self):
         a = self.add("cool", "김민준 학생 상담 안내", "김민준 학생 상담이 11월 4일까지입니다\n\n(보낸 사람: 담임)")
         self.env.config.values["telegram_detail"] = "counts"
         self.assertEqual(self.bot.collect_message(self.stats([a]), TODAY), "📥 새 자료 1건 · ⏰ 마감 후보 1건")
         self.env.config.values["telegram_detail"] = "titles"
+        text = self.bot.collect_message(self.stats([a]), TODAY)
+        self.assertIn("김민준 학생 상담 안내", text)   # 0.5.93: 이름 그대로
+        self.env.config.values["telegram_mask_names"] = True
         text = self.bot.collect_message(self.stats([a]), TODAY)
         self.assertNotIn("김민준", text)
         self.assertIn("○○○ 학생 상담 안내", text)
