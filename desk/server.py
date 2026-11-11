@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, schoolshare, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -156,6 +156,7 @@ class App:
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
         # 항목별 AI 요약 대기열: 새 항목은 자동으로, 눌렀거나 연 항목은 맨 앞으로 (브리핑 요약이 도는 중이면 기다림)
         self.item_ai = ai.ItemJob(db, config, busy=lambda: self.ai_job.running)
+        self.gcal = gcal.Sync(db, config)   # 선생님 구글 캘린더와 일정 공유 (desk.py 가 뒤에서 켬)
 
 
 def make_handler(app):
@@ -416,6 +417,12 @@ def put_settings(app, q, body):
         app.config.update(body)
     except ValueError as e:
         raise ApiError(400, str(e))
+    if any(k.startswith("gcal_") for k in body):
+        if "gcal_ical_url" in body or "gcal_import" in body:
+            app.gcal.next_import = None   # 주소를 바꾸거나 켜면 곧 다시 가져옴
+            if not app.config["gcal_import"]:
+                app.gcal.clear_import()
+        app.gcal.poke()
     if "teacher_name" in body:
         schoolshare.find_me(app.db, app.config)   # 공통 설정으로 시간표를 먼저 받은 뒤 이름을 넣은 경우 내 시간표 찾기
     return {"ok": True, "settings": app.config.public()}
@@ -1100,7 +1107,9 @@ def create_event(app, q, body):
         f["item_id"] = body["item_id"]
         # 일정을 직접 더하면 그 항목은 등록한 것으로 (더한 일정이 달력에 보이게)
         app.db.execute("UPDATE items SET registered = 1 WHERE id = ?", (body["item_id"],))
-    return queries.insert_event(app.db, f)
+    ev = queries.insert_event(app.db, f)
+    app.gcal.poke()
+    return ev
 
 
 @api("PATCH", r"/api/events/(\d+)")
@@ -1109,6 +1118,7 @@ def update_event(app, q, body, eid):
     f = event_fields(body, partial=True)
     if f:
         app.db.execute(f"UPDATE events SET {', '.join(k + ' = ?' for k in f)} WHERE id = ?", (*f.values(), eid))
+        app.gcal.poke()
     return app.db.one("SELECT * FROM events WHERE id = ?", (eid,))
 
 
@@ -1118,6 +1128,7 @@ def delete_event(app, q, body, eid):
         app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
         queries.forget_added_event(app.db, int(eid))
         queries.bump_events_rev(app.db)
+    app.gcal.poke()
     return {"ok": True}
 
 
@@ -1190,6 +1201,70 @@ def calendar_ics(app, q, body):
     evs = queries.events_between(app.db, today - timedelta(days=30), today + timedelta(days=365))
     return (200, to_ics(evs).encode("utf-8"), "text/calendar; charset=utf-8",
             {"Content-Disposition": 'attachment; filename="teacher-desk.ics"', "Cache-Control": "no-store"})
+
+
+# ---- 선생님 구글 캘린더 (0.5.91) ----
+def gcal_state(app):
+    cfg, g = app.config, app.gcal
+    return {
+        "import_on": bool(cfg["gcal_import"]), "ical_set": bool(cfg["gcal_ical_url"]),
+        "push_on": bool(cfg["gcal_push"]), "push_set": bool(cfg["gcal_push_url"]), "key_set": bool(cfg["gcal_push_key"]),
+        "types": g.types(), "type_labels": gcal.TYPES, "mask": bool(cfg["gcal_mask"]),
+        "status": g.status(), "pending": g.pending() if cfg["gcal_push"] else None,
+    }
+
+
+@api("GET", "/api/gcal")
+def gcal_get(app, q, body):
+    return gcal_state(app)
+
+
+@api("POST", "/api/gcal")
+def gcal_action(app, q, body):
+    """script: 새 비밀 키로 스크립트 만들기 · check: 연결 확인 · import: 지금 가져오기 · push: 지금 보내기 ·
+    clear_ical / clear_push: 주소 지우기 (올린 기록은 남겨 다시 연결해도 겹치지 않게)."""
+    action = body.get("action")
+    need(action in ("script", "check", "import", "push", "clear_ical", "clear_push"), "동작이 잘못되었습니다")
+    g = app.gcal
+    out = {}
+    try:
+        if action == "script":
+            out["script"] = gcal.script_text(g.new_key())
+            app.db.log("구글 캘린더: 스크립트용 비밀 키를 새로 만듦")
+        elif action == "check":
+            res = {}
+            if app.config["gcal_ical_url"]:
+                try:
+                    res["import"] = {"ok": True, **g.import_now()} if app.config["gcal_import"] else {"ok": None}
+                except gcal.GcalError as e:
+                    res["import"] = {"ok": False, "error": str(e)}
+            if app.config["gcal_push_url"] and app.config["gcal_push_key"]:
+                try:
+                    res["push"] = {"ok": True, **g.ping()}
+                except gcal.GcalError as e:
+                    res["push"] = {"ok": False, "error": str(e)}
+            need(res, "먼저 구글 캘린더 주소를 넣으세요")
+            out["check"] = res
+        elif action == "import":
+            out["result"] = g.import_now()
+        elif action == "push":
+            out["result"] = g.push_now()
+        elif action == "clear_ical":
+            app.config.set_value("gcal_ical_url", "")
+            g.clear_import()
+        else:
+            app.config.set_value("gcal_push_url", "")
+    except gcal.GcalError as e:
+        raise ApiError(502, str(e))
+    return {**gcal_state(app), **out}
+
+
+@api("GET", "/api/gcal/events")
+def gcal_events(app, q, body):
+    start = date.fromisoformat(check_date(q.get("from"), "시작 날짜"))
+    end = date.fromisoformat(check_date(q.get("to"), "끝 날짜"))
+    need((end - start).days <= 400, "기간이 너무 깁니다")
+    return app.gcal.events_between(start, end)
 
 
 @api("GET", "/api/holidays")

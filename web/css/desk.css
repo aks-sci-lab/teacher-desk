@@ -1424,6 +1424,15 @@ td.roster-warn { font-size: .9em; }
 .cl-year { display: flex; align-items: center; gap: 6px; }
 .cl-year select { flex: 1; }
 .cl-archive { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; padding: 10px 14px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+/* ---------- 구글 캘린더 공유 (0.5.91, 일정·시간표) ---------- */
+.cal .chipev.gcal { --cc: #4285f4; background: var(--surface); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc) 45%, transparent); color: var(--muted, var(--ink)); }
+.cal .chipev.gcal:hover { background: color-mix(in srgb, var(--cc) 10%, var(--surface)); }
+.cal .gcal-tag { display: inline-block; margin-right: 3px; padding: 0 3px; border-radius: 3px; background: var(--cc); color: #fff; font-size: 0.85em; font-weight: 700; }
+.gcal-box .gcal-script { width: 100%; min-height: 8em; font-family: ui-monospace, Consolas, monospace; font-size: 0.8em; }
+.gcal-box ol { margin: 6px 0; padding-left: 1.3em; }
+.gcal-box .gcal-types { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.gcal-box .gcal-st { margin: 4px 0; }
+.gcal-box .gcal-st.bad { color: var(--danger); }
 
 /* ---------- 앱 기반: 학교 공통 설정 파일 내보내기·불러오기 (0.5.92) ---------- */
 .share-list { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 12px; }
