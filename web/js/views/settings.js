@@ -11,6 +11,7 @@ import { openTimetable } from './timetable.js';
 import { openSchoolCal } from './schoolcal.js';
 import { openRoster } from './passes.js';
 import { openSetup } from './setup.js';
+import { openShareExport, openShareImport } from './share.js';
 import {
     item, textField, pathField, checkField, selectField, secretField, autoSave, saveStateBox,
     coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, TELEGRAM_STEPS,
@@ -164,6 +165,13 @@ const GROUPS = [
                     el('input', { type: 'checkbox', checked: m.on, disabled: m.id === 'settings',
                         onchange: e => { setMenuOn(m.id, e.target.checked); toast(`${m.label} 메뉴 ${e.target.checked ? '켬' : '끔'}`, 'info', 1500); } }),
                     el('span', m.label))))),
+            // 학교 공통 설정 파일 (0.5.92): 같은 학교 선생님께 나눠 줄 때
+            item('학교 공통 설정 내보내기 불러오기 다른 선생님 나눠 주기 파일 시간표 학사일정 교시',
+                el('div.field', el('span', '학교 공통 설정 (다른 선생님께 나눠 주기)'),
+                    el('span.hint', '학교 이름·교시 시간·학사일정·전체 시간표만 한 파일로 주고받습니다. 학생 명단·비밀값·쪽지·공문은 담기지 않습니다.')),
+                el('div.row',
+                    el('button.btn.small', { type: 'button', onclick: () => openShareExport() }, '학교 공통 설정 내보내기'),
+                    el('button.btn.small', { type: 'button', onclick: () => openShareImport() }, '학교 공통 설정 불러오기'))),
         ],
     },
     {
