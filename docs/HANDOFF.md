@@ -1,4 +1,4 @@
-# 인수인계 (Claude Code · GitHub Copilot 공용)
+# 인수인계 (Claude Code)
 
 이 문서는 **지금 상태와 아직 확인되지 않은 일**만 적습니다. 기능의 설계 이유는 `docs/DESIGN.md`, 버전별 한 줄 이력은 `docs/CHANGELOG.md`, 작업 규칙은 `AGENTS.md`에 있습니다. 작업을 이어받으면 이 문서와 `AGENTS.md`를 먼저 읽으세요.
 
@@ -7,7 +7,7 @@
 ## 1. 지금 상태
 - 11/3~11/6 배포: 0.5.67·0.5.68(UI 크기·입력 보호), 0.5.69(텔레그램 폴링 멈춤 고침·진단), 0.5.70(브리핑 2열 배치), 0.5.71(텔레그램 일정 추가), 0.5.72(달력 주말·법정공휴일, `desk/holidays.py` 2026~2028), 0.5.73(텔레그램 일정 추가 달력 🔴🔵).
 - 열린 PR: **#85**(AI: 5분 미사용 모델 해제 ttl=300, 0.5.74 — ttl 거부 서버에서 요약이 멈추는 결함을 Claude 세션 `session_013iu8SPzYNaqmSQ3SV7DaBY`(Sonnet)가 같은 브랜치에서 수정 중), **#87**(이 문서), **#69**(챗봇 예외, 보류·머지 금지). 이슈 **#86**(텔레그램 달력 대체공휴일 괄호·범례 표 범위, 0.5.75) → Claude 세션 `session_013iu8SQL4P7qiThJVi6hyE8`(Sonnet). 머지 순서 #85 → #86 PR.
-- **코파일럿 크레딧 소진(2026-11-06)**: 코파일럿 배정을 멈추고 Claude(작은 일은 Sonnet)로 맡김. 총괄의 '코파일럿 인계 확인' 예약(1시간마다)은 꺼 둠(trig_01Gqxf73DfPgbQPgWcKaD7Wp, 크레딧이 돌아오면 다시 켬).
+- **Claude 로만 작업(사용자 결정 2026-11-10)**: GitHub Copilot 과 협업하지 않음. 총괄의 '코파일럿 인계 확인' 예약은 지움.
 - 세션: 총괄 `session_01222v2UthQ7LuoFEAoNRaSS` · 머지 전용 `session_013iu8SQSgyxvFwys114DoMo`(Sonnet, 문맥 많이 참·주간 한도에 한 번 걸림) · 텔레그램 `session_013iu8SQ8FidLh565ZjM7rDU`(Sonnet, 문맥 많이 참) · UI·사용성 `session_013iu8SNYXR3Mi72oQ2J7C8K` · 앱 기반 `session_013iu8SMV628D2GmfLmeBSUZ` · 일정·시간표 `session_013iu8SPH52GmG7hVeD89sfV` · AI `session_013iu8SNJybLYaUdQAoUf6C6`(Opus) · 수신함 `session_013iu8SQmpg9tz4WfCma8PUV` · 출결 `session_013iu8SMUJtKt9zaGJaQKt7N` · 브라우저 확장 `session_013iu8SQavqEuSxnwc7FNKUA`.
 - 선생님 PC 확인 대기: 0.5.73 업데이트 후 텔레그램 `상태`·`일정 추가`(🔴🔵·경고), 달력의 2026 노동절(5/1)·제헌절(7/17)을 공식 월력과 대조(병합 세션은 법령·KASI 사이트를 열지 못해 독립 계산만 함), #85 머지 후 실제 RAM 감소·5분 뒤 해제·재로딩.
 - 검토 중인 다른 일(코드 없음): 서술형 평가 채점 통합(선생님 PC 의 `서술형 평가 자동 채점` 폴더 — 이 클라우드 세션에서 읽을 수 없음, 5070 Ti 데스크탑 로컬 AI 로 채점 방향), 텔레그램 대신 카카오·슬랙 검토는 '바꾸지 않음'으로 정리.
@@ -37,8 +37,8 @@
 - 확장 프로그램 버전 0.3.x 는 선생님 PC 에서 ↻ 로 다시 불러와야 적용됨.
 - 에듀파인 공문 본문은 그림(OZ 뷰어)이라 글을 못 읽음. 공문은 기존 '에듀파인 공문 저장 폴더' 수집을 씀.
 
-## 4. 작업 방법 (코파일럿과 같이 쓸 때)
-- 브랜치: `claude/...`, `copilot/...` 등 짧은 이름. 같은 브랜치를 두 도구가 동시에 고치지 않는다.
+## 4. 작업 방법
+- 브랜치: `claude/...` 등 짧은 이름. 같은 브랜치를 두 세션이 동시에 고치지 않는다.
 - 시작할 때 `git fetch origin main` 과 `git status`. 모르는 미커밋 변경은 지우지 말고 출처를 확인.
 - 시험: `python -m unittest discover -s tests -t .` 와 `node --test tests/pass-codec.test.cjs tests/browser-ai.test.cjs tests/capture-extension.test.cjs` (CI 와 같은 방식). 폴더 전체를 `node --test tests/` 로 돌리면 CI 와 다르게 실패할 수 있음.
 - 버전: `desk/__init__.py` 한 줄. PR 이 겹치면 머지 직전에 큰 쪽 +1. 기록(`CHANGELOG`·`DESIGN`)은 양쪽 줄을 모두 살림.
