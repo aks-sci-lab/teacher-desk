@@ -14,8 +14,14 @@ import {
     coolConnect, folderCheck, telegramStatus, aiCheck, TELEGRAM_STEPS,
 } from './setfields.js';
 import { setupAction } from '../setup-rules.js';
+import { openShareImport, shareStatus } from './share.js';
 
 const has = v => !!(v && String(v).trim());
+// 학교 공통 설정 파일로 받은 것 (GET /api/share). 시간표·학사일정·교시 시간이 이미 있으면 3단계를 '완료' 로 (0.5.92)
+let share = null;
+let imported = false;
+const shared = () => [share?.timetable?.has && `시간표(선생님 ${share.timetable.teachers}명)`,
+    share?.schoolcal?.has && `학사일정 ${share.schoolcal.count}건`, share?.periods?.has && '교시 시간'].filter(Boolean);
 
 // 단계: 제목, 한 줄 설명, 선택 단계인지, 채워졌는지(완료 요약용), 내용
 export const STEPS = [
@@ -23,7 +29,14 @@ export const STEPS = [
         id: 'school', title: '학교·학급', desc: '조퇴증·외출증·결석계에 인쇄되고, 시간표에서 내 수업과 우리 반을 찾을 때 씁니다.',
         done: s => has(s.school_name) && has(s.teacher_name),
         summary: s => [s.school_name, s.grade && s.class_no && `${s.grade}학년 ${s.class_no}반`, s.teacher_name].filter(has).join(' · '),
-        build: () => [
+        build: ctx => [
+            item('', el('div.card.setup-share',
+                el('b', '📄 학교 공통 설정 파일이 있나요? (선택)'),
+                imported
+                    ? el('p.small.set-good', `불러왔습니다${shared().length ? ': ' + shared().join(' · ') : ''}. 이제 담임 이름·학년·반과 다음 단계의 쿨메신저·공문 폴더만 넣으면 됩니다.`)
+                    : el('p.small', '같은 학교 선생님께 받은 "…-공통설정.deskshare.json" 파일을 불러오면 학교 이름·교시 시간·학사일정·전체 시간표가 한 번에 채워집니다. 없으면 그냥 아래 칸을 채우세요.'),
+                el('div.row', el('button.btn.small', { type: 'button', onclick: () => openShareImport(ctx.afterImport) },
+                    imported ? '다른 파일 불러오기' : '학교 공통 설정 불러오기')))),
             el('div.grid2',
                 textField('school_name', '학교 이름', null, { placeholder: '예: ○○고등학교' }),
                 textField('teacher_name', '담임 이름', null, { placeholder: '예: 홍길동' }),
@@ -45,9 +58,10 @@ export const STEPS = [
     },
     {
         id: 'schedule', title: '시간표·학사일정·명단', desc: '파일을 불러오는 일이라 각 화면이 열립니다. 이 도우미 탭은 위 탭 줄에 그대로 남아 있습니다.',
-        done: s => (store.state?.counts?.students || 0) > 0 || has(s.neis_school?.name),
-        summary: s => [(store.state?.counts?.students || 0) > 0 && `학생 ${store.state.counts.students}명`, s.neis_school?.name && `나이스 ${s.neis_school.name}`, s.neis_key_set && !s.neis_school?.name && '나이스 인증키'].filter(Boolean).join(' · '),
+        done: s => (store.state?.counts?.students || 0) > 0 || has(s.neis_school?.name) || !!share?.timetable?.has || !!share?.schoolcal?.has,
+        summary: s => [...shared(), (store.state?.counts?.students || 0) > 0 && `학생 ${store.state.counts.students}명`, s.neis_school?.name && `나이스 ${s.neis_school.name}`, s.neis_key_set && !s.neis_school?.name && '나이스 인증키'].filter(Boolean).join(' · '),
         build: () => [
+            shared().length ? el('p.small.set-good', `이미 있음: ${shared().join(' · ')} — 학교 공통 설정으로 받았거나 전에 불러온 것입니다. 학생 명단만 넣으면 됩니다.`) : null,
             item('', el('div.setup-cards',
                 el('div.card', el('b', '▦ 시간표'), el('p.small', '학교 시간표 엑셀을 불러오면 브리핑에 오늘 수업이 나옵니다.'),
                     el('button.btn.small', { type: 'button', onclick: openTimetable }, '시간표 불러오기')),
@@ -137,7 +151,7 @@ function renderSetup(pane) {
             clear(body,
                 el('h2', `${current + 1}. ${st.title}`, st.optional ? el('span.set-badge', '선택') : null),
                 el('p.set-desc', st.desc),
-                st.build());
+                st.build(ctx));
             clear(foot,
                 el('button.btn', { type: 'button', disabled: current === 0, onclick: () => go(current - 1) }, '◀ 이전'),
                 el('span.grow'),
@@ -173,7 +187,17 @@ function renderSetup(pane) {
             el('div.set-tools', saveStateBox())),
         progress, el('div.card.setup-card', body), foot);
     autoSave(pane);
+    // 공통 설정 파일을 불러오면: 받은 것 표시를 새로 읽고 1단계(이름·학급)에 남아 이어서 채우게
+    const ctx = {
+        afterImport: async res => {
+            imported = true;
+            share = res?.status || await shareStatus();
+            current = 0;
+            draw();
+        },
+    };
     draw();
+    shareStatus().then(s => { share = s; draw(); });
 }
 
 export function openSetup(step = 0) {
