@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -423,6 +423,8 @@ def put_settings(app, q, body):
             if not app.config["gcal_import"]:
                 app.gcal.clear_import()
         app.gcal.poke()
+    if "teacher_name" in body:
+        schoolshare.find_me(app.db, app.config)   # 공통 설정으로 시간표를 먼저 받은 뒤 이름을 넣은 경우 내 시간표 찾기
     return {"ok": True, "settings": app.config.public()}
 
 
@@ -1879,6 +1881,49 @@ def apply_update(app, force=False, via="화면"):
     import threading
     threading.Thread(target=app.shutdown, daemon=True).start()
     return {"ok": True, "from": st["current"], "to": st["latest"]}
+
+
+# ---- 학교 공통 설정 파일 (0.5.92, desk/schoolshare.py): 다른 선생님께 나눠 줄 때 ----
+@api("GET", "/api/share")
+def share_status(app, q, body):
+    return schoolshare.status(app.db, app.config)
+
+
+def share_parts(body, name="parts"):
+    v = body.get(name) or []
+    need(isinstance(v, list) and all(p in schoolshare.PARTS for p in v), "항목이 잘못되었습니다")
+    return v
+
+
+@api("POST", "/api/share/export")
+def share_export(app, q, body):
+    try:
+        data = schoolshare.build(app.db, app.config, share_parts(body))
+    except schoolshare.ShareError as e:
+        raise ApiError(400, str(e))
+    app.db.log("학교 공통 설정 내보냄: " + ", ".join(schoolshare.PART_LABELS[k] for k in data["parts"]))
+    return {"filename": schoolshare.filename(app.config), "data": data}
+
+
+@api("POST", "/api/share/preview")
+def share_preview(app, q, body):
+    try:
+        return schoolshare.preview(app.db, app.config, body.get("text"))
+    except schoolshare.ShareError as e:
+        raise ApiError(400, str(e))
+
+
+@api("POST", "/api/share/apply")
+def share_apply(app, q, body):
+    try:
+        res = schoolshare.apply(app.db, app.config, body.get("text"), share_parts(body), share_parts(body, "overwrite"))
+    except schoolshare.ShareError as e:
+        raise ApiError(400, str(e))
+    except ValueError as e:   # 설정 검사(학교 정보)
+        raise ApiError(400, str(e))
+    if "schoolcal" in res["applied"]:
+        queries.bump_events_rev(app.db)   # 달력 화면이 새로 그리게
+    return {**res, "settings": app.config.public(), "status": schoolshare.status(app.db, app.config)}
 
 
 @api("POST", "/api/shutdown")
