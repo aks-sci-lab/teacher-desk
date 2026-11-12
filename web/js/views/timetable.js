@@ -232,6 +232,25 @@ async function renderCommonFree(pane, tab, current) {
             `${teacherName(id)}${id === info.me ? ' (나)' : ''} ×`)));
     const allFree = wk.slots.filter(s => freeTids.length && !s.busy.length && s.note?.level !== 'off' && !pastPeriod(s.date, s.period));
     const text = allFree.map(s => `${s.date} ${s.day} ${s.period}교시${periodTime(s.period) ? ' ' + periodTime(s.period) : ''}${s.note ? ` (확인 필요: ${s.note.text})` : ''}`).join('\n');
+    const ranked = (wk.ranked || []).filter(s => !pastPeriod(s.date, s.period));
+    const rankLine = s => {
+        const who = ids => ids.map(t => teacherName(t) + (t === info.me ? '(나)' : '')).join(', ');
+        const busy = s.busy_lessons.map(b => `${teacherName(b.tid)}${b.tid === info.me ? '(나)' : ''}${b.cls || b.subj ? `(${[b.cls, b.subj].filter(Boolean).join(' ')})` : ''}`).join(', ');
+        return el('li', el('b', `${s.day} ${s.period}교시`), periodTime(s.period) && el('small', ` ${periodTime(s.period)}`),
+            el('span.tt-rank-n', ` ${s.total}명 중 ${s.free_n}명 빔`), s.note?.level === 'maybe' && el('small', ' · 확인 필요'),
+            el('div.small', `비는 선생님: ${who(s.free)} / 수업 있음: ${busy}`));
+    };
+    const rankList = (list, label, open) => {
+        if (!list.length) return null;
+        const more = list.slice(10);
+        return el('details.tt-rank', { open }, el('summary', `${label} (${list.length})`),
+            el('ol', list.slice(0, 10).map(rankLine)),
+            more.length > 0 && el('details', el('summary', `더 보기 (${more.length})`), el('ol', { start: 11 }, more.map(rankLine))));
+    };
+    const nearList = freeTids.length > 2 ? ranked.filter(s => s.free_n === freeTids.length - 1) : [];
+    const rankBox = !freeTids.length ? null : allFree.length
+        ? rankList(nearList, '거의 다 비는 시간 (한 명만 수업)', false)
+        : rankList(ranked, '모두 비는 시간이 없습니다 — 많이 비는 순', true) || el('p.muted', '모두 비는 시간이 없습니다.');
     const rows = [];
     for (let p = 1; p <= periods; p++) {
         rows.push(el('tr', el('th.p', p, periodTime(p) && el('small', periodTime(p))),
@@ -250,6 +269,7 @@ async function renderCommonFree(pane, tab, current) {
         selected,
         !freeTids.length && el('p.muted', '함께 볼 선생님을 골라 주세요.'),
         el('div.row', el('button.btn.small', { disabled: !allFree.length, onclick: guarded(() => copyText(text, '모두 비는 시간을 복사했습니다')) }, '모두 비는 시간 복사')),
+        rankBox,
         el('p.small.muted', '시간표에 있는 교시만 비교합니다. 점심·방과후는 다루지 않습니다. 학년별 행사나 일부 교시 변경은 확인이 필요합니다.'),
         el('div.tt-wrap', el('table.tt.tt-free-table', el('thead', el('tr', el('th.p', '교시'), days.map(day =>
             el('th', { className: day.date === todayIso() ? 'today' : '' }, day.name, el('small', md(day.date)))))), el('tbody', rows))));

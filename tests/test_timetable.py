@@ -269,6 +269,25 @@ class ClassAndFreeTests(unittest.TestCase):
         with self.assertRaises(T.TimetableError):
             T.common_free(self.tt, [99], self.mon)
 
+    def test_rank_free_orders_by_most_free_then_time(self):
+        rows = T.common_free(self.tt, [0, 1, 2], self.mon)
+        ranked = T.rank_free(rows)
+        self.assertTrue(ranked)
+        self.assertTrue(all(r["free"] for r in ranked))                       # 아무도 안 비는 칸은 뺀다
+        keys = [(-r["free_n"], r["date"], r["period"]) for r in ranked]
+        self.assertEqual(keys, sorted(keys))                                  # 많이 빌수록 먼저, 같으면 날짜·교시 순
+        self.assertTrue(all(r["total"] == 3 and r["free_n"] + len(r["busy"]) == 3 for r in ranked))
+        busy = next(r for r in ranked if r["busy"])
+        self.assertEqual([b["tid"] for b in busy["busy_lessons"]], busy["busy"])
+        self.assertTrue(all("cls" in b and "subj" in b for b in busy["busy_lessons"]))
+        # 교체 반영은 common_free 와 같고, 수업 없는 날·지난 날은 빠진다
+        evs = {"2026-11-02": ["공휴일"]}
+        off = T.rank_free(T.common_free(self.tt, [0, 1, 2], self.mon, day_events=evs))
+        self.assertNotIn("2026-11-02", {r["date"] for r in off})
+        later = T.rank_free(rows, today=date(2026, 11, 4))
+        self.assertTrue(later and min(r["date"] for r in later) >= "2026-11-04")
+        self.assertEqual(T.rank_free([]), [])
+
     def test_partial_grade_off_is_not_school_off(self):
         evs = {"2026-11-02": ["2학년 현장체험학습"]}
         self.assertEqual(T.common_free(self.tt, [0, 1], self.mon, day_events=evs)[0]["note"]["level"], "off")
