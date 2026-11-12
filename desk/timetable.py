@@ -506,5 +506,25 @@ def common_free(tt, tids, mon, swaps=(), day_events=None):
         off = note and note["level"] == "off"
         out.append({"date": d.isoformat(), "day": DAYNAMES[slot["d"]], "period": slot["p"],
                     "free": [] if off else [tid for tid in tids if slot["key"] not in cur[tid]],
-                    "busy": [] if off else [tid for tid in tids if slot["key"] in cur[tid]], "note": note})
+                    "busy": [] if off else [tid for tid in tids if slot["key"] in cur[tid]],
+                    "busy_lessons": [] if off else [{"tid": tid, "cls": cur[tid][slot["key"]].get("cls"),
+                                                     "subj": cur[tid][slot["key"]].get("subj")}
+                                                    for tid in tids if slot["key"] in cur[tid]],
+                    "note": note})
+    return out
+
+
+def rank_free(rows, today=None):
+    """common_free 결과를 '같이 비는 사람이 많은 순'(같으면 날짜·교시 순)으로. 아무도 안 비는 칸·수업 없는 날·지난 날 제외.
+    각 줄에 free_n(비는 사람 수)·total(전체 사람 수) 를 더한다."""
+    out = []
+    for r in rows:
+        if r["note"] and r["note"]["level"] == "off":
+            continue
+        if today and r["date"] < today.isoformat():
+            continue
+        if not r["free"]:
+            continue
+        out.append({**r, "free_n": len(r["free"]), "total": len(r["free"]) + len(r["busy"])})
+    out.sort(key=lambda r: (-r["free_n"], r["date"], r["period"]))
     return out

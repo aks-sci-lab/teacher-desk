@@ -1448,3 +1448,9 @@ label.check.share-row > span { display: flex; flex-direction: column; }
 .setup-share p { margin: 0; }
 .share-body { padding: 14px 20px 18px; }
 .share-body h3 { margin: 14px 0 4px; font-size: 1em; }
+
+/* 일정·시간표: 같이 비는 시간 순위 목록 */
+.tt-rank { margin: 8px 0; }
+.tt-rank ol { margin: 6px 0; padding-left: 22px; }
+.tt-rank li { margin: 4px 0; }
+.tt-rank-n { color: var(--accent); font-weight: 700; }

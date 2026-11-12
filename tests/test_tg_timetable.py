@@ -122,7 +122,8 @@ class TelegramTimetableTests(unittest.TestCase):
         out = self.run_cmd("빈 시간 박영어 최수학 정과학")
         self.assertIn("같이 비는 시간", out)
         if "모두 비는 시간이 없습니다" in out:
-            self.assertIn("가장 많이 비는 시간", out)
+            self.assertIn("많이 비는 순", out)
+            self.assertRegex(out, r"\d명 중 \d명 빔 · 수업: ")
         self.env.db.set_meta("timetable_me", None)
         self.assertIn("'나' 는 빼고", self.run_cmd("빈 시간 박영어"))
         self.assertIn("찾지 못했습니다", self.run_cmd("빈 시간 없는선생"))

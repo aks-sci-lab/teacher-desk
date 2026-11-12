@@ -1605,9 +1605,12 @@ def timetable_free(app, q, body):
     known = {t["id"] for t in tt["teachers"]}
     need(all(tid in known for tid in tids), "시간표에 없는 선생님입니다")
     mon, evs, result = _timetable_view_week(app, tt, q)
+    slots = timetable.common_free(tt, tids, mon, app.db.get_meta("timetable_swaps") or [], evs)
     return {**result, "tids": tids,
             "teachers": [teacher_brief(t) for t in tt["teachers"] if t["id"] in tids],
-            "slots": timetable.common_free(tt, tids, mon, app.db.get_meta("timetable_swaps") or [], evs)}
+            "slots": slots,
+            "ranked": [{k: r[k] for k in ("date", "day", "period", "free", "busy", "busy_lessons", "free_n", "total", "note")}
+                       for r in timetable.rank_free(slots)]}
 
 
 @api("GET", "/api/timetable/candidates")

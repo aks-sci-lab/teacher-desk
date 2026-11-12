@@ -1494,12 +1494,22 @@ class Bot:
                 lines.append(f"  {day}({dd.month}/{dd.day}) " + ", ".join(f"{c['period']}교시{span(c['period'])}" for c in cs)
                              + (" ⚠ 학사일정 확인" if maybe else ""))
         else:
-            best = sorted((c for c in cells if c["free"]), key=lambda c: (-len(c["free"]), c["date"], c["period"]))[:5]
-            lines.append("모두 비는 시간이 없습니다." + (" 가장 많이 비는 시간:" if best else ""))
+            best = timetable.rank_free(cells)[:10]
+            lines.append("모두 비는 시간이 없습니다." + (" 많이 비는 순:" if best else ""))
             for c in best:
                 dd = date.fromisoformat(c["date"])
+                busy = ", ".join(names[b["tid"]] + (f"({' '.join(x for x in (b.get('cls'), b.get('subj')) if x)})" if b.get("cls") or b.get("subj") else "")
+                                 for b in c["busy_lessons"])
                 lines.append(f"  {c['day']}({dd.month}/{dd.day}) {c['period']}교시{span(c['period'])} · "
-                             f"{len(c['free'])}/{len(tids)}명 비어 있음 (수업 중: {', '.join(names[t] for t in c['busy'])})")
+                             f"{c['total']}명 중 {c['free_n']}명 빔 · 수업: {busy}"
+                             + (" ⚠ 학사일정 확인" if c["note"] else ""))
+        near = [c for c in cells if allfree and len(tids) > 2 and len(c["free"]) == len(tids) - 1]
+        if near:
+            lines.append("거의 다 비는 시간 (한 명만 수업):")
+            for c in near[:5]:
+                dd = date.fromisoformat(c["date"])
+                lines.append(f"  {c['day']}({dd.month}/{dd.day}) {c['period']}교시{span(c['period'])} · 수업: "
+                             + ", ".join(names[t] for t in c["busy"]))
         return "\n".join(lines + notes)
 
     # ---- 단추 ----
