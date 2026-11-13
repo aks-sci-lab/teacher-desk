@@ -40,10 +40,26 @@ function absenceNode(a) {
         a.serial && el('div.absence-serial', `작성 번호 ${a.serial}`));
 }
 
-function printAbsence(a) {
+async function printAbsence(a) {
+    if (a.status === 'draft' && (!TYPE_LABELS[a.absence_type] || !(a.reason || '').trim())) {
+        toast('출석부에서 만든 초안입니다. [고치기]에서 결석 종류·사유를 채워 저장한 뒤 인쇄하세요', 'error');
+        return;
+    }
     const area = document.getElementById('print-area');
     clear(area, absenceNode(a));
     window.print();
+    // 인쇄한 결석계는 출석부에서 바꿀 때 한 번 더 물음
+    if (a.id) Object.assign(a, await api.post(`/api/absences/${a.id}/printed`, {}));
+}
+
+const isDraft = a => a.status === 'draft';
+
+// 출석부에서 '결석계 열기'
+export async function openAbsenceById(id) {
+    const rows = await api.get('/api/absences');
+    const found = rows.find(a => a.id === id);
+    if (found) openAbsence(found);
+    else toast('결석계를 찾지 못했습니다', 'error');
 }
 
 export function renderAbsenceSide(body, actions) {
@@ -74,7 +90,8 @@ export function renderAbsenceSide(body, actions) {
             onclick: () => openAbsence(a),
         },
         el('span.ttl', `${a.student_number != null ? a.student_number + '번 ' : ''}${a.student_name}`),
-        el('span.meta', `${a.absence_type} · ${a.start_date === a.end_date ? a.start_date : `${a.start_date}~${a.end_date}`}`)));
+        el('span.meta', isDraft(a) && el('span.badge.draft-badge', '작성 필요'),
+            `${a.absence_type === '미정' ? '종류 미정' : a.absence_type} · ${a.start_date === a.end_date ? a.start_date : `${a.start_date}~${a.end_date}`}`)));
     }
     body.append(list);
 }
@@ -159,6 +176,7 @@ export function openAbsenceForm(initial = {}) {
             const save = async printAfter => {
                 if (!a.student_name.trim()) return toast('학생을 고르거나 이름을 입력하세요', 'error');
                 if (!a.reason.trim()) return toast('결석 사유를 입력하세요', 'error');
+                if (!TYPE_LABELS[a.absence_type]) return toast('결석 종류를 고르세요', 'error');
                 const payload = {
                     student_name: a.student_name.trim(), student_number: a.student_number,
                     start_date: a.start_date, end_date: a.end_date, absence_type: a.absence_type,
@@ -209,13 +227,23 @@ export function openAbsenceForm(initial = {}) {
 export function openAbsence(a) {
     openPopup({
         id: `absence-${a.id}`, title: `${a.student_name} 결석계`,
-        render(pane) {
+        render(pane, tab) {
             pane.append(
                 el('h1', '결석계'),
-                el('p.sub', `${a.student_number != null ? a.student_number + '번 ' : ''}${a.student_name} · ${a.start_date}~${a.end_date} · ${a.absence_type} · ${a.serial}`),
+                el('p.sub', `${a.student_number != null ? a.student_number + '번 ' : ''}${a.student_name} · ${a.start_date}~${a.end_date} · ${a.absence_type === '미정' ? '종류 미정' : a.absence_type} · ${a.serial}`),
+                isDraft(a) && el('p.draft-note', '출석부에서 결석을 체크해 만든 초안입니다. [고치기]에서 결석 종류·사유를 채워 저장하면 작성 완료가 됩니다.'),
                 el('div.row',
                     el('button.btn.primary', { onclick: guarded(() => printAbsence(a)) }, '인쇄'),
-                    el('button.btn', { onclick: () => openAbsenceForm(a) }, '고치기')),
+                    el('button.btn', { onclick: () => openAbsenceForm(a) }, '고치기'),
+                    el('button.btn.danger', { onclick: guarded(async () => {
+                        if (!window.confirm(`이 결석계(${a.serial})를 지울까요?\n출석부의 결석 체크(${a.start_date}~${a.end_date})도 함께 풀립니다.`)) return;
+                        await api.del(`/api/absences/${a.id}`);
+                        toast('결석계를 지웠습니다');
+                        tab.close();
+                        await loadDay();
+                        refreshSide();
+                        emit('absences-changed');
+                    }) }, '지우기')),
                 el('div.preview-box.wide', absenceNode(a)));
         },
     });

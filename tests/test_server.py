@@ -173,7 +173,7 @@ class ServerTests(unittest.TestCase):
             (month_start + timedelta(days=offset)).weekday() < 5
             for offset in range(2))
         self.assertEqual(student["absence_forms"], 2)
-        self.assertEqual(student["absence_days"], {"질병": expected_disease_days, "출석인정": 0, "기타": 0, "미인정": 0})
+        self.assertEqual(student["absence_days"], {"질병": expected_disease_days, "출석인정": 0, "기타": 0, "미인정": 0, "미정": 0})
         self.assertEqual(student["total_absence_days"], expected_disease_days)
         self.assertEqual((student["early_count"], student["out_count"]), (0, 1))
         self.assertEqual(report["totals"]["out_count"], 1)

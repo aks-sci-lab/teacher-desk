@@ -46,6 +46,19 @@ CREATE TABLE IF NOT EXISTS absences (
     created_at TEXT NOT NULL
 );
 
+-- 0.5.95 출석부의 지각·조퇴·결과 (결석은 결석계가, 증 있는 조퇴·외출은 passes 가 원천)
+CREATE TABLE IF NOT EXISTS attendance_marks (
+    id INTEGER PRIMARY KEY,
+    student_number INTEGER,
+    student_name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL,              -- late: 지각, early: 조퇴(증 없음), result: 결과
+    mark_type TEXT NOT NULL,         -- 질병 / 출석인정 / 기타 / 미인정 / 미정
+    periods TEXT,                    -- 결과 교시 (예: 3,4)
+    note TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS items (
     id INTEGER PRIMARY KEY,
     source TEXT NOT NULL,            -- cool / edufine / paste
@@ -241,6 +254,11 @@ class DB:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {col} TEXT")
         if "parent_phone" not in {r[1] for r in self.conn.execute("PRAGMA table_info(students)")}:
             self.conn.execute("ALTER TABLE students ADD COLUMN parent_phone TEXT")  # 0.5.46: 학부모 확인용 연락처
+        absence_cols = {r[1] for r in self.conn.execute("PRAGMA table_info(absences)")}
+        if "status" not in absence_cols:   # 0.5.95: 출석부에서 만든 초안(draft)과 작성 완료(done)
+            self.conn.execute("ALTER TABLE absences ADD COLUMN status TEXT DEFAULT 'done'")
+        if "printed_at" not in absence_cols:
+            self.conn.execute("ALTER TABLE absences ADD COLUMN printed_at TEXT")
         if "parent_phone2" not in {r[1] for r in self.conn.execute("PRAGMA table_info(students)")}:
             self.conn.execute("ALTER TABLE students ADD COLUMN parent_phone2 TEXT")  # 0.5.89: 학부모 연락처 2
         if "import_key" not in {r[1] for r in self.conn.execute("PRAGMA table_info(class_counsel)")}:

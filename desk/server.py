@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, register, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -692,9 +692,10 @@ def attendance_month(app, q, body):
     def new_student(number, name):
         return {
             "student_number": number, "student_name": name,
-            "absence_forms": 0, "absence_days": dict.fromkeys(absence.TYPES, 0),
-            "early_count": 0, "out_count": 0,
-            "details": {key: [] for key in ("absence_forms", "absence_days", "early_count", "out_count")},
+            "absence_forms": 0, "absence_days": dict.fromkeys(register.TYPES, 0),   # '미정' = 종류를 아직 안 정한 초안
+            "early_count": 0, "out_count": 0, "late_count": 0, "result_count": 0,
+            "details": {key: [] for key in ("absence_forms", "absence_days", "early_count", "out_count",
+                                            "late_count", "result_count")},
         }
 
     # 학생 줄은 (번호, 이름) 한 쌍으로 구분. 번호만으로 묶으면 명단이 바뀐 뒤(전학·번호 변경)
@@ -743,6 +744,23 @@ def attendance_month(app, q, body):
             "kind": "조퇴" if issued["kind"] == "early" else "외출", "reason": issued["reason"] or "",
         })
 
+    # 출석부의 지각·결과, 증 없이 체크한 조퇴 (증이 있는 날의 조퇴 체크는 증으로 이미 셈)
+    marks = app.db.query("SELECT * FROM attendance_marks WHERE date >= ? AND date <= ?",
+                         (month_start.isoformat(), month_end.isoformat()))
+    for mark in marks:
+        if mark["kind"] == "early" and register.early_pass_on(
+                app.db, mark["student_number"], mark["student_name"], date.fromisoformat(mark["date"])):
+            continue
+        student = row_for(mark["student_number"], mark["student_name"])
+        metric = {"late": "late_count", "early": "early_count", "result": "result_count"}[mark["kind"]]
+        student[metric] += 1
+        label = register.MARK_KINDS[mark["kind"]]
+        student["details"][metric].append({
+            "date": mark["date"], "time": f"{mark['periods']}교시" if mark["periods"] else None,
+            "kind": f"{mark['mark_type']} {label}" + (" (증 없음)" if mark["kind"] == "early" else ""),
+            "reason": mark["note"] or "",
+        })
+
     result_rows = sorted(rows.values(), key=lambda row: (
         row["student_number"] is None,
         row["student_number"] if row["student_number"] is not None else 0,
@@ -752,10 +770,12 @@ def attendance_month(app, q, body):
         "absence_forms": sum(row["absence_forms"] for row in result_rows),
         "absence_days": {
             kind: sum(row["absence_days"][kind] for row in result_rows)
-            for kind in absence.TYPES
+            for kind in register.TYPES
         },
         "early_count": sum(row["early_count"] for row in result_rows),
         "out_count": sum(row["out_count"] for row in result_rows),
+        "late_count": sum(row["late_count"] for row in result_rows),
+        "result_count": sum(row["result_count"] for row in result_rows),
     }
     for row in result_rows:
         row["total_absence_days"] = sum(row["absence_days"].values())
@@ -765,8 +785,66 @@ def attendance_month(app, q, body):
 
 @api("POST", "/api/absences")
 def create_absence(app, q, body):
-    fields = absence_fields(body)
+    fields = {**absence_fields(body), "status": "done"}   # 양식으로 종류·사유를 채워 저장 = 작성 완료
     return absence.record(app.db, absence.save(app.db, fields), app.config["grade"])
+
+
+@api("DELETE", r"/api/absences/(\d+)")
+def delete_absence(app, q, body, absence_id):
+    """결석계 지우기 (화면에서 확인한 뒤). 결석계가 출석부 결석의 원천이라 출석부 체크도 함께 풀림."""
+    row = app.db.one("SELECT serial FROM absences WHERE id = ?", (absence_id,))
+    need(row, "없는 결석계입니다", 404)
+    app.db.execute("DELETE FROM absences WHERE id = ?", (absence_id,))
+    queries.bump_attendance_rev(app.db)
+    app.db.log(f"결석계 삭제 {row['serial']}")
+    return {"ok": True}
+
+
+@api("POST", r"/api/absences/(\d+)/printed")
+def absence_printed(app, q, body, absence_id):
+    need(app.db.one("SELECT id FROM absences WHERE id = ?", (absence_id,)), "없는 결석계입니다", 404)
+    app.db.execute("UPDATE absences SET printed_at = ? WHERE id = ?", (now_str(), absence_id))
+    queries.bump_attendance_rev(app.db)
+    return absence.record(app.db, app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,)),
+                          app.config["grade"])
+
+
+# ---- 출석부 (0.5.95) ----
+@api("GET", "/api/attendance/register")
+def attendance_register(app, q, body):
+    first, last = month_range(q.get("month") or date.today().strftime("%Y-%m"))
+    return register.month_register(app.db, date.fromisoformat(first), date.fromisoformat(last), app.config["grade"])
+
+
+@api("POST", "/api/attendance/register")
+def attendance_register_set(app, q, body):
+    """칸 하나 바꾸기: kind = absent / late / early / result / clear. 작성 완료 결석계를 바꾸면 409 (확인 후 force)."""
+    name = text_field(body.get("student_name"), "학생 이름", 20, True)
+    number = body.get("student_number")
+    need(number is None or (isinstance(number, int) and not isinstance(number, bool) and 0 <= number < 1000),
+         "번호가 잘못되었습니다")
+    day = date.fromisoformat(check_date(body.get("date")))
+    kind = body.get("kind")
+    kind_type = body.get("type") or "미정"
+    force = body.get("force") is True
+    grade = app.config["grade"]
+    try:
+        if kind == "absent":
+            register.mark_absent(app.db, number, name, day, kind_type, grade, force)
+        elif kind in register.MARK_KINDS:
+            register.set_mark(app.db, number, name, day, kind, kind_type,
+                              text_field(body.get("periods"), "교시", 20), text_field(body.get("note"), "메모", 200),
+                              grade, force)
+        elif kind == "clear":
+            need(body.get("only") in (None, "absent", *register.MARK_KINDS), "지울 종류가 잘못되었습니다")
+            register.clear_day(app.db, number, name, day, body.get("only"), grade, force)
+        else:
+            raise ApiError(400, "출결 종류가 잘못되었습니다")
+    except register.NeedConfirm as e:
+        raise ApiError(409, str(e)) from e
+    except (register.RegisterError, absence.AbsenceError) as e:
+        raise ApiError(400, str(e)) from e
+    return {"ok": True}
 
 @api("POST", "/api/absences/preview")
 def preview_absence(app, q, body):
@@ -792,6 +870,9 @@ def update_absence(app, q, body, absence_id):
         need((date.fromisoformat(end) - date.fromisoformat(start)).days <= 366, "결석 기간은 1년 이내로 입력하세요")
         app.db.execute(f"UPDATE absences SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
                        (*fields.values(), absence_id))
+        row = app.db.one("SELECT absence_type, reason FROM absences WHERE id = ?", (absence_id,))
+        if row["absence_type"] in absence.TYPES and (row["reason"] or "").strip():   # 초안을 채워 저장 = 작성 완료
+            app.db.execute("UPDATE absences SET status = 'done' WHERE id = ?", (absence_id,))
         queries.bump_attendance_rev(app.db)
     return absence.record(app.db, app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,)),
                           app.config["grade"])
