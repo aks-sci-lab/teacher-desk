@@ -465,6 +465,7 @@ function aiCard(todoCard, sv) {
     };
     // kind: 'auto' (브리핑을 열 때) · 'new' (새 것만) · 'full' (전체 다시). range: 'visit'(마지막으로 닫은 이후, 기본) · 'week'(지난 1주일)
     const run = async (kind, range = 'visit') => {
+        const auto = kind === 'auto';   // 브리핑을 열 때 저절로 (서버도 수업 시간이 아니면 시작하지 않음)
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
             standalone(true);
@@ -485,9 +486,19 @@ function aiCard(todoCard, sv) {
             if (same && (!st.new_count || recent)) return show(st, st.error);
             if (same) kind = 'new';
             else { kind = 'full'; range = 'visit'; }
+            // 0.5.98: 저절로 하는 요약은 내 수업 시간에만 (요약하는 동안 PC 메모리가 모자라 다른 일을 못 하므로)
+            const win = st.auto_window;
+            if (win && !win.allowed) {
+                const note = el('div.ai-new',
+                    el('span', `PC 가 느려지지 않게 자동 요약은 수업 시간에만 합니다 · ${win.text}`),
+                    el('button.btn.small', { onclick: () => run(kind, range) }, kind === 'new' ? '새 것 지금 요약' : '지금 요약'));
+                if (res.text) { show(st, st.error); body.prepend(note); }
+                else { standalone(true); clear(body, note, sinceList(sv)); }
+                return;
+            }
         }
         try {
-            await api.post('/api/ai/weekly', { kind, range });
+            await api.post('/api/ai/weekly', { kind, range, auto });
             await poll();
         } catch (e) {
             show(st, e.message);

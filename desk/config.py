@@ -42,6 +42,7 @@ DEFAULTS = {
     # 브리핑 '지난 1주일 AI 요약': 이 PC 의 LM Studio 로컬 서버 (모델 이름을 비우면 불러온 첫 모델)
     "ai_enabled": False,
     "ai_auto_item": True,         # AI 가 켜져 있으면 새 수신 항목을 뒤에서 자동 요약 (이 PC 의 LM Studio 로만)
+    "ai_auto_class_only": True,   # 0.5.98 자동 요약(누르지 않은 것)은 내 시간표의 수업 시간에만 (시간표가 없으면 언제든)
     "ai_base": "http://127.0.0.1:1234/v1",
     "ai_model": "",
     "ai_input_size": "normal",     # normal: 14000자 / short: 6000자 (짧으면 빠름)
@@ -96,14 +97,14 @@ EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
     "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "layout", "neis_key", "neis_school",
-    "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_base", "ai_model", "ai_input_size",
+    "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_auto_class_only", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
     "gcal_import", "gcal_ical_url", "gcal_push", "gcal_push_url", "gcal_push_types", "gcal_mask",
     "gdrive_enabled", "gdrive_client_id", "gdrive_client_secret", "gdrive_pc_name",
 }
 SETUP_WIZARD_STATES = ("", "later", "done", "notified")
-BOOL_KEYS = {"gdrive_enabled", "gcal_import", "gcal_push", "gcal_mask", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
+BOOL_KEYS = {"gdrive_enabled", "gcal_import", "gcal_push", "gcal_mask", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_auto_class_only"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)
