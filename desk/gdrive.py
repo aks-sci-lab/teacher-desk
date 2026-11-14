@@ -178,6 +178,12 @@ class Drive:
             raise DriveError("드라이브가 올리기 주소를 주지 않았습니다")
         return self._call("PUT", session, bytes(data), headers={"Content-Type": "application/octet-stream"})
 
+    def copy(self, file_id, name):
+        """드라이브 안에서 복사 (내려받았다 다시 올리지 않음). 새 파일 {id, name}."""
+        return self._call("POST", f"{self.config['gdrive_api_base']}/drive/v3/files/{urllib.parse.quote(file_id)}/copy",
+                          json.dumps({"name": name, "parents": ["appDataFolder"]}).encode(),
+                          headers={"Content-Type": "application/json; charset=UTF-8"})
+
     def delete(self, file_id):
         self._call("DELETE", f"{self.config['gdrive_api_base']}/drive/v3/files/{urllib.parse.quote(file_id)}", raw=True)
 

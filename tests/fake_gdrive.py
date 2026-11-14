@@ -73,6 +73,15 @@ class FakeDrive:
                         if not f:
                             return self._send(404, {})
                         return self._send(200, f["data"], "application/octet-stream")
+                    if method == "POST" and url.path.startswith("/drive/v3/files/") and url.path.endswith("/copy"):
+                        src = fake.files.get(url.path.split("/")[-2])
+                        if not src:
+                            return self._send(404, {})
+                        meta = json.loads(body or b"{}")
+                        assert meta.get("parents") == ["appDataFolder"], meta
+                        fid = uuid.uuid4().hex[:12]
+                        fake.files[fid] = {"name": meta["name"], "data": src["data"]}
+                        return self._send(200, {"id": fid, "name": meta["name"]})
                     if method == "DELETE" and url.path.startswith("/drive/v3/files/"):
                         fake.files.pop(url.path.rsplit("/", 1)[1], None)
                         return self._send(204)

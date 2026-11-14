@@ -138,6 +138,49 @@ function keyBox() {
     return box;
 }
 
+// 드라이브 백업 (0.5.97): 날짜별 목록 → [이 날짜로 되살리기]
+function backupBox() {
+    const list = el('div');
+    const kb = n => (n > 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
+    const show = guarded(async () => {
+        clear(list, el('p.small.muted', '드라이브에서 백업 목록을 읽는 중…'));
+        const r = await api.post('/api/cloud', { action: 'backups' });
+        const rows = r.backups || [];
+        clear(list, rows.length
+            ? el('ul.cloud-backups', rows.map(b => el('li',
+                el('b', b.date), b.kind === 'restore' ? el('span.small.muted', ' (되살리기 직전 모습)') : null,
+                el('span.small.muted', ` · ${kb(b.size)}`),
+                r.mode === 'ok' && el('button.btn.small', { type: 'button', onclick: guarded(async ev => {
+                    if (!confirm(`${b.date} 백업으로 되살릴까요?\n\n지금 자료는 이 PC(data\\cloud-backups)와 드라이브("되살리기 직전 모습")에 남겨 두고, 되살린 자료를 드라이브에 새 판으로 올립니다. 다른 PC 는 다음에 켤 때 이 자료를 받습니다.`)) return;
+                    ev.target.disabled = true;
+                    try {
+                        await api.post('/api/cloud', { action: 'restore', name: b.name });
+                        toast(`${b.date} 백업으로 되살렸습니다. 화면을 새로 고칩니다.`, 'info', 4000);
+                        setTimeout(() => location.reload(), 1200);
+                    } finally {
+                        ev.target.disabled = false;
+                    }
+                }) }, '이 날짜로 되살리기'))))
+            : el('p.small.muted', '아직 백업이 없습니다. 날짜가 바뀐 뒤 처음 올릴 때 전날 마지막 모습이 저절로 백업됩니다. 지금 하나 만들려면 [지금 백업].'),
+            r.mode !== 'ok' && rows.length ? el('p.small', '되살리기는 이 PC 에서 이어 쓰는 중일 때만 됩니다.') : null);
+    });
+    return el('div',
+        el('p.small', '드라이브에 날짜별 백업이 저절로 남습니다: 최근 14일은 날마다(그날 마지막 모습), 그보다 오래된 것은 달마다 하나씩 12달. 백업도 복구 키로 잠겨 있습니다.'),
+        el('div.row',
+            el('button.btn.small', { type: 'button', onclick: show }, '백업 목록 보기'),
+            el('button.btn.small', { type: 'button', onclick: guarded(async ev => {
+                ev.target.disabled = true;
+                try {
+                    await api.post('/api/cloud', { action: 'backup' });
+                    toast('오늘 날짜로 백업했습니다', 'info');
+                    await show();
+                } finally {
+                    ev.target.disabled = false;
+                }
+            }) }, '지금 백업')),
+        list);
+}
+
 // 설정 → 드라이브 와 도우미가 쓰는 묶음 (짧게: 도우미는 compact)
 export function cloudBox({ compact = false } = {}) {
     const c = store.state?.cloud || {};
@@ -155,6 +198,7 @@ export function cloudBox({ compact = false } = {}) {
             '켜면 1분 안에 연결합니다. 켤 때 최신 자료를 받고, 쓰는 동안 10분마다·끌 때 올립니다. 인터넷이 안 되면 이 PC 에서 그냥 쓰고 나중에 올립니다.'),
     ];
     if (!compact) {
+        parts.push(item('4 백업 되살리기 날짜별 복원', el('h4', '4. 백업·되살리기'), backupBox()));
         parts.push(el('details.set-adv', el('summary', '고급 — 보통은 그대로 두세요'), el('div',
             ownerGuide(),
             textField('gdrive_pc_name', '이 PC 이름', '다른 PC 에 "○○ 에서 쓰는 중" 으로 보일 이름 (비우면 컴퓨터 이름)', { placeholder: '예: 학교 교무실 PC' }),
