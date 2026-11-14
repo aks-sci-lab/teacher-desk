@@ -15,7 +15,7 @@ import { openShareExport, openShareImport } from './share.js';
 import { cloudBox, cloudLine } from './cloud.js';
 import {
     item, textField, pathField, checkField, selectField, secretField, autoSave, saveStateBox,
-    coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, TELEGRAM_STEPS,
+    coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, aiWindowLine, TELEGRAM_STEPS,
 } from './setfields.js';
 import { matches } from '../setup-rules.js';
 
@@ -377,6 +377,9 @@ const GROUPS = [
             checkField('ai_enabled', 'AI 요약 쓰기', '브리핑의 요약과 수신함 항목 요약을 만듭니다. LM Studio 서버가 켜져 있어야 합니다.'),
             checkField('ai_auto_item', '새 수신 항목을 자동으로 AI 요약 (권장)',
                 '최근 7일 안에 받은 쪽지·공문을 뒤에서 한 건씩 요약합니다 (한 건에 20~30초). 끄면 [AI 로 요약하기]를 눌렀을 때만.'),
+            checkField('ai_auto_class_only', '자동 요약은 내 수업 시간에만 (권장)',
+                '요약하는 동안 PC 가 느려지므로, 누르지 않은 요약(새 수신 항목·브리핑을 열 때)은 시간표의 내 수업 교시에만 합니다. 그 사이 받은 것은 모아 두었다가 다음 수업 때 요약합니다. 직접 누른 요약·텔레그램 질문은 언제든 바로. 시간표가 없으면 언제든.'),
+            item('자동 요약 시간 다음 자동 요약 교시 수업', aiWindowLine()),
             item('LM Studio 연결 확인', aiCheck()),
             item('LM Studio 설치 도우미 PC 사양 모델 추천 배치파일',
                 el('details.set-adv', el('summary', 'LM Studio 설치 도우미 (PC 사양 확인·모델 추천)'), el('div', aiSetup(pane)))),

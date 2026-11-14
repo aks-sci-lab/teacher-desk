@@ -289,6 +289,16 @@ export function aiCheck() {
     return el('div', el('div.row', el('button.btn.small', { type: 'button', onclick: run }, 'LM Studio 연결 확인')), box);
 }
 
+// 0.5.98 자동 AI 요약을 돌리는 때 (내 수업 시간) — '다음 자동 요약: 오늘 3교시 (10:50)'
+export function aiWindowLine() {
+    const box = el('p.small.muted', '자동 요약 시간 확인 중…');
+    api.get('/api/ai/auto-window').then(w => {
+        clear(box, w.text, w.pending ? ` · 요약을 기다리는 쪽지·공문 ${w.pending}건` : '');
+        box.className = `small ${w.mode === 'no_timetable' ? 'set-bad' : 'muted'}`;
+    }).catch(() => clear(box, ''));
+    return box;
+}
+
 export const TELEGRAM_STEPS = () => el('ol.small.set-steps',
     el('li', '텔레그램에서 @BotFather 를 찾아 /newbot 으로 봇을 만들고 토큰을 받습니다.'),
     el('li', '아래 봇 토큰 칸에 넣고 [저장]을 누릅니다.'),
