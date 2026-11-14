@@ -660,9 +660,11 @@ class Sync:
 
     def loop(self):
         self.stop_event.wait(15)   # 켠 직후 다른 일(수집·텔레그램)이 먼저 자리 잡게
+        from .cloudsync import paused
         while not self.stop_event.is_set():
             try:
-                self.tick()
+                if not paused():   # 다른 PC 가 쓰는 중이면 그 PC 가 올림 (겹치지 않게, 0.5.96)
+                    self.tick()
             except Exception as e:   # 뒤의 반복이 멈추지 않게 기록만
                 self.db.log(f"구글 캘린더 동기화 오류: {type(e).__name__}", "error")
             self.wake.wait(self.interval)

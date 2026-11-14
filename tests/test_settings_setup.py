@@ -75,7 +75,7 @@ for name in [n for n in dir(test_server.ServerTests) if n.startswith("test_")]:
 class SettingsScreenTests(unittest.TestCase):
     """화면이 모든 설정 키를 다루는지 (빠뜨린 칸이 없게) — 실제 모양은 브라우저 캡처로 확인."""
     def test_every_editable_key_has_a_place(self):
-        js = "".join((WEB / "views" / f).read_text(encoding="utf-8") for f in ("settings.js", "setfields.js", "setup.js"))
+        js = "".join((WEB / "views" / f).read_text(encoding="utf-8") for f in ("settings.js", "setfields.js", "setup.js", "cloud.js"))
         # 일반 질문 AI(외부 API 키·모델)는 AI 화면(ai.js), 화면 배치는 배치 모드에서 저장
         elsewhere = {"layout", "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
                      "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "neis_school"}

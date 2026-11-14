@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pypdf==6.17.0
+      - run: pip install pypdf==6.17.0 cryptography==50.0.1
       - name: 업무 데스크 시험
         run: python -m unittest discover -s tests -t . -v
       - uses: actions/setup-node@v4
@@ -57,6 +57,10 @@ jobs:
       - name: 들어 있는 Python 으로 시험 전체 실행
         working-directory: check/TeacherDesk/teacher-desk
         run: python\python.exe -X utf8 -m unittest discover -s tests -t . -v
+
+      - name: 들어 있는 Python 으로 드라이브 암호화 한 번 (cryptography 불러오기·암호화·풀기)
+        working-directory: check/TeacherDesk/teacher-desk
+        run: python\python.exe -X utf8 -c "import cryptography; from desk import cloudcrypt as c; k = c.new_recovery_key(); assert c.available(); b = c.encrypt(b'SQLite format 3 test', k); assert c.decrypt(b, k) == b'SQLite format 3 test'; print('cryptography', cryptography.__version__, 'AES-256-GCM OK')"
 
       - name: start-desk.bat 이 들어 있는 Python 을 찾는지 확인
         working-directory: check/TeacherDesk/teacher-desk

@@ -12,6 +12,7 @@ import { openSchoolCal } from './schoolcal.js';
 import { openRoster } from './passes.js';
 import { openSetup } from './setup.js';
 import { openShareExport, openShareImport } from './share.js';
+import { cloudBox, cloudLine } from './cloud.js';
 import {
     item, textField, pathField, checkField, selectField, secretField, autoSave, saveStateBox,
     coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, TELEGRAM_STEPS,
@@ -400,6 +401,11 @@ const GROUPS = [
         id: 'capture', icon: '🌐', title: '브라우저 연결', desc: '에듀파인·나이스 화면을 단축키로 보내기 (선택)',
         status: s => (s.capture_key_set ? '켜짐' : '꺼짐'),
         build: () => [item('에듀파인 나이스 화면 보내기 브라우저 단축키 확장 프로그램 연결 키', captureBox())],
+    },
+    {
+        id: 'cloud', icon: '☁', title: '드라이브 (여러 PC)', desc: '내 구글 드라이브에 암호화해 여러 PC 이어 쓰기·백업 (선택)',
+        status: () => cloudLine(store.state?.cloud) || '사용 안 함',
+        build: () => [cloudBox()],
     },
     {
         id: 'update', icon: '🔧', title: '업데이트·고급', desc: '새 버전, 화면 배치, 프로그램 종료',

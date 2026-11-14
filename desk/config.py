@@ -71,6 +71,18 @@ DEFAULTS = {
     "gcal_push_key": "",           # 스크립트에 넣는 비밀 키 (설정에서 '스크립트 만들기'를 누르면 새로 만듦)
     "gcal_push_types": ["manual", "deadline", "school"],
     "gcal_mask": False,            # 올리는 제목·설명의 학생 이름 가리기 (선생님 허용으로 기본 끔)
+    # 여러 PC 이어 쓰기: 선생님 본인 구글 드라이브의 숨은 앱 폴더에 암호화해 동기화 (0.5.96, 기본 끔, desk/cloudsync.py)
+    "gdrive_enabled": False,
+    "gdrive_client_id": "",        # 구글 로그인(OAuth '데스크톱 앱') 클라이언트 — 비어 있으면 desk/gdrive.py 의 기본값
+    "gdrive_client_secret": "",
+    "gdrive_token": "",            # 구글이 준 '다시 받기 토큰' (비밀값)
+    "gdrive_passphrase": "",       # 복구 키(암호문) — 이 PC 에만, 잃으면 드라이브 자료를 풀 수 없음 (비밀값)
+    "gdrive_pc_name": "",          # 다른 PC 에 보일 이 PC 이름 (비우면 컴퓨터 이름)
+    "gdrive_auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "gdrive_token_url": "https://oauth2.googleapis.com/token",
+    "gdrive_revoke_url": "https://oauth2.googleapis.com/revoke",
+    "gdrive_api_base": "https://www.googleapis.com",
+    "gdrive_upload_base": "https://www.googleapis.com",
     # 화면 배치 (🧩 화면 배치 모드에서 저장)
     "layout": {},
     # 첫 실행 설정 도우미 (0.5.79): '' 처음 · later 나중에 · done 마침 · notified 기존 사용자에게 한 번 안내함
@@ -78,7 +90,7 @@ DEFAULTS = {
 }
 
 # 화면에 그대로 돌려주면 안 되는 값
-SECRET_KEYS = {"gcal_ical_url", "gcal_push_url", "gcal_push_key", "capture_key", "telegram_token", "neis_key", "ai_openai_key", "ai_anthropic_key", "ai_gemini_key"}
+SECRET_KEYS = {"gdrive_token", "gdrive_passphrase", "gdrive_client_secret", "gcal_ical_url", "gcal_push_url", "gcal_push_key", "capture_key", "telegram_token", "neis_key", "ai_openai_key", "ai_anthropic_key", "ai_gemini_key"}
 # 화면에서 바꿀 수 있는 값 (port, data_dir, api_base 는 파일에서만)
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
@@ -88,9 +100,10 @@ EDITABLE_KEYS = {
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
     "gcal_import", "gcal_ical_url", "gcal_push", "gcal_push_url", "gcal_push_types", "gcal_mask",
+    "gdrive_enabled", "gdrive_client_id", "gdrive_client_secret", "gdrive_pc_name",
 }
 SETUP_WIZARD_STATES = ("", "later", "done", "notified")
-BOOL_KEYS = {"gcal_import", "gcal_push", "gcal_mask", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
+BOOL_KEYS = {"gdrive_enabled", "gcal_import", "gcal_push", "gcal_mask", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item"}
 
 
 # 예전 기본값을 그대로 쓰던 설정은 새 기본값으로 (저장소를 옮기면서 주소가 바뀜)
@@ -192,6 +205,14 @@ class Config:
                 if not (isinstance(v, list) and all(x in TYPE_KEYS for x in v)):
                     raise ValueError("올릴 일정 종류가 잘못되었습니다")
                 clean[k] = [x for x in TYPE_KEYS if x in v]
+            elif k in ("gdrive_client_id", "gdrive_client_secret"):
+                if not isinstance(v, str) or (v.strip() and not re.fullmatch(r"[A-Za-z0-9._\-]{8,200}", v.strip())):
+                    raise ValueError("구글 로그인 클라이언트 값 형식이 잘못되었습니다")
+                clean[k] = v.strip()
+            elif k == "gdrive_pc_name":
+                if not isinstance(v, str):
+                    raise ValueError("PC 이름은 글자여야 합니다")
+                clean[k] = re.sub(r"[\x00-\x1f]", "", v).strip()[:40]
             elif k == "layout":
                 if not isinstance(v, dict):
                     raise ValueError("layout 은 객체여야 합니다")

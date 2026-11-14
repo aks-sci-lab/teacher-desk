@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, register, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -157,6 +157,7 @@ class App:
         # 항목별 AI 요약 대기열: 새 항목은 자동으로, 눌렀거나 연 항목은 맨 앞으로 (브리핑 요약이 도는 중이면 기다림)
         self.item_ai = ai.ItemJob(db, config, busy=lambda: self.ai_job.running)
         self.gcal = gcal.Sync(db, config)   # 선생님 구글 캘린더와 일정 공유 (desk.py 가 뒤에서 켬)
+        self.cloud = cloudsync.Sync(db, config)   # 여러 PC 이어 쓰기·구글 드라이브 (desk.py 가 켤 때 받고 끌 때 올림)
 
 
 def make_handler(app):
@@ -230,7 +231,10 @@ def make_handler(app):
             if not secrets.compare_digest(self.headers.get("X-Desk-Capture-Key", "").encode("utf-8"), key.encode("utf-8")):
                 raise ApiError(401, "연결 키가 맞지 않습니다 (설정에서 키를 다시 복사하세요)")
             if path == "/capture/ping" and method == "GET":
-                return self.send_json(200, {"ok": True, "version": VERSION})
+                return self.send_json(200, {"ok": True, "version": VERSION, "read_only": cloudsync.paused()})
+            if method == "POST" and cloudsync.paused():   # 다른 PC 가 쓰는 중(드라이브 읽기 전용, 0.5.96): 받아도 버려지므로 받지 않음
+                raise ApiError(423, "업무 데스크가 다른 PC 에서 사용 중이라 이 PC 는 받지 않았습니다. "
+                                    "지금 쓰는 PC 에서 보내거나, 이 PC 의 ⚙ 설정 → 드라이브에서 [이 PC 에서 쓰기]를 누르세요")
             if path == "/capture" and method == "POST":
                 return self.send_json(200, capture_mod.receive(app, self.read_json()))
             try:
@@ -288,6 +292,8 @@ def make_handler(app):
                 self.guard(capture=is_capture)
                 if is_capture:
                     return self.capture(method, url.path)
+                if url.path == gdrive.REDIRECT_PATH and method == "GET":
+                    return self.oauth_return(url)   # 구글 로그인에서 돌아옴 (토큰 대신 한 번 쓰는 state 로 확인)
                 if url.path.startswith("/api/"):
                     if not secrets.compare_digest(self.headers.get("X-Desk-Token", ""), app.token):
                         raise ApiError(401, "화면을 새로 고침하세요 (서버가 다시 시작되었습니다)")
@@ -296,6 +302,9 @@ def make_handler(app):
                         app.ui.touch(cid)   # 이 화면이 아직 열려 있다는 신호
                         if self.headers.get("X-Desk-Active") == "1":
                             visits.record_active(app.db)   # 선생님이 화면을 쓰는 중 (브리핑 '마지막으로 닫은 이후' 기준)
+                            app.cloud.touch()   # 드라이브 잠금: 이 PC 를 선생님이 쓰는 중
+                    if method != "GET" and cloudsync.paused() and not url.path.startswith(CLOUD_OPEN):
+                        raise ApiError(423, cloud_block_message(app))
                     q = {k: v[-1] for k, v in parse_qs(url.query).items()}
                     body = self.read_json() if method in ("POST", "PUT", "PATCH") else {}
                     result = route(app, method, url.path, q, body)
@@ -312,6 +321,29 @@ def make_handler(app):
             except Exception as e:  # 예상 못 한 오류도 화면에 알림
                 app.db.log(f"서버 오류: {type(e).__name__}: {e}", "error")
                 self.send_json(500, {"error": f"서버 오류: {type(e).__name__}"})
+
+        def oauth_return(self, url):
+            q = {k: v[-1] for k, v in parse_qs(url.query).items()}
+            login = app.cloud.login
+            if not login or login.expired() or not secrets.compare_digest(q.get("state", ""), login.state):
+                msg = "로그인 요청이 오래되었거나 맞지 않습니다. 업무 데스크 설정에서 [구글로 로그인]을 다시 누르세요."
+            elif q.get("error"):
+                msg = "구글 로그인을 취소했습니다. 이 창을 닫으세요."
+                app.cloud.login = None
+            else:
+                try:
+                    app.config.set_value("gdrive_token", login.finish(q.get("code", "")))
+                    app.cloud.login = None
+                    app.db.log("드라이브: 구글 로그인 완료")
+                    msg = "구글 로그인이 끝났습니다. 이 창을 닫고 업무 데스크로 돌아가세요."
+                except gdrive.DriveError as e:
+                    msg = f"로그인을 마치지 못했습니다: {e}"
+            page = ("<!doctype html><meta charset='utf-8'><title>업무 데스크</title>"
+                    "<body style='font-family:sans-serif;padding:40px;font-size:18px'><p>"
+                    + html_escape(msg) + "</p></body>")
+            self.send_bytes(200, page.encode("utf-8"), "text/html; charset=utf-8",
+                            {"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+                             "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
         def serve_static(self, path):
             if path in ("/", "/index.html"):
@@ -408,6 +440,7 @@ def get_state(app, q, body):
         "update": app.update_checker.state() if app.update_checker else None,
         "pdf_ready": pypdf_ready(),
         "watch": {"enabled": bool(cfg["watch_enabled"]), "running": bool(app.watcher), "interval": cfg["watch_interval"]},
+        "cloud": app.cloud.status(),
     }
 
 
@@ -423,6 +456,8 @@ def put_settings(app, q, body):
             if not app.config["gcal_import"]:
                 app.gcal.clear_import()
         app.gcal.poke()
+    if any(k.startswith("gdrive_") for k in body):
+        app.cloud.last_try = 0   # 켜거나 바꾸면 다음 확인(1분 안)에 바로 연결
     if "teacher_name" in body:
         schoolshare.find_me(app.db, app.config)   # 공통 설정으로 시간표를 먼저 받은 뒤 이름을 넣은 경우 내 시간표 찾기
     return {"ok": True, "settings": app.config.public()}
@@ -2008,6 +2043,68 @@ def share_apply(app, q, body):
     if "schoolcal" in res["applied"]:
         queries.bump_events_rev(app.db)   # 달력 화면이 새로 그리게
     return {**res, "settings": app.config.public(), "status": schoolshare.status(app.db, app.config)}
+
+
+# ---- 여러 PC 이어 쓰기·구글 드라이브 (0.5.96, desk/cloudsync.py) ----
+# 읽기 전용·충돌 중에도 되는 요청: 드라이브 설정 자체, 화면 열림 신호, 설정(이 PC 의 config), 업데이트·종료
+CLOUD_OPEN = ("/api/cloud", "/api/ui", "/api/settings", "/api/update", "/api/shutdown", "/api/pick")
+
+
+def cloud_block_message(app):
+    st = app.cloud.status()
+    if st["mode"] == "conflict":
+        return "드라이브 자료와 이 PC 자료 중 어느 것을 쓸지 먼저 고르세요 (⚙ 설정 → 드라이브)"
+    if st["mode"] == "starting":
+        return "드라이브에서 최신 자료를 확인하는 중입니다. 잠시 뒤 다시 하세요"
+    holder = (st.get("holder") or {}).get("pc_name") or "다른 PC"
+    return f"{holder} 에서 쓰는 중이라 이 PC 는 읽기 전용입니다. ⚙ 설정 → 드라이브에서 [이 PC 에서 쓰기]를 누르면 바꿀 수 있습니다"
+
+
+def html_escape(text):
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+@api("GET", "/api/cloud")
+def cloud_get(app, q, body):
+    return app.cloud.status()
+
+
+@api("POST", "/api/cloud")
+def cloud_action(app, q, body):
+    """login · logout · newkey · key · sync · takeover · resolve(choice=drive|local)."""
+    action = body.get("action")
+    need(action in ("login", "logout", "newkey", "key", "sync", "takeover", "resolve"), "동작이 잘못되었습니다")
+    c = app.cloud
+    try:
+        if action == "login":
+            need(gdrive.client_id(app.config), "구글 로그인 정보(클라이언트 ID)가 없습니다. 설정 → 드라이브 → 고급에서 넣으세요")
+            c.login = gdrive.Login(app.config, app.config["port"])
+            return {**c.status(), "url": c.login.url()}
+        if action == "logout":
+            c.drive.revoke()
+            app.config.set_value("gdrive_token", "")
+            app.config.set_value("gdrive_enabled", False)
+            c.tick()
+            app.db.log("드라이브: 로그아웃 (이 PC 동기화 끔)")
+        elif action == "newkey":
+            return {**c.status(), "key": cloudcrypt.new_recovery_key()}
+        elif action == "key":
+            c.set_key(text_field(body.get("passphrase"), "복구 키", 300, True))
+            app.db.log("드라이브: 복구 키 저장")
+        elif action == "sync":
+            c.sync_now()
+        elif action == "takeover":
+            c.take_over()
+            app.db.log("드라이브: 이 PC 에서 쓰기로 가져옴")
+        elif action == "resolve":
+            need(body.get("choice") in ("drive", "local"), "고를 것이 잘못되었습니다")
+            c.resolve(body["choice"])
+            app.db.log("드라이브: " + ("드라이브 자료로 바꿈" if body["choice"] == "drive" else "이 PC 자료를 드라이브에 올림"))
+    except gdrive.DriveError as e:
+        raise ApiError(502 if e.offline else 400, str(e))
+    except cloudcrypt.CryptError as e:
+        raise ApiError(400, str(e))
+    return c.status()
 
 
 @api("POST", "/api/shutdown")

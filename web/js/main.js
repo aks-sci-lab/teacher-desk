@@ -16,6 +16,7 @@ import './views/search.js';
 import './views/ai.js';
 import './views/classroom.js';
 import { openSettings } from './views/settings.js';
+import { cloudLine } from './views/cloud.js';
 import { maybeStartSetup } from './views/setup.js';
 import { api } from './api.js';
 import { startUpdate } from './update.js';
@@ -25,6 +26,7 @@ orderViews(['today', 'week', 'inbox', 'calendar', 'timetable', 'attendance', 'cl
 statusItem('conn', { title: '업무 데스크 프로그램 연결 상태' });
 statusItem('collect', { title: '누르면 지금 수집', onclick: collectNow });
 statusItem('telegram', { title: '텔레그램 설정', onclick: () => { showView('settings'); openSettings('telegram'); } });
+statusItem('cloud', { title: '드라이브 여러 PC 이어 쓰기', onclick: () => { showView('settings'); openSettings('cloud'); } });
 statusItem('update', { title: '새 버전이 있습니다. 누르면 업데이트합니다', onclick: startUpdate });
 statusItem('new', { title: '새로 받은 자료', onclick: () => showView('inbox') });
 statusItem('log', { right: true, title: '수집·오류 기록 보기/숨기기', onclick: () => setLayout({ bottomVisible: !getLayout().bottomVisible }) });
@@ -45,8 +47,26 @@ function updateStatus(s) {
         notifiedVersion = up.latest;
         toast(`새 버전 ${up.latest} 이 나왔습니다. 아래 막대의 ⬆ 를 누르면 업데이트합니다.`, 'info', 9000);
     }
+    setStatus('cloud', cloudLine(s.cloud), s.cloud?.message || '');
+    cloudNotice(s.cloud);
     setStatus('new', `새 자료 ${s.counts.new_items}`);
     setBadge('inbox', s.counts.new_items);
+}
+// 드라이브(0.5.96): 자료를 통째로 받아 바꿨으면 화면을 새로 고치고, 읽기 전용·고르기 필요는 한 번 알림
+let cloudReload = null, cloudMode = null;
+function cloudNotice(c) {
+    if (!c) return;
+    if (cloudReload !== null && c.reload !== cloudReload) {
+        toast('드라이브에서 최신 자료를 받아 화면을 새로 고칩니다', 'info', 4000);
+        setTimeout(() => location.reload(), 1200);
+    }
+    cloudReload = c.reload;
+    if (c.mode !== cloudMode && (c.mode === 'readonly' || c.mode === 'conflict')) {
+        toast(c.mode === 'readonly'
+            ? `${c.holder?.pc_name || '다른 PC'} 에서 쓰는 중이라 이 PC 는 읽기 전용입니다. 아래 막대의 ☁ 를 누르면 바꿀 수 있습니다.`
+            : '드라이브 자료와 이 PC 자료가 둘 다 바뀌었습니다. 아래 막대의 ☁ 를 눌러 어느 쪽을 쓸지 고르세요.', 'info', 12000);
+    }
+    cloudMode = c.mode;
 }
 on('state', updateStatus);
 

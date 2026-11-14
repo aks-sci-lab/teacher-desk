@@ -60,6 +60,21 @@ class CaptureApiTests(unittest.TestCase):
         self.assertTrue(body["enabled"])
         return body["key"]
 
+    def test_read_only_pc_does_not_accept_captures(self):   # 0.5.96: 다른 PC 가 쓰는 중이면 받아도 버려지므로 받지 않음
+        from desk import cloudsync
+        key = self.enable()
+        h = {"Origin": EXT, "X-Desk-Capture-Key": key}
+        cloudsync._paused.set()
+        try:
+            status, body, _ = self.raw("POST", "/capture", {"text": PAGE}, h)
+            self.assertEqual(status, 423)
+            self.assertIn("다른 PC 에서 사용 중", body["error"])
+            status, body, _ = self.raw("GET", "/capture/ping", headers=h)
+            self.assertEqual((status, body["read_only"]), (200, True))   # 확장 프로그램 연결 확인은 됨
+        finally:
+            cloudsync._paused.clear()
+        self.assertFalse(self.raw("GET", "/capture/ping", headers=h)[1]["read_only"])   # 풀리면 다시 받음
+
     def test_off_by_default_rejects_everything(self):
         status, body, _ = self.raw("POST", "/capture", {"text": PAGE}, {"Origin": EXT, "X-Desk-Capture-Key": "x"})
         self.assertEqual(status, 403)

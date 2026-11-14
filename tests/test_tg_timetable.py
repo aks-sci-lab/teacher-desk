@@ -88,7 +88,7 @@ class TelegramTimetableTests(unittest.TestCase):
         self.assertIn("교시 시간이 정해져 있지 않습니다", cls(at(9, 0)))
 
     def test_routing_through_messages_and_help(self):
-        self.assertTrue(self.bot.handle_update(msg("2-3 시간표")).startswith("📚"))
+        self.assertIn("📚", self.bot.handle_update(msg("2-3 시간표")))   # 주말에는 앞에 '주말이라 다음 월요일…' 이 붙음
         self.assertIn("2-3", self.bot.handle_update(msg("2학년 3반 시간표")))
         self.assertIn("시간표에 9-9 학급이 없습니다", self.bot.handle_update(msg("9-9 시간표")))
         for text in ("오늘 식단표", "2-3 오늘 급식 뭐야"):
@@ -97,7 +97,7 @@ class TelegramTimetableTests(unittest.TestCase):
         self.assertIn("내 수업", self.bot.handle_update(msg("내일 수업")))
         self.bot.handle_update(msg("조퇴증"))
         self.bot.handle_update(msg("7"))                                        # 입력 대화 중에도 뚜렷한 시간표 말은 처리
-        self.assertTrue(self.bot.handle_update(msg("2-3 시간표")).startswith("📚"))
+        self.assertIn("📚", self.bot.handle_update(msg("2-3 시간표")))   # 주말에는 앞에 '주말이라 다음 월요일…' 이 붙음
         self.assertIsNone(self.bot.dialog)
         for word in ("2-3 시간표", "2-3 지금", "빈 시간 김철수 이영희"):
             self.assertIn(word, HELP)

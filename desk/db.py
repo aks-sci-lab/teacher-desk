@@ -272,6 +272,14 @@ class DB:
                 "SELECT id FROM todos ORDER BY date IS NULL, date, COALESCE(time, '99'), id")]
             self.conn.executemany("UPDATE todos SET sort = ? WHERE id = ?", [(i, tid) for i, tid in enumerate(ids)])
 
+    def refresh_schema(self):
+        """자료를 통째로 바꾼 뒤(드라이브에서 받기, 0.5.96): 예전 버전 자료면 새 표·칸을 더함."""
+        with self.lock:
+            self.conn.execute("PRAGMA foreign_keys = ON")
+            self.conn.executescript(SCHEMA)
+            self._migrate()
+            self.conn.commit()
+
     def close(self):
         with self.lock:
             self.conn.close()
