@@ -20,6 +20,25 @@ export function cloudLine(c) {
     return `☁ ${MODE[c.mode] || c.mode}`;
 }
 
+// 배포자(업무 데스크를 나눠 주는 선생님)가 처음 한 번 하는 일 — 구글 화면의 단추 이름 그대로 (README 7-1 과 같음)
+export const OWNER_STEPS = [
+    '크롬·엣지에서 console.cloud.google.com 을 열고 선생님 구글 계정으로 로그인합니다.',
+    '위쪽 [프로젝트 선택] → [새 프로젝트] → 프로젝트 이름 "업무 데스크" → [만들기].',
+    '왼쪽 메뉴 [API 및 서비스] → [라이브러리] → "Google Drive API" 검색 → [사용].',
+    '[API 및 서비스] → [OAuth 동의 화면] (새 화면에서는 [Google 인증 플랫폼]) → [시작하기]: 앱 이름 "업무 데스크", 사용자 지원 이메일, 대상 [외부], 연락처 이메일 → [만들기].',
+    '[데이터 액세스] → [범위 추가 또는 삭제] → ".../auth/drive.appdata" 하나만 체크 → [업데이트] → [저장].',
+    '[클라이언트] → [클라이언트 만들기] → 애플리케이션 유형 [데스크톱 앱] → 이름 "업무 데스크" → [만들기] → 나오는 "클라이언트 ID" 와 "클라이언트 보안 비밀번호" 를 복사.',
+    '[대상] → 게시 상태의 [앱 게시] → [확인]. ("테스트" 로 두면 등록한 사람만 쓰고 7일마다 다시 로그인해야 합니다.)',
+    '복사한 두 값을 아래 "구글 로그인 클라이언트 ID"·"보안 비밀" 칸에 붙여 넣습니다. 다른 선생님께 나눠 줄 때는 개발 담당에게 주면 업무 데스크 기본값으로 들어가 받는 분은 넣을 필요가 없습니다.',
+];
+
+function ownerGuide(open = false) {
+    return el('details.small.cloud-owner', { open },
+        el('summary', '배포자 준비: 구글 로그인 앱 만들기 (처음 한 번, 약 10분)'),
+        el('p', '업무 데스크를 나눠 주는 선생님이 한 번만 하면 됩니다. 구글 화면의 단추 이름은 조금 다를 수 있습니다. 이 앱은 드라이브의 숨은 앱 폴더만 쓰는 좁은 권한이라 구글 심사가 필요 없을 것으로 봅니다.'),
+        el('ol', OWNER_STEPS.map(t => el('li', t))));
+}
+
 function statusBox() {
     const box = el('div.cloud-status');
     const act = (action, extra = {}, done) => guarded(async ev => {
@@ -69,7 +88,8 @@ function loginBox() {
                         await loadState();
                     }) }, '로그아웃'))
                 : el('div',
-                    !c.client && el('p.set-bad.small', '구글 로그인 정보(클라이언트 ID)가 없습니다. 아래 "고급"에서 넣거나 업무 데스크를 나눠 준 선생님께 여쭈세요.'),
+                    !c.client && el('p.set-bad.small', '구글 로그인 정보(클라이언트 ID)가 없습니다. 업무 데스크를 나눠 준 선생님께 여쭈거나, 직접 아래 순서대로 만들어 "고급"에 넣으세요.'),
+                    !c.client && ownerGuide(true),
                     el('button.btn.primary', { type: 'button', disabled: !c.client, onclick: guarded(async () => {
                         const r = await api.post('/api/cloud', { action: 'login' });
                         window.open(r.url, '_blank', 'noopener');
@@ -136,6 +156,7 @@ export function cloudBox({ compact = false } = {}) {
     ];
     if (!compact) {
         parts.push(el('details.set-adv', el('summary', '고급 — 보통은 그대로 두세요'), el('div',
+            ownerGuide(),
             textField('gdrive_pc_name', '이 PC 이름', '다른 PC 에 "○○ 에서 쓰는 중" 으로 보일 이름 (비우면 컴퓨터 이름)', { placeholder: '예: 학교 교무실 PC' }),
             textField('gdrive_client_id', '구글 로그인 클라이언트 ID', '업무 데스크를 나눠 준 선생님(배포자)이 Google Cloud 에서 만든 "데스크톱 앱" 클라이언트. 비우면 기본값.'),
             secretField('gdrive_client_secret', '구글 로그인 클라이언트 보안 비밀', '위 클라이언트와 함께 받은 값', '클라이언트 보안 비밀'))));

@@ -67,6 +67,36 @@ def fetch_embed(dest):
     return dest
 
 
+# 함께 넣는 꾸러미의 사용 허락(라이선스): 고칠 때 확인하고 여기 적음 (0.5.96)
+ALLOWED_LICENSES = {
+    "pypdf": "BSD",
+    "cryptography": "Apache-2.0 OR BSD-3-Clause",
+    "cffi": "MIT-0 (MIT 계열)",
+    "pycparser": "BSD",
+}
+
+
+def check_licenses(lib):
+    """lib 에 든 꾸러미가 위 목록에 있고 라이선스 파일이 들어 있는지 확인 (모르는 꾸러미가 끼면 멈춤)."""
+    found = {}
+    for info in sorted(lib.glob("*.dist-info")):
+        name = info.name.split("-")[0].lower().replace("_", "-")
+        if name not in ALLOWED_LICENSES:
+            raise SystemExit(f"허락 목록에 없는 꾸러미가 들어갔습니다: {info.name} — 라이선스를 확인하고 ALLOWED_LICENSES 에 더하세요")
+        meta = (info / "METADATA").read_text(encoding="utf-8", errors="replace")
+        lic = next((l.split(":", 1)[1].strip() for l in meta.splitlines()
+                    if l.startswith(("License-Expression:", "License:"))), "") or "(분류 표기)"
+        has_file = any(p.name.upper().startswith(("LICENSE", "LICENCE", "COPYING")) for p in info.rglob("*"))
+        if not has_file:
+            raise SystemExit(f"{info.name} 에 라이선스 파일이 없습니다")
+        found[name] = lic
+        log(f"라이선스 확인: {info.name} — {lic[:80]} (허락: {ALLOWED_LICENSES[name]})")
+    missing = {"pypdf", "cryptography", "cffi"} - set(found)
+    if missing:
+        raise SystemExit(f"꾸러미가 빠졌습니다: {sorted(missing)}")
+    return found
+
+
 def patch_pth(pydir):
     """embeddable Python 은 ._pth 파일에 적힌 곳에서만 모듈을 찾음 → 업무 데스크 폴더와 lib 를 추가."""
     pths = list(pydir.glob("python3*._pth"))
@@ -108,6 +138,7 @@ def build(out, embed_zip=None):
     subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--no-compile", "--only-binary=:all:",
                     "--platform", "win_amd64", "--python-version", "3.12", "--implementation", "cp",
                     "--target", str(stage / "teacher-desk" / "lib"), CRYPTOGRAPHY], check=True)
+    check_licenses(stage / "teacher-desk" / "lib")
 
     (stage / "START-HERE.txt").write_text(
         START_HERE.format(python=PYTHON_VERSION, pypdf=PYPDF.split("==")[1]).replace("\n", "\r\n"),

@@ -1494,3 +1494,6 @@ label.check.share-row > span { display: flex; flex-direction: column; }
 .cloud-mode.error { color: var(--danger); }
 .cloud-choice { border-left: 3px solid var(--warn); padding: 6px 0 6px 12px; margin: 8px 0; }
 .cloud-key { font-family: ui-monospace, Consolas, monospace; font-size: 1.35em; font-weight: 800; letter-spacing: .06em; user-select: all; margin: 8px 0 4px; }
+.cloud-owner { margin: 8px 0 12px; }
+.cloud-owner ol { padding-left: 1.4em; }
+.cloud-owner li { margin-bottom: 4px; }
