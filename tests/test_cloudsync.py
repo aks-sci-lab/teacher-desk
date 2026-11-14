@@ -32,6 +32,14 @@ class CryptTests(unittest.TestCase):
         with self.assertRaises(cloudcrypt.CryptError):
             cloudcrypt.check_passphrase("짧음")
 
+    def test_header_scrypt_values_are_fixed(self):   # 총괄 검토: 바뀐 머리로 메모리를 크게 쓰게 하거나 hashlib 오류로 멈추지 않게
+        blob = bytearray(cloudcrypt.encrypt(b"SQLite format 3\x00 x", KEY))
+        for i, v in ((5, 30), (5, 9), (6, 200), (7, 0)):
+            bad = bytearray(blob)
+            bad[i] = v
+            with self.assertRaisesRegex(cloudcrypt.CryptError, "형식"):
+                cloudcrypt.decrypt(bytes(bad), KEY)
+
     def test_recovery_key_shape(self):
         k = cloudcrypt.new_recovery_key()
         self.assertRegex(k, r"^([A-Z2-9]{5}-){4}[A-Z2-9]{5}$")
@@ -208,6 +216,30 @@ class SyncTests(unittest.TestCase):
         b, sb = self.pc("집")
         self.assertEqual(sb.startup(), "error")
         self.assertIn("업데이트", sb.status()["message"])
+
+    def test_unexpected_error_never_leaves_starting(self):   # 쓰기가 막힌 '확인 중'에 갇히지 않게
+        a, sa = self.pc("학교")
+        sa._refresh = lambda: (_ for _ in ()).throw(RuntimeError("뜻밖의 오류"))
+        self.assertEqual(sa.startup(), "error")
+        self.assertFalse(cloudsync.paused())
+
+    def test_bad_header_on_drive_is_error_not_stuck(self):
+        a, sa = self.pc("학교")
+        sa.startup()
+        sa.shutdown()
+        blob = bytearray(self.fake.by_name(cloudsync.DATA))
+        blob[5] = 30
+        for f in self.fake.files.values():
+            if f["name"] == cloudsync.DATA:
+                f["data"] = bytes(blob)
+        st = json.loads(self.fake.by_name(cloudsync.STATE))
+        import hashlib
+        st.update(rev=9, sha256=hashlib.sha256(bytes(blob)).hexdigest())
+        sa._write_json(cloudsync.STATE, st)
+        b, sb = self.pc("집")
+        self.assertEqual(sb.startup(), "error")
+        self.assertIn("형식", sb.status()["message"])
+        self.assertFalse(cloudsync.paused())
 
     def test_off_when_not_ready(self):
         a, sa = self.pc("학교")

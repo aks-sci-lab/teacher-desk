@@ -231,7 +231,10 @@ def make_handler(app):
             if not secrets.compare_digest(self.headers.get("X-Desk-Capture-Key", "").encode("utf-8"), key.encode("utf-8")):
                 raise ApiError(401, "연결 키가 맞지 않습니다 (설정에서 키를 다시 복사하세요)")
             if path == "/capture/ping" and method == "GET":
-                return self.send_json(200, {"ok": True, "version": VERSION})
+                return self.send_json(200, {"ok": True, "version": VERSION, "read_only": cloudsync.paused()})
+            if method == "POST" and cloudsync.paused():   # 다른 PC 가 쓰는 중(드라이브 읽기 전용, 0.5.96): 받아도 버려지므로 받지 않음
+                raise ApiError(423, "업무 데스크가 다른 PC 에서 사용 중이라 이 PC 는 받지 않았습니다. "
+                                    "지금 쓰는 PC 에서 보내거나, 이 PC 의 ⚙ 설정 → 드라이브에서 [이 PC 에서 쓰기]를 누르세요")
             if path == "/capture" and method == "POST":
                 return self.send_json(200, capture_mod.receive(app, self.read_json()))
             try:

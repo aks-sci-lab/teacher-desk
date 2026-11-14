@@ -329,6 +329,8 @@ class Sync:
                     self._set_mode("error", f"{e} — 이 PC 에서 계속 쓰고 나중에 다시 시도합니다")
             except cloudcrypt.CryptError as e:
                 self._set_mode("error", str(e))
+            except Exception as e:   # 예상 못 한 오류에도 '확인 중'(쓰기 막힘)에 갇히지 않게 — 이 PC 에서 계속 씀
+                self._set_mode("error", f"동기화 오류({type(e).__name__}) — 이 PC 에서 계속 쓰고 나중에 다시 시도합니다")
             return self.mode
 
     def _view_latest(self):
@@ -341,13 +343,20 @@ class Sync:
             except (gdrive.DriveError, cloudcrypt.CryptError) as e:
                 self.message += f" · 최신 자료를 받지 못함: {e}"
 
+    def _connect_safe(self):
+        try:
+            self.connect()
+        finally:
+            if self.mode == "starting":   # 어떤 경우에도 켜는 중에 갇히지 않게
+                self._set_mode("error", "드라이브 확인을 마치지 못했습니다 — 이 PC 에서 계속 쓰고 나중에 다시 시도합니다")
+
     def startup(self, timeout=25):
         """desk.py 가 앱이 자료를 쓰기 전에 부름. 늦어지면 기다리지 않고 켬(뒤에서 이어 함)."""
         if self.ready():
             self._set_mode("off", self.ready())
             return self.mode
         self._set_mode("starting", "드라이브에서 최신 자료를 확인하는 중…")
-        t = threading.Thread(target=self.connect, name="cloud-start", daemon=True)
+        t = threading.Thread(target=self._connect_safe, name="cloud-start", daemon=True)
         t.start()
         t.join(timeout)
         return self.mode

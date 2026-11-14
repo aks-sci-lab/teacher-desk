@@ -62,13 +62,18 @@ def check_passphrase(passphrase):
 
 
 def _key(passphrase, salt, log_n, r, p):
+    # 파일 머리의 scrypt 변수는 이 형식(1)에서 정한 값만 받음 — 바뀐 파일이 메모리·시간을 크게 쓰게 하거나
+    # hashlib 오류로 동기화가 멈추지 않게 (총괄 검토 2026-11-14)
+    if (log_n, r, p) != (LOG_N, R, P):
+        raise CryptError("암호 파일 형식이 잘못되었습니다 (손상되었거나 다른 프로그램이 만든 파일)")
     p_norm = normalize(passphrase)
     tag = (hashlib.sha256(p_norm.encode("utf-8")).digest(), salt, log_n, r, p)
     if tag not in _cache:
-        if not (10 <= log_n <= 20 and 1 <= r <= 16 and 1 <= p <= 4):
-            raise CryptError("암호 파일 형식이 잘못되었습니다")
-        _cache[tag] = hashlib.scrypt(p_norm.encode("utf-8"), salt=salt, n=1 << log_n, r=r, p=p,
-                                     maxmem=256 * 1024 * 1024, dklen=32)
+        try:
+            _cache[tag] = hashlib.scrypt(p_norm.encode("utf-8"), salt=salt, n=1 << log_n, r=r, p=p,
+                                         maxmem=256 * 1024 * 1024, dklen=32)
+        except (ValueError, MemoryError) as e:
+            raise CryptError(f"암호 키를 만들지 못했습니다 ({type(e).__name__})")
         if len(_cache) > 8:
             _cache.pop(next(iter(_cache)))
     return _cache[tag]

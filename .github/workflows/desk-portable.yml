@@ -58,6 +58,10 @@ jobs:
         working-directory: check/TeacherDesk/teacher-desk
         run: python\python.exe -X utf8 -m unittest discover -s tests -t . -v
 
+      - name: 들어 있는 Python 으로 드라이브 암호화 한 번 (cryptography 불러오기·암호화·풀기)
+        working-directory: check/TeacherDesk/teacher-desk
+        run: python\python.exe -X utf8 -c "import cryptography; from desk import cloudcrypt as c; k = c.new_recovery_key(); assert c.available(); b = c.encrypt(b'SQLite format 3 test', k); assert c.decrypt(b, k) == b'SQLite format 3 test'; print('cryptography', cryptography.__version__, 'AES-256-GCM OK')"
+
       - name: start-desk.bat 이 들어 있는 Python 을 찾는지 확인
         working-directory: check/TeacherDesk/teacher-desk
         shell: cmd
