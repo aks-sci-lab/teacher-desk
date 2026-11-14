@@ -1497,3 +1497,8 @@ label.check.share-row > span { display: flex; flex-direction: column; }
 .cloud-owner { margin: 8px 0 12px; }
 .cloud-owner ol { padding-left: 1.4em; }
 .cloud-owner li { margin-bottom: 4px; }
+
+/* ---------- 앱 기반: 드라이브 백업·되살리기 (0.5.97) ---------- */
+.cloud-backups { list-style: none; padding: 0; margin: 8px 0; }
+.cloud-backups li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.cloud-backups li .btn { margin-left: auto; }

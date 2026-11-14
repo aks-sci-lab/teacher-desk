@@ -20,13 +20,14 @@
 
 import hashlib
 import json
+import re
 import os
 import socket
 import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from . import VERSION, cloudcrypt, gdrive
 
@@ -37,6 +38,9 @@ RETRY = 5 * 60            # 인터넷 오류 뒤 다시 시도
 STALE = 20 * 60           # 이만큼 신호가 없으면 꺼진 PC 로 봄
 IDLE = 30 * 60            # 이만큼 선생님이 안 썼으면 켜 두고 자리를 뜬 PC 로 봄
 LOCAL_KEEP = 5            # 바꾸기 전 이 PC 자료 보관 개수
+# 드라이브 백업 (0.5.97): 날짜마다 그날 마지막 자료 하나. 최근 14일은 날마다, 그보다 오래된 것은 달마다 하나(최근 12달)
+BACKUP_RE = re.compile(r"^backup-(\d{4}-\d{2}-\d{2})(?:-([a-z]+))?\.enc$")
+KEEP_DAYS, KEEP_MONTHS = 14, 12
 TABLES = ("students", "passes", "absences", "items", "events", "todos", "class_counsel", "class_data")
 
 _paused = threading.Event()   # 읽기 전용·충돌 중: 화면 저장·수집·텔레그램 등이 멈춤
@@ -215,8 +219,99 @@ class Sync:
         for p in old[:-LOCAL_KEEP]:
             p.unlink()
 
+    # ---- 드라이브 백업 (0.5.97) ----
+    def _backup_previous(self):
+        """올리기 전: 드라이브의 지금 자료가 다른 날 것이면 그날 백업으로 복사(그날의 마지막 모습)."""
+        f, r = self.files.get(DATA), self.remote or {}
+        day = (r.get("at") or "")[:10]
+        if not f or not re.match(r"^\d{4}-\d{2}-\d{2}$", day) or day == date.today().isoformat():
+            return
+        name = f"backup-{day}.enc"
+        if name not in self.files:
+            self._copy(f["id"], name)
+            self.prune_backups()
+
+    def _copy(self, file_id, name):
+        res = self.drive.copy(file_id, name)
+        if isinstance(res, dict) and res.get("id"):
+            self.files[name] = {"id": res["id"], "name": name}
+
+    def backups(self):
+        """[{name, date, kind, size}] 새것부터 (드라이브에서 새로 읽음)."""
+        self.files = self.drive.files()
+        return sorted(self.backups_cached(), key=lambda b: (b["date"], b["kind"]), reverse=True)
+
+    def prune_backups(self, today=None):
+        """최근 14일은 모두, 그보다 오래된 것은 달마다 가장 늦은 것 하나(최근 12달), 나머지는 지움."""
+        today = today or date.today()
+        keep_from = (today - timedelta(days=KEEP_DAYS - 1)).isoformat()
+        oldest_month = (today.replace(day=1) - timedelta(days=31 * (KEEP_MONTHS - 1))).strftime("%Y-%m")
+        months, removed = set(), []
+        for b in sorted(self.backups_cached(), key=lambda b: (b["date"], b["kind"]), reverse=True):
+            if b["date"] >= keep_from:
+                continue
+            month = b["date"][:7]
+            if month >= oldest_month and month not in months:
+                months.add(month)
+                continue
+            self.drive.delete(self.files[b["name"]]["id"])
+            self.files.pop(b["name"], None)
+            removed.append(b["name"])
+        return removed
+
+    def backups_cached(self):
+        out = []
+        for name, f in self.files.items():
+            m = BACKUP_RE.match(name)
+            if m:
+                out.append({"name": name, "date": m.group(1), "kind": m.group(2) or "", "size": int(f.get("size") or 0)})
+        return out
+
+    def backup_now(self):
+        """[지금 백업]: 드라이브의 지금 자료(올린 뒤)를 오늘 날짜 백업으로 (오늘 것은 바꿈)."""
+        with self.lock:
+            if self.mode != "ok":
+                raise gdrive.DriveError("이 PC 에서 이어 쓰는 중일 때만 백업할 수 있습니다")
+            self.sync_now()
+            if self.mode != "ok":
+                raise gdrive.DriveError(self.message or "드라이브에 올리지 못했습니다")
+            name = f"backup-{date.today().isoformat()}.enc"
+            old = self.files.pop(name, None)
+            if old:
+                self.drive.delete(old["id"])
+            self._copy(self.files[DATA]["id"], name)
+            self.prune_backups()
+            return name
+
+    def restore(self, name):
+        """고른 백업으로 되살림: 이 PC 자료를 바꾸고(바꾸기 전 것은 이 PC 와 드라이브에 보관) 새 판으로 올림."""
+        with self.lock:
+            if self.mode != "ok":
+                raise gdrive.DriveError("이 PC 에서 이어 쓰는 중일 때만 되살릴 수 있습니다 (읽기 전용이면 먼저 [이 PC 에서 쓰기])")
+            if not BACKUP_RE.match(name or ""):
+                raise gdrive.DriveError("백업 이름이 잘못되었습니다")
+            lock = self._refresh()
+            if not self._mine(lock):
+                return self.connect()
+            f = self.files.get(name)
+            if not f:
+                raise gdrive.DriveError("그 백업을 드라이브에서 찾지 못했습니다")
+            data = cloudcrypt.decrypt(self.drive.read(f["id"]), self.config["gdrive_passphrase"])
+            # 되살리기 전 지금 드라이브 자료도 남김 (되돌릴 수 있게)
+            cur = self.files.get(DATA)
+            if cur:
+                keep = f"backup-{date.today().isoformat()}-restore.enc"
+                if keep in self.files:
+                    self.drive.delete(self.files.pop(keep)["id"])
+                self._copy(cur["id"], keep)
+            self._replace(data, "before-restore")
+            self.upload()
+            self._write_lock()
+            return self.mode
+
     def upload(self):
         """이 PC 자료를 새 판으로 올림 (잠금이 내 것일 때만 부름)."""
+        self._backup_previous()
         data, changes = self._snapshot()
         blob = cloudcrypt.encrypt(data, self.config["gdrive_passphrase"])
         rev = max(int((self.remote or {}).get("rev") or 0), int(self.state.get("base_rev") or 0)) + 1

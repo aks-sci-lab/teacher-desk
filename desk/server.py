@@ -2071,9 +2071,10 @@ def cloud_get(app, q, body):
 
 @api("POST", "/api/cloud")
 def cloud_action(app, q, body):
-    """login · logout · newkey · key · sync · takeover · resolve(choice=drive|local)."""
+    """login · logout · newkey · key · sync · takeover · resolve(choice=drive|local) · backups · backup · restore(name)."""
     action = body.get("action")
-    need(action in ("login", "logout", "newkey", "key", "sync", "takeover", "resolve"), "동작이 잘못되었습니다")
+    need(action in ("login", "logout", "newkey", "key", "sync", "takeover", "resolve", "backups", "backup", "restore"),
+         "동작이 잘못되었습니다")
     c = app.cloud
     try:
         if action == "login":
@@ -2096,6 +2097,16 @@ def cloud_action(app, q, body):
         elif action == "takeover":
             c.take_over()
             app.db.log("드라이브: 이 PC 에서 쓰기로 가져옴")
+        elif action == "backups":
+            need(c.mode in ("ok", "readonly"), "드라이브에 연결된 뒤에 백업 목록을 볼 수 있습니다")
+            return {**c.status(), "backups": c.backups()}
+        elif action == "backup":
+            name = c.backup_now()
+            app.db.log(f"드라이브: 지금 백업 ({name[7:17]})")
+        elif action == "restore":
+            name = text_field(body.get("name"), "백업", 80, True)
+            c.restore(name)
+            app.db.log(f"드라이브: 백업 {name[7:17]} 으로 되살림")
         elif action == "resolve":
             need(body.get("choice") in ("drive", "local"), "고를 것이 잘못되었습니다")
             c.resolve(body["choice"])
