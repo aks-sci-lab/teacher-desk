@@ -2360,6 +2360,11 @@ class Bot:
                 self.status = "토큰 없음"
                 self.stop_event.wait(10)
                 continue
+            from .cloudsync import paused
+            if paused():   # 다른 PC 가 쓰는 중(드라이브 읽기 전용, 0.5.96): 그 PC 의 봇이 답함 (같은 봇 둘이면 Conflict)
+                self.status = "다른 PC 에서 사용 중 (이 PC 는 쉼)"
+                self.stop_event.wait(10)
+                continue
             if self.token != last_token:  # 설정에서 토큰을 바꾼 경우
                 offset, menu_set, last_token = self.saved_offset(self.token), False, self.token
             try:

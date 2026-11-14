@@ -95,9 +95,11 @@ class LessonBell:
         return sent
 
     def loop(self):
+        from .cloudsync import paused
         while not self.stop_event.is_set():
             try:
-                self.tick()
+                if not paused():   # 다른 PC 가 쓰는 중이면 그 PC 가 알림 (두 번 오지 않게, 0.5.96)
+                    self.tick()
             except Exception as e:  # 알림이 멈추지 않게 기록만
                 self.db.log(f"수업 알림 오류: {type(e).__name__}: {e}", "warn")
             self.stop_event.wait(self.interval)

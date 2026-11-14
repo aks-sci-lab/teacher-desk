@@ -14,6 +14,7 @@ import {
     coolConnect, folderCheck, telegramStatus, aiCheck, TELEGRAM_STEPS,
 } from './setfields.js';
 import { setupAction } from '../setup-rules.js';
+import { cloudBox, cloudLine } from './cloud.js';
 import { openShareImport, shareStatus } from './share.js';
 
 const has = v => !!(v && String(v).trim());
@@ -95,6 +96,12 @@ export const STEPS = [
             item('', aiCheck()),
             checkField('ai_enabled', 'AI 요약 쓰기', 'LM Studio 서버가 켜져 있어야 합니다. 위 [LM Studio 연결 확인]으로 먼저 확인하세요.'),
         ],
+    },
+    {
+        id: 'cloud', title: '여러 PC·백업', optional: true, desc: '학교·집 PC 에서 이어 쓰려면 선생님 본인 구글 드라이브에 암호화해 올립니다. 한 PC 만 쓰면 건너뛰세요.',
+        done: s => !!s.gdrive_enabled && !!store.state?.cloud?.logged_in && !!store.state?.cloud?.key_set,
+        summary: () => cloudLine(store.state?.cloud),
+        build: () => [cloudBox({ compact: true })],
     },
 ];
 

@@ -21,6 +21,8 @@ from pathlib import Path
 PYTHON_VERSION = "3.12.10"
 EMBED_URL = f"https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip"
 PYPDF = "pypdf==6.17.0"
+# 드라이브 이어 쓰기 암호화(AES-256-GCM, desk/cloudcrypt.py, 0.5.96). 윈도우용 미리 만든 꾸러미만 받음 (cffi·pycparser 함께)
+CRYPTOGRAPHY = "cryptography==50.0.1"
 
 DESK = Path(__file__).resolve().parents[1]   # 저장소 맨 위 = 업무 데스크
 TOP = "TeacherDesk"  # ZIP 안 맨 위 폴더 (윈도우 압축 풀기에서 이름이 깨지지 않게 영문)
@@ -102,6 +104,10 @@ def build(out, embed_zip=None):
     log(f"PDF 읽기 도구 넣기: {PYPDF}")
     subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", "--no-compile",
                     "--target", str(stage / "teacher-desk" / "lib"), PYPDF], check=True)
+    log(f"암호화 도구 넣기: {CRYPTOGRAPHY}")
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--no-compile", "--only-binary=:all:",
+                    "--platform", "win_amd64", "--python-version", "3.12", "--implementation", "cp",
+                    "--target", str(stage / "teacher-desk" / "lib"), CRYPTOGRAPHY], check=True)
 
     (stage / "START-HERE.txt").write_text(
         START_HERE.format(python=PYTHON_VERSION, pypdf=PYPDF.split("==")[1]).replace("\n", "\r\n"),

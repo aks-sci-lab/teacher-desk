@@ -1484,3 +1484,13 @@ label.check.share-row > span { display: flex; flex-direction: column; }
 .draft-badge { margin-right: 4px; color: var(--danger); border-color: var(--danger); }
 .draft-note { color: var(--danger); }
 .attendance-sections button { white-space: nowrap; padding-left: 4px; padding-right: 4px; font-size: .92rem; }
+
+/* ---------- 앱 기반: 드라이브 여러 PC 이어 쓰기 (0.5.96) ---------- */
+.cloud-box h4 { margin: 14px 0 6px; font-size: 1em; }
+.cloud-status { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; margin: 6px 0 4px; background: var(--surface-2); }
+.cloud-status p { margin: 0 0 6px; }
+.cloud-mode.ok { color: var(--ok); }
+.cloud-mode.readonly, .cloud-mode.conflict { color: var(--warn); }
+.cloud-mode.error { color: var(--danger); }
+.cloud-choice { border-left: 3px solid var(--warn); padding: 6px 0 6px 12px; margin: 8px 0; }
+.cloud-key { font-family: ui-monospace, Consolas, monospace; font-size: 1.35em; font-weight: 800; letter-spacing: .06em; user-select: all; margin: 8px 0 4px; }

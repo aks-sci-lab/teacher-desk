@@ -104,6 +104,17 @@ def run(args, config, db):
         return 0
 
     app = App(db, config, collector, bot)
+    # 여러 PC 이어 쓰기 (0.5.96, 켠 경우만): 앱이 자료를 쓰기 전에 드라이브의 최신 자료를 받음. 늦으면 뒤에서 이어 함
+    cloud = app.cloud
+    if not cloud.ready():
+        print("드라이브에서 최신 자료를 확인하는 중…")
+        cloud.on_mode = lambda mode, msg: print(f"드라이브: {mode} {msg}")
+        mode = cloud.startup()
+        if mode == "readonly":
+            print(f"다른 PC 가 쓰는 중이라 이 PC 는 읽기 전용입니다: {cloud.message}")
+        elif mode == "conflict":
+            print("드라이브 자료와 이 PC 자료가 둘 다 바뀌었습니다. 화면의 설정 → 드라이브에서 고르세요.")
+    cloud.on_mode = lambda mode, msg: db.log(f"드라이브: {mode} {msg}".strip())
     visits.app_started(db)   # 꺼져 있던 동안은 쓰지 않았음 → 브리핑 '마지막으로 닫은 이후' 기준
     bot.read_image = lambda src: read_item_image(app, src)   # 새 쿨메신저 사진을 텔레그램으로 보낼 때
     try:
@@ -127,6 +138,7 @@ def run(args, config, db):
     bell = LessonBell(db, config, bot)   # 수업 시작 알림 (시간표의 교시 시간)
     bell.start()
     app.gcal.start()   # 선생님 구글 캘린더 가져오기·올리기 (설정에서 켠 경우만 실제로 보냄)
+    cloud.start()      # 드라이브: 5분마다 잠금 표시·10분마다 바뀐 것 올림 (켠 경우만)
     db.log("업무 데스크 시작")
     try:
         httpd.serve_forever()
@@ -142,6 +154,7 @@ def run(args, config, db):
         app.update_checker.stop()
         httpd.server_close()
         db.log("업무 데스크 종료")
+        cloud.shutdown()   # 마지막 기록까지 올리고 잠금을 풂 (켠 경우만, 못 올리면 다음에 켤 때 올림)
     return 0
 
 

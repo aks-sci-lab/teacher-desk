@@ -394,6 +394,9 @@ class Collector:
         self.last_watch_errors = set()
 
     def run(self, reason="manual", slot_keys=()):
+        from .cloudsync import paused
+        if paused():   # 다른 PC 가 쓰는 중(드라이브 읽기 전용, 0.5.96): 이 PC 에서는 수집하지 않음
+            return {"busy": True, "paused": True}
         if not self.lock.acquire(blocking=False):
             return {"busy": True}
         try:
