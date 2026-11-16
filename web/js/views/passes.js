@@ -1,5 +1,6 @@
 // 🎫 조퇴증·외출증: 명단 → 작성 → 미리보기 → 인쇄 → 기록 → 학생 공유(QR)
 import { api } from '../api.js';
+import { icon } from '../icons.js';
 import { el, clear, toast, guarded, todayIso, addDays, dayLabel, longDate, nowHm, pad, monthNav, monthKey, dayHead, download } from '../ui.js';
 import { refreshSide, emit, on, showView, openPopup, popupOpen } from '../shell.js';
 import { openSettings } from './settings.js';
@@ -115,8 +116,8 @@ export async function setPassesMonth(key) {
 
 export function renderPassesSide(body, actions) {
     actions.append(
-        el('button.icon-btn', { title: '학생 명단', onclick: openRoster }, '👥'),
-        el('button.icon-btn', { title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }) }, '⟳'));
+        el('button.icon-btn', { title: '학생 명단', onclick: openRoster }, icon('users')),
+        el('button.icon-btn', { title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }) }, icon('refresh')));
     const pick = guarded(async iso => { sideDate = iso; await loadDay(); refreshSide(); });
     const alive = dayPasses.filter(p => p.status !== 'cancelled');
     const early = alive.filter(p => p.kind === 'early').length, out = alive.filter(p => p.kind === 'out').length;

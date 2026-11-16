@@ -225,7 +225,7 @@ function renderItem(pane, tab, it) {
     const actions = el('div.item-actions',
         !pinned && el('button.btn', { title: '이 항목을 고정된 탭으로 남겨 둡니다', onclick: () => {
             if (pinTab(tab.id, `item-${it.id}`) === tab) tab.rerender();
-        } }, '📌 고정'),
+        } }, icon('pin'), '고정'),
         it.registered
             ? el('button.btn.ok', { onclick: () => patch({ registered: false }), title: '누르면 이 메시지의 일정을 달력·브리핑에서 뺍니다' }, icon('check'), '달력에 넣음')
             : el('button.btn.primary', { onclick: () => patch({ registered: true }), title: '이 메시지의 일정을 달력·브리핑에 넣습니다' }, icon('calendar'), '일정 등록'),
