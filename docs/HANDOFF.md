@@ -2,12 +2,15 @@
 
 이 문서는 **지금 상태와 아직 확인되지 않은 일**만 적습니다. 기능의 설계 이유는 `docs/DESIGN.md`, 버전별 한 줄 이력은 `docs/CHANGELOG.md`, 작업 규칙은 `AGENTS.md`에 있습니다. 작업을 이어받으면 이 문서와 `AGENTS.md`를 먼저 읽으세요.
 
-마지막 갱신: 2026-11-14 (한국 시간), 버전 0.5.96 (main d2c13a8, desk-latest 0.5.96).
+마지막 갱신: 2026-11-16 (한국 시간), 버전 0.5.97 (main 13655cc, desk-latest 0.5.97).
 
 ## 1. 지금 상태
 - **총괄 세션 분리(사용자 결정 2026-11-14)**: 새 총괄은 teacher-desk 저장소만 다룸 (`session_013iu8SRcPRoZEFP5T2e3dQj`). 실험실(`arduino_experiments`) 일은 실험실 총괄 `session_013iu8SMBd39Z4qL8GR7KB9V` 로 넘김. 예전 총괄 `session_01222v2UthQ7LuoFEAoNRaSS` 은 더 쓰지 않음.
-- 최신 배포 **0.5.96**(#110 구글 드라이브 동기화·잠금). 열린 PR: **#69**(챗봇 공개자료 예외 문서, 보류 — 머지·닫기 금지).
-- 진행 중: 앱 기반 세션이 **백업·되살리기(0.5.97)** PR 준비 중 → 오면 머지 전용 검토 → 선생님 승인.
+- 최신 배포 **0.5.97**(#112 드라이브 백업·되살리기, 그 앞 #110 드라이브 동기화·잠금 0.5.96, #111 이 문서 갱신).
+- 열린 PR:
+  - **#113** 0.5.98 자동 AI 요약은 내 수업 시간에만 (AI 영역) — 최신 main 위, 충돌 없음, 체크(tests·windows-zip) 통과. **머지 준비됨**, 선생님 승인 대기.
+  - **#69** 챗봇 공개자료 예외 문서 — 보류(머지·닫기 금지). 지금 main 과 `AGENTS.md`·`CHANGELOG.md` 가 충돌함. 챗봇을 다시 시작할 때 main 을 합치고 `AGENTS.md` 텔레그램·예외 문단이 바뀐 것에 맞춰 다시 써야 함.
+- 머지 순서: #113 과 이 문서 갱신 PR(`docs/HANDOFF.md` 만 고침)은 파일이 겹치지 않아 순서 상관없음. #113 머지 뒤 이 문서의 '최신 배포' 줄을 0.5.98 로 고침.
 - **Claude 로만 작업(사용자 결정 2026-11-10)**: GitHub Copilot 과 협업하지 않음.
 - 세션(모두 teacher-desk): 총괄 `session_013iu8SRcPRoZEFP5T2e3dQj` · 머지 전용 `session_013iu8SQSgyxvFwys114DoMo` · 앱 기반·설정·배포(드라이브 동기화) `session_013iu8SRLPW9CqVop4s2DmTV`(Opus) · 텔레그램 `session_013iu8SN5ef478DjVNvFXKCF`(Opus) · 출결·증 발급(출석부) `session_013iu8SMUJtKt9zaGJaQKt7N`(Opus) · 학급 경영 `session_013iu8SMJHtJHQ4HZfM2TbLT`(Opus) · 일정(구글 캘린더) `session_013iu8SLwMnssjyDCgW4BE6h`(Opus) · 시간표(같이 비는 시간) `session_013iu8SQzCZMDdkwcfY1byB1`(Sonnet) · AI `session_013iu8SNJybLYaUdQAoUf6C6`(Opus) · UI·사용성 `session_013iu8SNYXR3Mi72oQ2J7C8K` · 수신함 `session_013iu8SQmpg9tz4WfCma8PUV` · 브라우저 확장(나이스 채우기 보류) `session_013iu8SQavqEuSxnwc7FNKUA`.
 - 선생님이 할 일(안내함):
