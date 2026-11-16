@@ -13,7 +13,7 @@ class FakeDrive:
         self.sessions = {}       # 올리기 주소 → (file id 또는 None, 이름)
         self.codes = {}          # 로그인 code → code_verifier 확인용
         self.revoked = []
-        self.fail = None         # None · "500" · "auth"
+        self.fail = None         # None · "500" · "auth" · "disabled"(Drive API 꺼짐)
         self.calls = []
         self.lock = threading.Lock()
         fake = self
@@ -61,6 +61,9 @@ class FakeDrive:
                     return self._send(200, {})
                 if fake.fail == "500":
                     return self._send(503, {"error": "busy"})
+                if fake.fail == "disabled":
+                    return self._send(403, {"error": {"code": 403, "status": "PERMISSION_DENIED",
+                                                      "errors": [{"reason": "accessNotConfigured"}]}})
                 if not self._authed():
                     return self._send(401, {"error": "unauthorized"})
                 with fake.lock:
