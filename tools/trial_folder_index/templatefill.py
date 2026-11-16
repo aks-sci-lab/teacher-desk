@@ -1,24 +1,22 @@
 """시험용: 선생님의 기존 양식(.hwpx / .docx)을 틀로 두고 글자만 채우기 (표준 라이브러리만).
 
-양식의 글꼴·문단 모양·표·머리말(header.xml, styles.xml 등)은 바이트 그대로 두고, 본문 XML 안의 글자만 바꾼다.
+0.2 (선생님 지적 2026-11-16 "형식은 같은데 색과 모양이 달라"): 예전에는 본문 XML 을 통째로 읽었다가 다시 써서
+XML 머리줄(standalone)·쓰지 않는 이름공간 선언·빈 태그 모양이 원본과 달라졌음. 이제는 원본 바이트를 그대로 두고
+**채우는 칸의 문단 부분만** 잘라 바꾼다. 그래서 채운 칸 밖은 한 바이트도 바뀌지 않는다.
+
 채우는 자리는 두 가지:
-  1) 표의 이름 칸 옆 빈칸: '일 시' | (빈칸)  → 빈칸에 내용
-  2) 자리표시 글자: {{작성자}} → 내용
+  1) 표의 이름 칸 옆 빈칸: '일 시' | (빈칸)  → 빈칸에 내용 (빈칸 첫 문단의 글자 모양·문단 모양을 그대로 씀)
+  2) 자리표시 글자: {{작성자}} → 내용 (그 문단의 첫 글자 모양으로)
 """
 
-import copy
-import io
 import re
 import zipfile
-import xml.etree.ElementTree as ET
+import xml.parsers.expat
+from xml.sax.saxutils import escape
 
-HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
-W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 KINDS = {
-    ".hwpx": {"parts": re.compile(r"Contents/section\d+\.xml$"), "ns": HP,
-              "tbl": "tbl", "tr": "tr", "tc": "tc", "p": "p", "run": "run", "t": "t"},
-    ".docx": {"parts": re.compile(r"word/(document|header\d*|footer\d*)\.xml$"), "ns": W,
-              "tbl": "tbl", "tr": "tr", "tc": "tc", "p": "p", "run": "r", "t": "t"},
+    ".hwpx": {"parts": re.compile(r"Contents/section\d+\.xml$"), "run": "run", "seg": "linesegarray"},
+    ".docx": {"parts": re.compile(r"word/(document|header\d*|footer\d*)\.xml$"), "run": "r", "seg": None},
 }
 PLACEHOLDER = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 MAX_LABEL = 12   # 이름 칸으로 볼 최대 글자 수
@@ -28,13 +26,64 @@ def label_key(text):
     return re.sub(r"[\s:：·()（）\[\]]", "", text or "")
 
 
-def _register(data):
-    """원래 접두어(hp:, w: …)를 그대로 쓰게 등록 (ET 가 ns0: 로 바꾸지 않게)."""
-    for _, (prefix, uri) in ET.iterparse(io.BytesIO(data), events=("start-ns",)):
-        try:
-            ET.register_namespace(prefix, uri)
-        except ValueError:
-            pass
+class Node:
+    __slots__ = ("tag", "qname", "attrs", "children", "parent", "s", "se", "es", "e", "text")
+
+    def __init__(self, qname, attrs, parent, s):
+        self.qname, self.tag = qname, qname.rsplit(":", 1)[-1]
+        self.attrs, self.parent, self.children, self.s = attrs, parent, [], s
+        self.se = self.es = self.e = None
+        self.text = []
+
+    def iter(self, tag):
+        if self.tag == tag:
+            yield self
+        for c in self.children:
+            yield from c.iter(tag)
+
+
+def _tag_end(data, i):
+    """i 에서 시작하는 태그가 끝나는 '>' 다음 위치 (따옴표 안의 '>' 는 건너뜀)."""
+    q = None
+    while True:
+        ch = data[i]
+        if q:
+            if ch == q:
+                q = None
+        elif ch in (34, 39):
+            q = ch
+        elif ch == 62:
+            return i + 1
+        i += 1
+
+
+def parse(data):
+    """expat 으로 읽으며 요소마다 원본 바이트 위치를 기억."""
+    p = xml.parsers.expat.ParserCreate()   # 이름공간 처리 없이 접두어 그대로 (hp:t, w:t)
+    root = Node("#doc", {}, None, 0)
+    stack = [root]
+
+    def start(name, attrs):
+        s = p.CurrentByteIndex
+        n = Node(name, attrs, stack[-1], s)
+        n.se = _tag_end(data, s)
+        stack[-1].children.append(n)
+        stack.append(n)
+
+    def end(name):
+        n = stack.pop()
+        i = p.CurrentByteIndex
+        if data[n.se - 2] == 47:            # <a ... />
+            n.es = n.e = n.se
+        else:
+            n.es, n.e = i, _tag_end(data, i)
+
+    def chars(t):
+        stack[-1].text.append(t)
+
+    p.StartElementHandler, p.EndElementHandler, p.CharacterDataHandler = start, end, chars
+    p.Parse(data, True)
+    return root
 
 
 class Form:
@@ -45,130 +94,146 @@ class Form:
             raise ValueError("hwpx 나 docx 양식만 됩니다")
         self.k = KINDS[self.ext]
         self.zip = zipfile.ZipFile(self.path)
-        self.trees = {}
+        self.parts = {}   # 이름 → [원본 바이트, 뿌리, 바꿀 곳 목록]
         for info in self.zip.infolist():
             if self.k["parts"].search(info.filename):
                 data = self.zip.read(info.filename)
-                _register(data)
-                self.trees[info.filename] = ET.ElementTree(ET.fromstring(data))
-
-    def q(self, name):
-        return f"{{{self.k['ns']}}}{self.k[name]}"
+                self.parts[info.filename] = [data, parse(data), []]
 
     # ---- 글자 읽기 ----
-    def _texts(self, el):
-        return [t for t in el.iter(self.q("t"))]
-
-    def cell_text(self, tc):
-        return "\n".join("".join(t.text or "" for t in self._texts(p)) for p in self._cell_paras(tc)).strip()
+    @staticmethod
+    def para_text(p):
+        return "".join("".join(t.text) for t in p.iter("t"))
 
     def _cell_paras(self, tc):
-        # 표 안의 표는 따로 다루므로, 이 칸에 바로 속한 문단만 (hwpx 는 subList 아래)
-        out = []
-        for child in tc.iter(self.q("p")):
-            out.append(child)
-        nested = {id(p) for t in tc.iter(self.q("tbl")) for p in t.iter(self.q("p"))}
-        return [p for p in out if id(p) not in nested]
+        nested = {id(x) for t in tc.iter("tbl") for x in t.iter("p")}
+        return [x for x in tc.iter("p") if id(x) not in nested]
 
-    def rows(self):
-        for tree in self.trees.values():
-            for tbl in tree.getroot().iter(self.q("tbl")):
-                for tr in tbl.findall(self.q("tr")):
-                    yield tr.findall(self.q("tc"))
+    def cell_text(self, tc):
+        return "\n".join(self.para_text(p) for p in self._cell_paras(tc)).strip()
+
+    def rows(self, part=None):
+        for name, (_, root, _) in self.parts.items():
+            if part and name != part:
+                continue
+            for tbl in root.iter("tbl"):
+                for tr in (c for c in tbl.children if c.tag == "tr"):
+                    yield name, [c for c in tr.children if c.tag == "tc"]
 
     def fields(self):
         """채울 자리 목록: 이름 칸(옆 칸이 비어 있음)과 {{자리표시}}."""
         out, seen = [], set()
-        for cells in self.rows():
+        for _, cells in self.rows():
             for a, b in zip(cells, cells[1:]):
                 name = self.cell_text(a)
                 if 0 < len(label_key(name)) <= MAX_LABEL and not self.cell_text(b) and label_key(name) not in seen:
                     seen.add(label_key(name))
                     out.append(name.strip())
-        for tree in self.trees.values():
-            for p in tree.getroot().iter(self.q("p")):
-                for m in PLACEHOLDER.finditer("".join(t.text or "" for t in self._texts(p))):
+        for _, root, _ in self.parts.values():
+            for p in root.iter("p"):
+                for m in PLACEHOLDER.finditer(self.para_text(p)):
                     if label_key(m.group(1)) not in seen:
                         seen.add(label_key(m.group(1)))
                         out.append(m.group(1))
         return out
 
-    # ---- 글자 쓰기 ----
-    def _set_para(self, p, text):
-        ts = self._texts(p)
-        if not ts:   # 빈 문단: 첫 글자 묶음(run) 안에, 없으면 새로
-            run = p.find(self.q("run"))
-            if run is None:
-                run = ET.SubElement(p, self.q("run"))
-                if self.ext == ".hwpx":
-                    run.set("charPrIDRef", "0")
-            ts = [ET.SubElement(run, self.q("t"))]
-        ts[0].text = text
-        if self.ext == ".docx":
-            ts[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        for t in ts[1:]:
-            t.text = ""
-            for c in list(t):   # 글자 사이의 탭 등
-                t.remove(c)
-        if self.ext == ".hwpx":   # 줄 배치 기억(linesegarray)은 한글이 다시 계산하도록 뺌
-            for seg in p.findall(f"{{{HP}}}linesegarray"):
-                p.remove(seg)
+    # ---- 글자 쓰기: 원본 문단 바이트를 틀로 새 문단 바이트를 만듦 ----
+    def _para_bytes(self, data, p, text):
+        """문단 p 의 원본 바이트에서 글자만 text 로 (첫 <t> 에 넣고 나머지 <t> 는 비움). 줄 배치 기억은 뺌."""
+        chunk = bytearray()
+        pos = p.s
+        ts = list(p.iter("t"))
+        segs = [n for n in p.iter(self.k["seg"])] if self.k["seg"] else []
+        cuts = []   # (시작, 끝, 새 바이트)
+        enc = escape(text).encode("utf-8")
+        if ts:
+            first = ts[0]
+            open_tag = data[first.s:first.se]
+            if self.ext == ".docx" and b"xml:space" not in open_tag:
+                open_tag = open_tag[:-1] + b' xml:space="preserve">'
+            if first.se == first.e:   # <t/> → <t>글</t>
+                open_tag = open_tag[:-2].rstrip() + b">"
+            close = b"</" + first.qname.encode() + b">"
+            cuts.append((first.s, first.e, open_tag + enc + close))
+            for t in ts[1:]:
+                cuts.append((t.s, t.e, b""))
+        else:   # 빈 문단: 첫 글자 묶음 안에 <t> 를 넣음, 묶음도 없으면 새로
+            runs = [c for c in p.children if c.tag == self.k["run"]]
+            pre = "hp" if self.ext == ".hwpx" else "w"
+            t_bytes = f"<{pre}:t>".encode() + enc + f"</{pre}:t>".encode() if self.ext == ".hwpx" else \
+                f'<w:t xml:space="preserve">'.encode() + enc + b"</w:t>"
+            if runs:
+                r = runs[0]
+                if r.se == r.e:   # <hp:run .../> → 열고 닫는 모양으로
+                    open_r = data[r.s:r.se][:-2].rstrip() + b">"
+                    cuts.append((r.s, r.e, open_r + t_bytes + b"</" + r.qname.encode() + b">"))
+                else:
+                    cuts.append((r.es, r.es, t_bytes))
+            else:
+                at = p.es if p.es != p.e else None
+                run = (b'<hp:run charPrIDRef="0">' + t_bytes + b"</hp:run>") if self.ext == ".hwpx" else \
+                    (b"<w:r>" + t_bytes + b"</w:r>")
+                if at is None:   # <w:p/> 같은 빈 태그
+                    cuts.append((p.s, p.e, data[p.s:p.se][:-2].rstrip() + b">" + run + b"</" + p.qname.encode() + b">"))
+                else:
+                    cuts.append((at, at, run))
+        for sg in segs:
+            cuts.append((sg.s, sg.e, b""))
+        for s, e, new in sorted(cuts):
+            chunk += data[pos:s] + new
+            pos = e
+        chunk += data[pos:p.e]
+        return bytes(chunk)
 
-    def _set_cell(self, tc, value):
-        lines = [l for l in str(value).splitlines()] or [""]
+    def _fill_cell(self, part, tc, value):
+        data, _, edits = self.parts[part]
         paras = self._cell_paras(tc)
         first = paras[0]
-        parent = _parent(tc, first)
-        for p in paras[1:]:
-            _parent(tc, p).remove(p)
-        self._set_para(first, lines[0])
-        at = list(parent).index(first)
-        for i, line in enumerate(lines[1:], 1):
-            np = copy.deepcopy(first)   # 첫 문단 모양(글꼴·문단 번호)을 그대로 복사
-            if self.ext == ".hwpx":
-                np.set("id", "2147483648")
-            self._set_para(np, line)
-            parent.insert(at + i, np)
+        lines = str(value).splitlines() or [""]
+        new = b""
+        for i, line in enumerate(lines):
+            b = self._para_bytes(data, first, line)
+            if i and self.ext == ".hwpx":   # 늘린 문단은 한글이 새 문단에 쓰는 번호로
+                b = re.sub(rb'^(<hp:p\b[^>]*?\bid=")[^"]*"', rb'\g<1>2147483648"', b, count=1)
+            new += b
+        edits.append((first.s, paras[-1].e, new))
 
     def fill(self, values):
         """values: {칸 이름: 내용}. 채운 칸 이름 목록을 돌려줌."""
         want = {label_key(k): v for k, v in values.items() if v not in (None, "")}
         done = []
-        for cells in self.rows():
+        for part, cells in self.rows():
             for a, b in zip(cells, cells[1:]):
                 key = label_key(self.cell_text(a))
                 if key in want and not self.cell_text(b):
-                    self._set_cell(b, want[key])
+                    self._fill_cell(part, b, want[key])
                     done.append(key)
-        for tree in self.trees.values():
-            for p in tree.getroot().iter(self.q("p")):
-                joined = "".join(t.text or "" for t in self._texts(p))
+        for part, (data, root, edits) in self.parts.items():
+            for p in root.iter("p"):
+                joined = self.para_text(p)
                 if "{{" not in joined:
+                    continue
+                if any(p.s >= s and p.e <= e for s, e, _ in edits):   # 이미 표 칸으로 채운 문단
                     continue
                 new = PLACEHOLDER.sub(lambda m: str(want.get(label_key(m.group(1)), m.group(0))), joined)
                 if new != joined:
-                    self._set_para(p, new)
+                    edits.append((p.s, p.e, self._para_bytes(data, p, new)))
                     done += [label_key(m.group(1)) for m in PLACEHOLDER.finditer(joined)
                              if label_key(m.group(1)) in want]
         return done
 
     def save(self, out):
-        """본문 XML 만 바꿔 쓰고, 나머지 파일은 원래 순서·압축 방식·바이트 그대로."""
+        """바꿀 곳만 잘라 바꾸고, 나머지 파일은 원래 순서·압축 방식·바이트 그대로."""
         with zipfile.ZipFile(out, "w") as z:
             for info in self.zip.infolist():
-                if info.filename in self.trees:
-                    data = ET.tostring(self.trees[info.filename].getroot(), encoding="UTF-8", xml_declaration=True)
-                else:
-                    data = self.zip.read(info.filename)
+                data = self.zip.read(info.filename)
+                if info.filename in self.parts and self.parts[info.filename][2]:
+                    buf, pos = bytearray(), 0
+                    for s, e, new in sorted(self.parts[info.filename][2]):
+                        buf += data[pos:s] + new
+                        pos = e
+                    data = bytes(buf + data[pos:])
                 z.writestr(info, data, compress_type=info.compress_type)
-
-
-def _parent(root, el):
-    for p in root.iter():
-        for c in p:
-            if c is el:
-                return p
-    raise ValueError("부모를 찾을 수 없음")
 
 
 FILL_INSTRUCTION = """[양식 채우기] 오늘은 {today}이다. 교사가 할 작업: "{task}"
