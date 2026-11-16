@@ -317,9 +317,17 @@ function aiSummaryBox(it, tab) {
         await api.post(`/api/items/${it.id}/ai-summary`, { force });
         tab.rerender();
     });
+    const stop = guarded(async () => {   // 0.5.99 긴 자료 요약 멈추기 (다음 조각 전에 멈춤)
+        await api.post(`/api/items/${it.id}/ai-summary/cancel`, {});
+        tab.rerender();
+    });
     if (a.running) {
         again();
-        return el('div.ai-item-sum', el('span.spin'), ' AI 가 이 항목을 요약하는 중… (이 PC 에서 돌아 20~30초, 길면 몇 분 걸립니다. 다른 화면을 써도 됩니다)');
+        const p = a.progress;
+        return el('div.ai-item-sum', el('span.spin'),
+            p ? ` 긴 자료라 나눠서 요약하는 중… ${p.done < p.total ? `${p.done + 1}/${p.total} 조각` : '조각 요약을 모으는 중'} (조각마다 20~30초, 다른 화면을 써도 됩니다) `
+                : ' AI 가 이 항목을 요약하는 중… (이 PC 에서 돌아 20~30초, 길면 몇 분 걸립니다. 다른 화면을 써도 됩니다) ',
+            el('button.btn.small', { onclick: stop }, '요약 멈추기'));
     }
     if (a.queued) {
         again();

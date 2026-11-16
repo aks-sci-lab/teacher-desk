@@ -440,7 +440,134 @@ ITEM_INSTRUCTION = """아래 자료 한 건을 이 형식으로만 요약해 줘
 
 자료:
 """
-ITEM_CHARS = 3500
+
+# ---- 긴 파일 나눠 요약 (0.5.99, 선생님 요청 2026-11-14)
+# 파일에서 꺼낸 글이 길면 문단·제목 번호 앞에서 3~4천 자씩 나눠 조각마다 짧게 요약하고, 조각 요약을 모아 한 번 더 요약.
+# 4B 모델·문맥 8192~16384 토큰을 가정. 설정 '보내는 양'(ai_input_size)이 '짧게'면 더 작게 나눔.
+# (한 번에 보낼 최대 글자, 조각 크기)
+LONG_SIZES = {"normal": (6000, 3500), "short": (4000, 2500)}
+MAX_CHUNKS = 12            # 이보다 많으면 앞 조각까지만 (200쪽짜리 PDF 로 PC 가 한 시간 넘게 바쁘지 않게)
+CHUNK_PAUSE = 3            # 조각 사이에 쉬는 초 (PC 가 버벅이지 않게, 취소도 이때 확인)
+CHUNK_SYSTEM = ("너는 한국 중·고등학교 담임 교사의 업무 비서다. 긴 공문의 한 부분을 읽고 교사에게 필요한 것만 "
+                "한국어로 짧게 적는다. 자료에 없는 내용은 지어내지 않고, 날짜·숫자는 원문 그대로 쓴다.")
+CHUNK_INSTRUCTION = """아래는 긴 자료를 {n}조각으로 나눈 것 중 {i}번째 조각이다. 이 조각에서 교사가 알아야 할 것만
+'- ' 로 시작하는 줄 3~6개로 적어 줘 (해야 할 일·날짜·시간·장소·대상·제출 방법 위주, 앞뒤 인사말 없이). 없으면 '- 없음'.
+
+조각:
+"""
+MERGE_INSTRUCTION = """아래는 긴 자료 한 건을 {n}조각으로 나눠 조각마다 요약한 것이다. 이것을 모아 자료 전체의 요약을
+이 형식으로만 써 줘 (앞뒤 인사말 없이, 없는 칸은 줄 자체를 빼기, 겹치는 내용은 한 번만).
+
+한 줄 요약: (40자 안쪽)
+- 해야 할 일: 
+- 날짜·시간·장소: 
+- 대상·제출 방법: 
+
+조각 요약:
+"""
+# 제목·번호로 시작하는 줄 (이 앞에서 자르는 것이 가장 자연스러움): 1. / 가. / (1) / ① / Ⅰ. / □ ○ ◦ ■ ● ◎ ※ 등
+P_HEADING = re.compile(r"^\s*(?:\d{1,2}\s*[.)]\s|[가-하]\s*[.)]\s|\(\s*(?:\d{1,2}|[가-하])\s*\)|[①-⑳]|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]\s*\.|[□■○◦●◎◇◆▶▷※])")
+P_SENTENCE_END = re.compile(r"(?:다\.|요\.|음\.|함\.|[.?!。])(?=\s|$)")
+
+
+class Cancelled(Exception):
+    """선생님이 [요약 멈추기]를 누름."""
+
+
+def long_sizes(config):
+    return LONG_SIZES.get(config["ai_input_size"], LONG_SIZES["normal"])
+
+
+def _cut_long(piece, size):
+    """한 문단이 조각보다 길면 문장 끝에서 자름 (문장 끝이 없으면 줄바꿈·빈칸, 그래도 없으면 그 자리)."""
+    out = []
+    while len(piece) > size:
+        window = piece[:size]
+        cut = 0
+        for m in P_SENTENCE_END.finditer(window):
+            if m.end() >= size // 2:
+                cut = m.end()
+        if not cut:
+            cut = max(window.rfind("\n"), window.rfind(" "))
+            cut = cut + 1 if cut >= size // 2 else size
+        out.append(piece[:cut].strip())
+        piece = piece[cut:].strip()
+    if piece:
+        out.append(piece)
+    return out
+
+
+def split_chunks(text, size):
+    """긴 글을 size 자 안쪽 조각들로. 빈 줄(문단·PDF 쪽 경계)과 제목·번호 줄 앞에서 자르고, 문장 중간은 피함."""
+    text = re.sub(r"[ \t]+", " ", text or "").strip()
+    blocks, cur = [], []
+    for line in text.split("\n"):
+        if not line.strip() or P_HEADING.match(line):
+            if cur:
+                blocks.append("\n".join(cur).strip())
+                cur = []
+        if line.strip():
+            cur.append(line.strip())
+    if cur:
+        blocks.append("\n".join(cur).strip())
+    pieces = []
+    for b in blocks:
+        pieces += _cut_long(b, size) if len(b) > size else [b]
+    chunks, cur = [], ""
+    for p in pieces:
+        heading = bool(P_HEADING.match(p))
+        if cur and (len(cur) + 1 + len(p) > size or (heading and len(cur) >= size * 0.6)):
+            chunks.append(cur)
+            cur = p
+        else:
+            cur = f"{cur}\n{p}" if cur else p
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def rule_dates(db, item_id, limit=8):
+    """규칙으로 찾은 날짜·마감 (AI 가 놓치는 것 대비, 최종 요약 밑에 따로 붙임)."""
+    rows = db.query("SELECT date, end_date, time, kind, text FROM events WHERE item_id = ? AND source IS NULL "
+                    "ORDER BY date, time LIMIT ?", (item_id, limit))
+    out = []
+    for r in rows:
+        d = date.fromisoformat(r["date"])
+        when = f"{d.month}/{d.day}({WEEKDAYS[d.weekday()]})"
+        if r["end_date"] and r["end_date"] != r["date"]:
+            e = date.fromisoformat(r["end_date"])
+            when += f"~{e.month}/{e.day}({WEEKDAYS[e.weekday()]})"
+        if r["time"]:
+            when += f" {r['time']}"
+        out.append(f"- {when} {'마감' if r['kind'] == 'deadline' else '일정'}: {(r['text'] or '').strip()[:60]}")
+    return out
+
+
+def long_summary(base, model, it, names, size, progress=None, cancelled=None, pause=None, db=None):
+    """긴 글: 조각마다 요약 → 모아서 한 번 더. progress(done, total) 로 진행을 알리고, cancelled() 가 True 면 멈춤."""
+    chunks = split_chunks(it["body"], size)
+    total = len(chunks)
+    used = chunks[:MAX_CHUNKS]
+    head = f"[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}"
+    parts = []
+    for i, chunk in enumerate(used, 1):
+        if cancelled and cancelled():
+            raise Cancelled()
+        if progress:
+            progress(i - 1, len(used))
+        prompt = mask_names(CHUNK_INSTRUCTION.format(n=len(used), i=i) + f"{head}\n{chunk}", names)
+        parts.append(mask_names(ask(base, model, prompt, TIMEOUT, system=CHUNK_SYSTEM, max_tokens=350, db=db), names).strip())
+        if pause:
+            pause()
+    if cancelled and cancelled():
+        raise Cancelled()
+    if progress:
+        progress(len(used), len(used))
+    joined = "\n\n".join(f"[{i}조각]\n{p}" for i, p in enumerate(parts, 1))
+    prompt = mask_names(MERGE_INSTRUCTION.format(n=len(used)) + f"{head}\n\n{joined}", names)
+    text = mask_names(ask(base, model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500, db=db), names).strip()
+    note = f"(긴 자료 {total}조각으로 나눠 요약" + (f", 앞 {len(used)}조각까지만" if total > len(used) else "") + ")"
+    return text, note
 
 
 def body_hash(body):
@@ -453,7 +580,7 @@ def item_ai(db, it, job=None):
     st = job.status(it["id"]) if job else {}
     return {"text": it.get("ai_summary") or "", "at": it.get("ai_summary_at"), "model": it.get("ai_summary_model"),
             "stale": bool(it.get("ai_summary")) and not fresh, "running": bool(st.get("running")),
-            "queued": st.get("queued", 0), "error": st.get("error")}
+            "queued": st.get("queued", 0), "error": st.get("error"), "progress": st.get("progress")}
 
 
 def summary_line(text):
@@ -509,13 +636,30 @@ class ItemJob:
         self.paused_until = 0
         self.stop_event = threading.Event()
         self.auto_thread = None
+        self.progress = None       # 긴 자료를 나눠 요약하는 중이면 (항목, 끝낸 조각, 전체 조각)
+        self.cancel_id = None      # [요약 멈추기]를 누른 항목
 
     # ---- 상태
     def status(self, item_id):
         with self.lock:
+            prog = self.progress if self.progress and self.progress[0] == item_id else None
             return {"running": self.current == item_id,
                     "queued": self.queue.index(item_id) + 1 if item_id in self.queue else 0,
-                    "error": self.errors.get(item_id)}
+                    "error": self.errors.get(item_id),
+                    "progress": {"done": prog[1], "total": prog[2]} if prog else None}
+
+    def cancel(self, item_id):
+        """만드는 중이면 다음 조각 전에 멈추고, 줄 서 있으면 뺌. 자동 요약이 곧바로 다시 하지 않게 한동안 쉼."""
+        with self.lock:
+            was = self.current == item_id or item_id in self.queue
+            if item_id in self.queue:
+                self.queue.remove(item_id)
+            self.forced.discard(item_id)
+            if self.current == item_id:
+                self.cancel_id = item_id
+            self.failed[item_id] = self.clock()
+            self.errors.pop(item_id, None)
+            return was
 
     def summary(self):
         with self.lock:
@@ -654,6 +798,8 @@ class ItemJob:
             return
         try:
             self._summarize(it)
+        except Cancelled:
+            pass   # 선생님이 멈춤: 저장하지 않고 오류도 남기지 않음
         except AIError as e:
             msg = str(e)
             if not forced and msg.startswith(NOT_READY):   # LM Studio 가 꺼져 있음: 오류를 쌓지 않고 쉬었다가 다시
@@ -668,14 +814,34 @@ class ItemJob:
             self.errors[item_id] = f"요약 중 오류: {type(e).__name__}"
             self.failed[item_id] = self.clock()
             self.db.log(f"항목 AI 요약 오류: {type(e).__name__}: {e}", "error")
+        finally:
+            with self.lock:
+                self.progress = None
+                if self.cancel_id == item_id:
+                    self.cancel_id = None
 
     def _summarize(self, it):
         check_local(self.config["ai_base"])
         model = pick_model(self.config)
         names = [s["name"] for s in self.db.students()]
-        body = re.sub(r"[ \t]+", " ", it["body"]).strip()[:ITEM_CHARS]
-        prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}", names)
-        text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500, db=self.db), names)
+        whole = re.sub(r"[ \t]+", " ", it["body"]).strip()
+        one_go, size = long_sizes(self.config)
+        if len(whole) > one_go:   # 긴 자료: 조각마다 요약한 뒤 모아서 한 번 더 (규칙으로 찾은 날짜를 밑에 붙임)
+            def progress(done, total):
+                with self.lock:
+                    self.progress = (it["id"], done, total)
+
+            text, note = long_summary(
+                self.config["ai_base"], model, it, names, size, progress=progress,
+                cancelled=lambda: self.cancel_id == it["id"] or self.stop_event.is_set(),
+                pause=lambda: self.stop_event.wait(CHUNK_PAUSE), db=self.db)
+            dates = rule_dates(self.db, it["id"])
+            text = text + "\n" + note + ("\n\n규칙으로 찾은 날짜·마감 (AI 아님, 원문 확인):\n" + "\n".join(dates) if dates else "")
+            text = mask_names(text, names)
+        else:
+            body = whole[:one_go]
+            prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}", names)
+            text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500, db=self.db), names)
         self.db.execute("UPDATE items SET ai_summary = ?, ai_summary_hash = ?, ai_summary_at = ?, ai_summary_model = ? "
                         "WHERE id = ?", (text, body_hash(it["body"]), datetime.now().strftime("%Y-%m-%d %H:%M"), model, it["id"]))
 

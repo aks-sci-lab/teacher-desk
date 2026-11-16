@@ -219,7 +219,8 @@ def pdf_text(path):
         reader = PdfReader(str(path))
         if reader.is_encrypted:
             raise DocError("암호가 걸린 PDF 입니다")
-        return "\n".join((page.extract_text() or "") for page in reader.pages[:200])
+        # 쪽 사이는 빈 줄 (긴 자료를 나눠 AI 요약할 때 쪽 경계도 자르는 자리 후보가 되게, ai.split_chunks)
+        return "\n\n".join((page.extract_text() or "") for page in reader.pages[:200])
     except DocError:
         raise
     except Exception as e:  # pypdf 내부 오류는 종류가 많아 한 번에 처리

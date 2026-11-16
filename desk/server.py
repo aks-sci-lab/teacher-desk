@@ -1027,6 +1027,12 @@ def item_ai_summary(app, q, body, item_id):
     return {"started": started}
 
 
+@api("POST", r"/api/items/(\d+)/ai-summary/cancel")
+def item_ai_cancel(app, q, body, item_id):
+    """이 항목의 AI 요약 멈추기 (긴 자료는 다음 조각 전에 멈춤, 만든 것은 저장하지 않음)."""
+    return {"cancelled": app.item_ai.cancel(int(item_id))}
+
+
 def _item_file(app, it):
     return item_file(app.config, it.get("file_path"))
 
