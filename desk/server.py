@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, aiclass, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, aiclass, folderdoc, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -160,6 +160,8 @@ class App:
                                   gate=lambda: aiclass.allowed(db, config))
         self.gcal = gcal.Sync(db, config)   # 선생님 구글 캘린더와 일정 공유 (desk.py 가 뒤에서 켬)
         self.cloud = cloudsync.Sync(db, config)   # 여러 PC 이어 쓰기·구글 드라이브 (desk.py 가 켤 때 받고 끌 때 올림)
+        # 0.6.0 문서 작성: 폴더 색인·문서 만들기는 선생님이 눌렀을 때만 뒤에서 하나씩
+        self.folderdoc = folderdoc.Job(db, config, Path(config.data_dir) / "documents")
 
 
 def make_handler(app):
@@ -1936,6 +1938,7 @@ PICK_PURPOSES = {
              lambda: str(coolmsg.memo_dir())),
     "coolfolder": ("folder", "쿨메신저 받은 파일 폴더 고르기", "", lambda: ""),
     "edufine": ("folder", "에듀파인 공문 저장 폴더 고르기", "", lambda: ""),
+    "folderdoc": ("folder", "문서 작성에 쓸 업무 폴더 고르기", "", lambda: ""),
 }
 
 
@@ -1948,6 +1951,127 @@ def post_pick(app, q, body):
         return {"path": picker.pick(kind, title, initial(), filt)}
     except picker.PickerError as e:
         raise ApiError(400, str(e))
+
+
+
+# ---- 문서 작성: 폴더 색인 → 관련 파일 찾기 → 문서·서식 채우기 (0.6.0) ----
+FORM_META = "folderdoc_form"
+
+
+def _folderdoc_dir(app):
+    return Path(app.config.data_dir) / "documents"
+
+
+def _form_file(app):
+    meta = app.db.get_meta(FORM_META)
+    if not meta:
+        return None, None
+    p = _folderdoc_dir(app) / "forms" / ("current" + Path(meta["name"]).suffix.lower())
+    return (meta, p) if p.is_file() else (None, None)
+
+
+@api("GET", "/api/folderdoc")
+def get_folderdoc(app, q, body):
+    meta, _ = _form_file(app)
+    return {"folder": app.config["folderdoc_folder"], "ai_enabled": bool(app.config["ai_enabled"]),
+            "index": folderdoc.counts(app.db), "job": app.folderdoc.status(), "form": meta,
+            "outputs": folderdoc.list_outputs(_folderdoc_dir(app))}
+
+
+@api("POST", "/api/folderdoc/index")
+def post_folderdoc_index(app, q, body):
+    """[색인 만들기]를 눌렀을 때만 (자동으로 돌지 않음)."""
+    try:
+        app.folderdoc.start_index(with_ai=bool(body.get("ai")))
+    except (folderdoc.FolderDocError, ai.AIError) as e:
+        raise ApiError(400, str(e))
+    return {"ok": True}
+
+
+@api("POST", "/api/folderdoc/stop")
+def post_folderdoc_stop(app, q, body):
+    app.folderdoc.stop()
+    return {"ok": True}
+
+
+@api("GET", "/api/folderdoc/search")
+def get_folderdoc_search(app, q, body):
+    task = text_field(q.get("q"), "작업 내용", 300)
+    return {"files": folderdoc.search(app.db, task, limit=10)}
+
+
+@api("POST", "/api/folderdoc/form")
+def post_folderdoc_form(app, q, body):
+    """서식 파일 올리기 (base64). 채울 칸과 미리보기 그림이 있는지 돌려줌."""
+    from . import formfill
+    name = text_field(body.get("name"), "파일 이름", 200, required=True)
+    try:
+        data = base64.b64decode(body.get("data") or "", validate=True)
+    except (binascii.Error, ValueError):
+        raise ApiError(400, "서식 파일을 읽을 수 없습니다")
+    try:
+        form = formfill.Form(name, data)
+        fields = form.fields()
+    except formfill.FormError as e:
+        raise ApiError(400, str(e))
+    d = _folderdoc_dir(app) / "forms"
+    d.mkdir(parents=True, exist_ok=True)
+    for old in d.glob("current.*"):
+        old.unlink()
+    (d / ("current" + form.ext)).write_bytes(data)
+    meta = {"name": Path(name).name, "kind": form.kind, "fields": fields, "preview": bool(form.preview_png())}
+    app.db.set_meta(FORM_META, meta)
+    return meta
+
+
+@api("DELETE", "/api/folderdoc/form")
+def delete_folderdoc_form(app, q, body):
+    for old in (_folderdoc_dir(app) / "forms").glob("current.*"):
+        old.unlink()
+    app.db.set_meta(FORM_META, None)
+    return {"ok": True}
+
+
+@api("GET", "/api/folderdoc/form/preview")
+def get_folderdoc_form_preview(app, q, body):
+    from . import formfill
+    meta, p = _form_file(app)
+    need(meta, "올린 서식이 없습니다", 404)
+    png = formfill.Form(meta["name"], p.read_bytes()).preview_png()
+    need(png, "이 서식에는 미리보기 그림이 없습니다", 404)
+    return (200, png, "image/png", {"Cache-Control": "no-store"})
+
+
+@api("POST", "/api/folderdoc/draft")
+def post_folderdoc_draft(app, q, body):
+    task = text_field(body.get("task"), "작업 내용", 300, required=True)
+    paths = body.get("files") or []
+    need(isinstance(paths, list) and all(isinstance(x, str) for x in paths) and 0 < len(paths) <= 8,
+         "참고할 파일을 1~8개 고르세요")
+    form = None
+    if body.get("use_form"):
+        meta, p = _form_file(app)
+        need(meta, "올린 서식이 없습니다")
+        form = (meta["name"], p.read_bytes())
+    fmt = body.get("format") if body.get("format") in ("docx", "hwpx") else "docx"
+    try:
+        app.folderdoc.start_draft(task, paths, form, fmt)
+    except (folderdoc.FolderDocError, ai.AIError) as e:
+        raise ApiError(400, str(e))
+    return {"ok": True}
+
+
+@api("GET", "/api/folderdoc/output")
+def get_folderdoc_output(app, q, body):
+    try:
+        p = folderdoc.output_path(_folderdoc_dir(app), q.get("name", ""))
+    except folderdoc.FolderDocError as e:
+        raise ApiError(404, str(e))
+    ctype = {".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+             ".hwpx": "application/hwp+zip", ".hwp": "application/x-hwp"}[p.suffix.lower()]
+    from urllib.parse import quote
+    return (200, p.read_bytes(), ctype, {"Cache-Control": "no-store",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(p.name)}"})
 
 
 @api("POST", "/api/telegram")
