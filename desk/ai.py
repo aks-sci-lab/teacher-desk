@@ -442,6 +442,60 @@ ITEM_INSTRUCTION = """아래 자료 한 건을 이 형식으로만 요약해 줘
 """
 ITEM_CHARS = 3500
 
+# 0.5.99 긴 자료(첨부 hwp·pdf 를 읽은 긴 공문 등)는 나눠서 요약한 뒤 합침 (예전에는 앞 3,500자만 읽었음).
+# - 한 조각은 LM Studio 의 기억 길이(기본 4,096토큰)에 지시문·답과 함께 들어가는 크기.
+#   한국어는 글자당 대략 1토큰이라 3,500자 + 지시문 + 답(500토큰)이 4,096토큰 안쪽.
+# - 설정의 '보내는 양'을 '짧게'로 하면 조각을 2,000자로 줄여 PC 메모리(8845HS 24GB, 내장 그래픽이 같이 씀)를 덜 씀.
+# - 조각 수는 최대 CHUNK_MAX 개 (한 조각 20~30초라 한 건이 몇 분 안에 끝나게). 그 뒤는 읽지 않았다고 요약 끝에 적음.
+CHUNK_CHARS = {"normal": ITEM_CHARS, "short": 2000}
+CHUNK_MAX = 8
+CHUNK_NOTE_TOKENS = 400    # 조각 하나의 메모 답 길이
+MERGE_ROUNDS = 3           # 메모가 한 번에 안 들어가면 메모끼리 다시 줄이는 최대 횟수
+CHUNK_INSTRUCTION = """아래는 긴 자료 한 건을 {n}조각으로 나눈 것 중 {i}번째 조각이다. 이 조각에 있는 내용만
+짧은 줄(- 로 시작)로 정리해 줘 (앞뒤 인사말 없이). 해야 할 일, 날짜·시간·장소, 대상·제출 방법, 꼭 알아 둘 내용만.
+날짜·숫자는 원문 그대로 쓰고, 해당하는 내용이 없으면 '- 없음' 한 줄만.
+
+자료 제목: {title}
+조각:
+"""
+MERGE_INSTRUCTION = """아래는 긴 자료 한 건을 나눠 읽고 적은 메모들이다. 같은 내용은 합치고 날짜·숫자는 그대로 두어
+짧은 줄(- 로 시작)로 다시 정리해 줘 (앞뒤 인사말 없이).
+
+자료 제목: {title}
+메모:
+"""
+FINAL_HEAD = "자료가 길어 {n}조각으로 나눠 읽은 메모를 대신 보낸다. 자료 제목: {title}\n"
+
+
+def chunk_size(config):
+    """설정의 '보내는 양'에 맞는 한 조각 글자 수."""
+    return CHUNK_CHARS.get(config.get("ai_input_size"), ITEM_CHARS)
+
+
+def split_chunks(text, size):
+    """글을 size 글자 이하 조각으로: 빈 줄(문단) → 줄 → 문장 끝 → 띄어쓰기 순으로 끊을 곳을 찾음."""
+    text = (text or "").strip()
+    if size <= 0 or len(text) <= size:
+        return [text] if text else []
+    out = []
+    while len(text) > size:
+        window = text[:size + 1]
+        cut = -1
+        for pat in (r"\n\s*\n", r"\n", r"[.!?。](?=\s)", r"\s"):
+            ends = [m.end() for m in re.finditer(pat, window) if m.end() >= size // 2]
+            if ends:
+                cut = ends[-1]
+                break
+        if cut <= 0:
+            cut = size
+        part = text[:cut].strip()
+        if part:
+            out.append(part)
+        text = text[cut:].strip()
+    if text:
+        out.append(text)
+    return out
+
 
 def body_hash(body):
     return hashlib.sha256(" ".join((body or "").split()).encode("utf-8")).hexdigest()
@@ -453,7 +507,7 @@ def item_ai(db, it, job=None):
     st = job.status(it["id"]) if job else {}
     return {"text": it.get("ai_summary") or "", "at": it.get("ai_summary_at"), "model": it.get("ai_summary_model"),
             "stale": bool(it.get("ai_summary")) and not fresh, "running": bool(st.get("running")),
-            "queued": st.get("queued", 0), "error": st.get("error")}
+            "queued": st.get("queued", 0), "error": st.get("error"), "part": st.get("part")}
 
 
 def summary_line(text):
@@ -488,11 +542,15 @@ class ItemJob:
     - 눌렀거나 연 항목(start)은 맨 앞으로, 새로 들어온 항목(scan)은 자동으로 최신 순으로 줄을 섬.
     - 한 번에 한 건만 (브리핑 요약이 도는 중이면 그것이 끝날 때까지 기다림). 원문이 안 바뀌었으면 다시 만들지 않음.
     - LM Studio 가 꺼져 있으면 자동 요약은 조용히 쉬었다가 5분 뒤 다시 (눌러서 시킨 것만 오류를 보여 줌).
+    - 0.5.98: 자동 요약은 gate() 가 True 일 때(내 수업 시간, aiclass.allowed)만. 아닐 때 생긴 것은 DB 에 그대로
+      남아 있다가 다음 수업 교시에 찾아 요약. 수업이 끝나면 새 자동 요약은 시작하지 않음(만들던 1건은 마침).
+      눌러서 시킨 것은 언제든 바로.
     """
 
-    def __init__(self, db, config, busy=None, clock=time.monotonic):
+    def __init__(self, db, config, busy=None, clock=time.monotonic, gate=None):
         self.db, self.config = db, config
         self.busy = busy or (lambda: False)
+        self.gate = gate or (lambda: True)
         self.clock = clock
         self.lock = threading.Lock()
         self.queue = []            # 앞이 먼저
@@ -501,6 +559,7 @@ class ItemJob:
         self.thread = None
         self.worker_alive = False
         self.errors = {}
+        self.parts = {}            # 나눠 요약하는 중인 항목의 [끝낸 조각, 모든 조각]
         self.failed = {}           # 자동 요약이 실패한 때 (한동안 다시 시키지 않음)
         self.paused_until = 0
         self.stop_event = threading.Event()
@@ -511,7 +570,16 @@ class ItemJob:
         with self.lock:
             return {"running": self.current == item_id,
                     "queued": self.queue.index(item_id) + 1 if item_id in self.queue else 0,
-                    "error": self.errors.get(item_id)}
+                    "error": self.errors.get(item_id),
+                    "part": self.parts.get(item_id) if self.current == item_id else None}
+
+    def _set_part(self, item_id, done, total):
+        """긴 자료를 나눠 요약하는 중: (끝낸 조각, 모든 조각) — 화면에 'n/m 조각' 으로 보임."""
+        with self.lock:
+            if total:
+                self.parts[item_id] = [done, total]
+            else:
+                self.parts.pop(item_id, None)
 
     def summary(self):
         with self.lock:
@@ -543,6 +611,9 @@ class ItemJob:
         """새로 들어온(또는 원문이 바뀐) 항목을 찾아 줄 세움. 새로 줄 선 건수."""
         enabled = bool(self.config["ai_enabled"] and self.config["ai_auto_item"])
         now = self.clock()
+        if enabled and not self.gate():   # 수업 시간이 아님: 줄 세우지 않음 (다음 수업 교시에 다시 찾음)
+            self._drop_auto()
+            return 0
         if not enabled or now < self.paused_until:
             if not enabled:
                 with self.lock:
@@ -596,6 +667,22 @@ class ItemJob:
             except Exception as e:   # 뒤에서 도는 일이 조용히 죽지 않게
                 self.db.log(f"항목 AI 요약 찾기 오류: {type(e).__name__}: {e}", "error")
 
+    def pending(self):
+        """자동 요약을 기다리는 항목 수 (수업 시간이 아니라 모아 둔 것 포함, 최대 300)."""
+        if not (self.config["ai_enabled"] and self.config["ai_auto_item"]):
+            return 0
+        since = (date.today() - timedelta(days=AUTO_DAYS)).isoformat()
+        marks = ",".join("?" * len(AUTO_SOURCES))
+        rows = self.db.query(
+            f"SELECT body, ai_summary, ai_summary_hash FROM items WHERE source IN ({marks}) "
+            "AND status IN ('new', 'read') AND received_at >= ? LIMIT 300", (*AUTO_SOURCES, since))
+        return sum(1 for r in rows if len((r["body"] or "").strip()) >= AUTO_MIN_CHARS
+                   and not (r["ai_summary"] and r["ai_summary_hash"] == body_hash(r["body"])))
+
+    def _drop_auto(self):
+        with self.lock:
+            self.queue = [i for i in self.queue if i in self.forced]
+
     # ---- 만들기
     def _ensure_worker(self):   # self.lock 을 잡고 부름
         if self.worker_alive:
@@ -611,6 +698,9 @@ class ItemJob:
                     self.current = None
                     self.worker_alive = False
                     return
+                if self.queue[0] not in self.forced and not self.gate():
+                    self.queue = [i for i in self.queue if i in self.forced]   # 수업이 끝남: 자동 요약은 다음 교시에
+                    continue
                 wait = self.busy()   # 브리핑 요약이 도는 중이면 같은 LM Studio 를 쓰므로 끝나길 기다림
                 if not wait:
                     item_id = self.queue.pop(0)
@@ -647,11 +737,68 @@ class ItemJob:
         check_local(self.config["ai_base"])
         model = pick_model(self.config)
         names = [s["name"] for s in self.db.students()]
-        body = re.sub(r"[ \t]+", " ", it["body"]).strip()[:ITEM_CHARS]
-        prompt = mask_names(f"{ITEM_INSTRUCTION}[{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{body}", names)
-        text = mask_names(ask(self.config["ai_base"], model, prompt, TIMEOUT, system=ITEM_SYSTEM, max_tokens=500, db=self.db), names)
+        body = re.sub(r"[ \t]+", " ", it["body"]).strip()
+        text = summarize_item(self.config["ai_base"], model, it, body, names, chunk_size(self.config), db=self.db,
+                              progress=lambda done, total: self._set_part(it["id"], done, total),
+                              stop=self.stop_event.is_set)
+        self._set_part(it["id"], None, None)
         self.db.execute("UPDATE items SET ai_summary = ?, ai_summary_hash = ?, ai_summary_at = ?, ai_summary_model = ? "
                         "WHERE id = ?", (text, body_hash(it["body"]), datetime.now().strftime("%Y-%m-%d %H:%M"), model, it["id"]))
+
+
+def summarize_item(base, model, it, body, names, size=ITEM_CHARS, db=None, progress=None, stop=None,
+                   timeout=TIMEOUT):
+    """항목 한 건 요약. 짧으면 한 번에, 길면 조각마다 메모 → (메모가 길면 메모끼리 다시 줄임) → 마지막에 항목 형식으로.
+
+    AI 에 보내는 글은 모두 학생 이름을 가리고(mask_names), 받은 메모도 다시 가림. 부르는 곳은 ask() 하나라
+    127.0.0.1 로만 감(check_local 은 부르는 쪽에서).
+    """
+    source = SOURCE_NAMES.get(it["source"], it["source"])
+    title = it["title"] or ""
+    chunks = split_chunks(body, size)
+    if len(chunks) <= 1:
+        prompt = mask_names(f"{ITEM_INSTRUCTION}[{source}] {title}\n{body}", names)
+        return mask_names(ask(base, model, prompt, timeout, system=ITEM_SYSTEM, max_tokens=500, db=db), names)
+    total = len(chunks)
+    used = chunks[:CHUNK_MAX]
+    left = sum(len(c) for c in chunks[CHUNK_MAX:])
+    steps = len(used) + 1
+    notes = []
+    for i, part in enumerate(used, 1):
+        if stop and stop():
+            raise AIError("업무 데스크를 끄는 중이라 요약을 멈췄습니다")
+        if progress:
+            progress(i - 1, steps)
+        head = CHUNK_INSTRUCTION.replace("{n}", str(total)).replace("{i}", str(i)).replace("{title}", title)
+        note = ask(base, model, mask_names(head + part, names), timeout, system=ITEM_SYSTEM,
+                   max_tokens=CHUNK_NOTE_TOKENS, db=db)
+        note = mask_names(note, names).strip()
+        if note and not re.fullmatch(r"[-\s]*없음[.\s]*", note):
+            notes.append(f"({i}/{total}) {note}")
+    if progress:
+        progress(len(used), steps)
+    if not notes:
+        notes = ["- 없음"]
+    joined = "\n".join(notes)
+    room = max(size - len(ITEM_INSTRUCTION) - 200, size // 2)
+    for _ in range(MERGE_ROUNDS):   # 메모를 합쳐도 한 번에 안 들어가면 몇 개씩 묶어 다시 줄임
+        if len(joined) <= room:
+            break
+        if stop and stop():
+            raise AIError("업무 데스크를 끄는 중이라 요약을 멈췄습니다")
+        merged = []
+        for group in split_chunks(joined, room):
+            out = ask(base, model, mask_names(MERGE_INSTRUCTION.replace("{title}", title) + group, names), timeout,
+                      system=ITEM_SYSTEM, max_tokens=CHUNK_NOTE_TOKENS, db=db)
+            merged.append(mask_names(out, names).strip())
+        joined = "\n".join(merged)
+    joined = joined[:room]
+    prompt = mask_names(ITEM_INSTRUCTION + f"[{source}] " + FINAL_HEAD.replace("{n}", str(total))
+                        .replace("{title}", title) + joined, names)
+    text = mask_names(ask(base, model, prompt, timeout, system=ITEM_SYSTEM, max_tokens=500, db=db), names).strip()
+    text += f"\n(긴 자료라 {len(used)}조각으로 나눠 읽고 합친 요약"
+    text += f", 뒷부분 약 {left:,}자는 읽지 못함 — 원문 확인)" if left else ")"
+    return text
 
 
 MAX_HIDDEN = 300
