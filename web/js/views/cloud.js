@@ -20,23 +20,82 @@ export function cloudLine(c) {
     return `☁ ${MODE[c.mode] || c.mode}`;
 }
 
-// 배포자(업무 데스크를 나눠 주는 선생님)가 처음 한 번 하는 일 — 구글 화면의 단추 이름 그대로 (README 7-1 과 같음)
+// 배포자(업무 데스크를 나눠 주는 선생님)가 처음 한 번 하는 일 (0.5.100 준비 도우미)
+// 구글 콘솔은 사람이 눌러야 하는 화면(동의·약관)이 있어 완전 자동은 안 됨 → 각 단계 화면을 [열기]로 바로 열고,
+// 마지막에 받은 JSON 파일을 넣으면 ID·비밀번호가 저절로 들어가고 로그인 창이 바로 열림.
+const CONSOLE = 'https://console.cloud.google.com';
+export const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 export const OWNER_STEPS = [
-    '크롬·엣지에서 console.cloud.google.com 을 열고 선생님 구글 계정으로 로그인합니다.',
-    '위쪽 [프로젝트 선택] → [새 프로젝트] → 프로젝트 이름 "업무 데스크" → [만들기].',
-    '왼쪽 메뉴 [API 및 서비스] → [라이브러리] → "Google Drive API" 검색 → [사용].',
-    '[API 및 서비스] → [OAuth 동의 화면] (새 화면에서는 [Google 인증 플랫폼]) → [시작하기]: 앱 이름 "업무 데스크", 사용자 지원 이메일, 대상 [외부], 연락처 이메일 → [만들기].',
-    '[데이터 액세스] → [범위 추가 또는 삭제] → ".../auth/drive.appdata" 하나만 체크 → [업데이트] → [저장].',
-    '[클라이언트] → [클라이언트 만들기] → 애플리케이션 유형 [데스크톱 앱] → 이름 "업무 데스크" → [만들기] → 나오는 "클라이언트 ID" 와 "클라이언트 보안 비밀번호" 를 복사.',
-    '[대상] → 게시 상태의 [앱 게시] → [확인]. ("테스트" 로 두면 등록한 사람만 쓰고 7일마다 다시 로그인해야 합니다.)',
-    '복사한 두 값을 아래 "구글 로그인 클라이언트 ID"·"보안 비밀" 칸에 붙여 넣습니다. 다른 선생님께 나눠 줄 때는 개발 담당에게 주면 업무 데스크 기본값으로 들어가 받는 분은 넣을 필요가 없습니다.',
+    { title: '새 프로젝트 만들기', url: `${CONSOLE}/projectcreate`,
+      how: '프로젝트 이름에 "업무 데스크" → [만들기]. 처음이면 약관 동의 창이 먼저 뜹니다. 만든 뒤 화면 위쪽 프로젝트 이름이 "업무 데스크"인지 확인하세요 (아니면 눌러서 고름).' },
+    { title: 'Google Drive API 켜기', url: `${CONSOLE}/apis/library/drive.googleapis.com`,
+      how: '파란 [사용] 단추를 누릅니다. 이미 "관리"로 보이면 켜져 있는 것입니다.' },
+    { title: '로그인 화면(앱 이름) 만들기', url: `${CONSOLE}/auth/overview`,
+      how: '[시작하기] → 앱 이름 "업무 데스크", 사용자 지원 이메일(내 계정) → [다음] → 대상 [외부] → [다음] → 연락처 이메일(내 계정) → [다음] → 동의 체크 → [만들기]. 이미 만들어져 있으면 건너뜁니다.' },
+    { title: '권한 범위 넣기', url: `${CONSOLE}/auth/scopes`, copy: SCOPE,
+      how: '[범위 추가 또는 삭제] → 창 맨 아래 "직접 범위 추가" 칸에 아래 [범위 복사]로 복사한 글을 붙여 넣기 → [표에 추가] → [업데이트] → 화면 아래 [저장].' },
+    { title: '앱 게시하기', url: `${CONSOLE}/auth/audience`,
+      how: '게시 상태 "테스트" 아래 [앱 게시] → [확인]. ("테스트"로 두면 7일마다 다시 로그인해야 합니다. 숨은 앱 폴더만 쓰는 좁은 권한이라 구글 심사 없이 게시됩니다.)' },
+    { title: '로그인 클라이언트 만들고 JSON 받기', url: `${CONSOLE}/auth/clients/create`,
+      how: '애플리케이션 유형 [데스크톱 앱] → 이름 "업무 데스크" → [만들기] → 뜬 창에서 [JSON 다운로드]. 받은 client_secret_….json 파일을 아래 7단계에 넣습니다. (보안 비밀번호는 이 창에서만 보이니 꼭 받아 두세요.)' },
 ];
 
+// 받은 JSON 파일(또는 붙여 넣은 두 값)을 서버에 보내 저장 → 바로 로그인 창 열기
+async function saveClientAndLogin(payload) {
+    await api.post('/api/cloud', { action: 'client', ...payload });
+    await loadState();
+    const r = await api.post('/api/cloud', { action: 'login' });
+    window.open(r.url, '_blank', 'noopener');
+    toast('저장했습니다. 새 창에서 구글 계정을 고르고 [허용]을 누른 뒤 이 화면으로 돌아오세요. ("확인되지 않은 앱" 경고가 뜨면 [고급] → [업무 데스크(으)로 이동])', 'info', 12000);
+    return r;
+}
+
+function clientDrop() {
+    const msg = el('p.small.muted', 'client_secret_….json 파일을 이 칸에 끌어다 놓거나 [파일 고르기]를 누르세요.');
+    const take = guarded(async file => {
+        if (!file) return;
+        if (file.size > 20000) throw new Error('이 파일은 구글 클라이언트 JSON 이 아닌 것 같습니다 (너무 큼)');
+        await saveClientAndLogin({ json: await file.text() });
+        clear(msg, '✅ 클라이언트를 넣었습니다. 로그인 창이 열렸습니다.');
+    });
+    const input = el('input', { type: 'file', accept: '.json,application/json', style: 'display:none',
+        onchange: e => { take(e.target.files[0]); e.target.value = ''; } });
+    const zone = el('div.cloud-drop', {
+        ondragover: e => { e.preventDefault(); zone.classList.add('over'); },
+        ondragleave: () => zone.classList.remove('over'),
+        ondrop: e => { e.preventDefault(); zone.classList.remove('over'); take(e.dataTransfer.files[0]); },
+    }, el('b', '📄 JSON 파일 넣기'), msg,
+        el('button.btn.small.primary', { type: 'button', onclick: () => input.click() }, '파일 고르기'), input);
+    const id = el('input', { type: 'text', autocomplete: 'off', placeholder: '…apps.googleusercontent.com', style: 'flex: 1' });
+    const sec = el('input', { type: 'password', autocomplete: 'off', placeholder: '클라이언트 보안 비밀번호', style: 'flex: 1' });
+    const typed = el('details.small', el('summary', '파일이 없으면: 두 값을 직접 붙여 넣기'),
+        el('div.row', id), el('div.row', sec,
+            el('button.btn.small', { type: 'button', onclick: guarded(async () => {
+                await saveClientAndLogin({ client_id: id.value, client_secret: sec.value });
+                id.value = ''; sec.value = '';
+            }) }, '저장하고 로그인')));
+    return el('div', zone, typed);
+}
+
+const checkDrive = guarded(async () => {
+    const r = await api.post('/api/cloud', { action: 'check' });
+    toast(`✅ 드라이브 연결이 됩니다 (숨은 앱 폴더 파일 ${r.check.files}개). 이제 복구 키를 만들고 켜세요.`, 'info', 9000);
+});
+
 function ownerGuide(open = false) {
+    const steps = OWNER_STEPS.map((s, i) => el('li',
+        el('b', `${i + 1}. ${s.title} `),
+        el('a.btn.small', { href: s.url, target: '_blank', rel: 'noopener' }, '열기 ↗'),
+        s.copy && el('button.btn.small', { type: 'button', onclick: guarded(async () => { await navigator.clipboard.writeText(s.copy); toast('범위를 복사했습니다. 구글 화면 "직접 범위 추가" 칸에 붙여 넣으세요.'); }) }, '범위 복사'),
+        el('div.small', s.how)));
+    steps.push(el('li', el('b', `${OWNER_STEPS.length + 1}. 받은 JSON 넣고 로그인 `), el('div.small', '넣으면 ID·보안 비밀번호가 저절로 저장되고 구글 로그인 창이 바로 열립니다.'), clientDrop()));
+    steps.push(el('li', el('b', `${OWNER_STEPS.length + 2}. 연결 시험 `),
+        el('button.btn.small', { type: 'button', onclick: checkDrive }, '시험하기'),
+        el('div.small', '로그인 뒤 누르면 Drive API 가 켜졌는지, 권한이 맞는지 바로 알려 줍니다.')));
     return el('details.small.cloud-owner', { open },
-        el('summary', '배포자 준비: 구글 로그인 앱 만들기 (처음 한 번, 약 10분)'),
-        el('p', '업무 데스크를 나눠 주는 선생님이 한 번만 하면 됩니다. 구글 화면의 단추 이름은 조금 다를 수 있습니다. 이 앱은 드라이브의 숨은 앱 폴더만 쓰는 좁은 권한이라 구글 심사가 필요 없을 것으로 봅니다.'),
-        el('ol', OWNER_STEPS.map(t => el('li', t))));
+        el('summary', '준비 도우미: 구글 로그인 앱 만들기 (처음 한 번, 약 5분)'),
+        el('p', '업무 데스크를 나눠 주는 선생님이 한 번만 하면 됩니다. 각 단계의 [열기]를 누르면 구글 클라우드 콘솔의 그 화면이 바로 열립니다 (선생님 구글 계정으로 로그인). 구글 화면의 단추 이름은 조금 다를 수 있습니다.'),
+        el('ol.cloud-steps', steps));
 }
 
 function statusBox() {
@@ -53,7 +112,7 @@ function statusBox() {
         }
     });
     const draw = c => {
-        box.dataset.sig = JSON.stringify([c.mode, c.message, c.last_up, c.last_down, c.holder, c.dirty]);
+        box.dataset.sig = JSON.stringify([c.mode, c.message, c.last_up, c.last_down, c.holder, c.dirty, c.client, c.logged_in]);
         clear(box,
             el('p', '상태: ', el('b', { className: `cloud-mode ${c.mode}` }, MODE[c.mode] || c.mode),
                 c.message ? el('span.small', ` — ${c.message}`) : null),
@@ -86,9 +145,10 @@ function loginBox() {
                         if (!confirm('구글 로그아웃할까요? 이 PC 의 드라이브 이어 쓰기가 꺼집니다. 드라이브에 올린 자료는 남습니다.')) return;
                         draw(await api.post('/api/cloud', { action: 'logout' }));
                         await loadState();
-                    }) }, '로그아웃'))
+                    }) }, '로그아웃'),
+                    el('button.btn.small', { type: 'button', onclick: checkDrive }, '연결 시험'))
                 : el('div',
-                    !c.client && el('p.set-bad.small', '구글 로그인 정보(클라이언트 ID)가 없습니다. 업무 데스크를 나눠 준 선생님께 여쭈거나, 직접 아래 순서대로 만들어 "고급"에 넣으세요.'),
+                    !c.client && el('p.set-bad.small', '구글 로그인 정보(클라이언트 ID)가 없습니다. 아래 준비 도우미를 따라 만들고 받은 JSON 파일을 넣으면 됩니다 (업무 데스크를 나눠 준 선생님께 받아도 됩니다).'),
                     !c.client && ownerGuide(true),
                     el('button.btn.primary', { type: 'button', disabled: !c.client, onclick: guarded(async () => {
                         const r = await api.post('/api/cloud', { action: 'login' });
@@ -215,6 +275,6 @@ on('state', s => {
     for (const w of document.querySelectorAll('.cloud-box')) {
         const st = w.querySelector('.cloud-status');
         const c = s.cloud || {};
-        if (st && st.dataset.sig !== JSON.stringify([c.mode, c.message, c.last_up, c.last_down, c.holder, c.dirty])) w.refresh(c);
+        if (st && st.dataset.sig !== JSON.stringify([c.mode, c.message, c.last_up, c.last_down, c.holder, c.dirty, c.client, c.logged_in])) w.refresh(c);
     }
 });
