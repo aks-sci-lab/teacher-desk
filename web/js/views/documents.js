@@ -1,4 +1,4 @@
-// 📝 문서 작성 (0.6.0): 업무 폴더 색인(누를 때만) → 할 작업으로 관련 파일 찾기 → 새 문서 또는 학교 서식 그대로 채우기
+// 📝 문서 작성 (0.6.1): 업무 폴더 색인(누를 때만) → 할 작업으로 관련 파일 찾기 → 새 문서 또는 학교 서식 그대로 채우기
 import { api } from '../api.js';
 import { el, clear, guarded, toast, download } from '../ui.js';
 import { registerView, openTab } from '../shell.js';

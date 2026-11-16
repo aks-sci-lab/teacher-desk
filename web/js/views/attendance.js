@@ -290,7 +290,7 @@ function renderRegister(pane) {
     guarded(async () => {
         const data = await api.get(`/api/attendance/register?month=${encodeURIComponent(selectedMonth)}`);
         if (request !== registerRequest) return;
-        if (!data.students.length) return clear(box, el('p.empty', '학생 명단이 없습니다. 조퇴·외출 → 👥 학생 명단에서 넣으세요.'));
+        if (!data.students.length) return clear(box, el('p.empty', '학생 명단이 없습니다. 조퇴·외출 → 위의 [학생 명단] 단추에서 넣으세요.'));
         if (!data.days.length) return clear(box, el('p.empty', '이 달에는 수업일이 없습니다.'));
         const today = todayIso();
         const keyOf = s => `${s.student_number ?? ''}|${s.student_name}`;

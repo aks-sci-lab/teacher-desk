@@ -2206,9 +2206,10 @@ def cloud_get(app, q, body):
 
 @api("POST", "/api/cloud")
 def cloud_action(app, q, body):
-    """login · logout · newkey · key · sync · takeover · resolve(choice=drive|local) · backups · backup · restore(name)."""
+    """login · logout · client(json | client_id+client_secret) · check · newkey · key · sync · takeover ·
+    resolve(choice=drive|local) · backups · backup · restore(name)."""
     action = body.get("action")
-    need(action in ("login", "logout", "newkey", "key", "sync", "takeover", "resolve", "backups", "backup", "restore"),
+    need(action in ("login", "logout", "client", "check", "newkey", "key", "sync", "takeover", "resolve", "backups", "backup", "restore"),
          "동작이 잘못되었습니다")
     c = app.cloud
     try:
@@ -2216,6 +2217,28 @@ def cloud_action(app, q, body):
             need(gdrive.client_id(app.config), "구글 로그인 정보(클라이언트 ID)가 없습니다. 설정 → 드라이브 → 고급에서 넣으세요")
             c.login = gdrive.Login(app.config, app.config["port"])
             return {**c.status(), "url": c.login.url()}
+        if action == "client":
+            # 준비 도우미: 구글 콘솔에서 받은 JSON 파일(또는 붙여 넣은 두 값)을 검사해 저장 → 화면이 바로 로그인 창을 엶
+            raw = body.get("json")
+            need(raw is None or (isinstance(raw, str) and len(raw) <= 20000), "파일이 너무 큽니다")
+            try:
+                cid, secret = gdrive.parse_client(raw or "", body.get("client_id", ""), body.get("client_secret", ""))
+            except ValueError as e:
+                raise ApiError(400, str(e))
+            changed = cid != app.config["gdrive_client_id"]
+            app.config.set_value("gdrive_client_id", cid)
+            app.config.set_value("gdrive_client_secret", secret)
+            c.drive._access = None                         # 새 클라이언트로 토큰을 다시 받게 함
+            if changed and app.config["gdrive_token"]:
+                app.config.set_value("gdrive_token", "")   # 다른 클라이언트의 토큰은 쓸 수 없음 → 다시 로그인
+                app.config.set_value("gdrive_enabled", False)
+                c.tick()
+            app.db.log("드라이브: 구글 로그인 클라이언트 저장")
+            return c.status()
+        if action == "check":
+            # 로그인 뒤 연결 시험: 숨은 앱 폴더 목록을 한 번 읽어 봄 (Drive API 꺼짐·권한 문제를 바로 알려 줌)
+            need(app.config["gdrive_token"], "먼저 [구글로 로그인]을 하세요")
+            return {**c.status(), "check": {"ok": True, "files": len(c.drive.files())}}
         if action == "logout":
             c.drive.revoke()
             app.config.set_value("gdrive_token", "")

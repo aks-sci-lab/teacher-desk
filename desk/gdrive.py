@@ -11,6 +11,7 @@
 import base64
 import hashlib
 import json
+import re
 import secrets
 import time
 import urllib.error
@@ -33,6 +34,38 @@ def client_id(config):
 
 def client_secret(config):
     return config["gdrive_client_secret"] or DEFAULT_CLIENT_SECRET
+
+
+CLIENT_ID_RE = re.compile(r"[0-9]{6,30}-[a-z0-9]{10,64}\.apps\.googleusercontent\.com")
+SECRET_RE = re.compile(r"[A-Za-z0-9._\-]{8,200}")
+
+
+def parse_client(text="", cid="", secret=""):
+    """구글 콘솔에서 받은 클라이언트 JSON 파일 내용(또는 붙여 넣은 ID·비밀) → (client_id, client_secret).
+
+    파일은 {"installed": {"client_id", "client_secret", ...}} 모양 ('데스크톱 앱' 유형).
+    '웹 애플리케이션' 유형({"web": ...})은 127.0.0.1 로 돌아오는 로그인에 맞지 않아 거절합니다. 잘못되면 ValueError.
+    """
+    if text and text.strip():
+        try:
+            data = json.loads(text)
+        except ValueError:
+            raise ValueError("구글에서 받은 클라이언트 JSON 파일이 아닙니다 (client_secret_….json 파일을 넣으세요)")
+        if not isinstance(data, dict):
+            raise ValueError("구글에서 받은 클라이언트 JSON 파일이 아닙니다")
+        if "installed" not in data:
+            if "web" in data:
+                raise ValueError("'웹 애플리케이션' 유형 클라이언트입니다. 클라이언트를 다시 만들 때 유형을 [데스크톱 앱]으로 고르세요")
+            raise ValueError("구글에서 받은 클라이언트 JSON 파일이 아닙니다 (client_secret_….json 파일을 넣으세요)")
+        inst = data["installed"] if isinstance(data["installed"], dict) else {}
+        cid, secret = inst.get("client_id", ""), inst.get("client_secret", "")
+    cid = (cid or "").strip() if isinstance(cid, str) else ""
+    secret = (secret or "").strip() if isinstance(secret, str) else ""
+    if not CLIENT_ID_RE.fullmatch(cid):
+        raise ValueError("클라이언트 ID 형식이 아닙니다 (숫자-글자.apps.googleusercontent.com 모양이어야 합니다)")
+    if not SECRET_RE.fullmatch(secret):
+        raise ValueError("클라이언트 보안 비밀번호가 없거나 형식이 잘못되었습니다")
+    return cid, secret
 
 
 class DriveError(Exception):
@@ -136,6 +169,13 @@ class Drive:
             if e.code == 401 and retry:
                 self._access = None   # 토큰이 끝났으면 한 번 새로 받아 다시
                 return self._call(method, url, body, headers, raw, retry=False)
+            if e.code == 403:
+                try:
+                    detail = e.read().decode("utf-8", "replace")
+                except Exception:
+                    detail = ""
+                if "accessNotConfigured" in detail or "SERVICE_DISABLED" in detail:
+                    raise DriveError("Google Drive API 가 아직 꺼져 있습니다. 구글 클라우드 콘솔에서 Drive API 를 [사용]으로 켜고 몇 분 뒤 다시 하세요 (설정 → 드라이브 → 준비 도우미 2단계)", auth=True)
             if e.code in (401, 403):
                 raise DriveError("드라이브 권한이 없습니다. 설정 → 드라이브에서 다시 로그인하세요", auth=True)
             if e.code == 404:

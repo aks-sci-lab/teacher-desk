@@ -1,6 +1,7 @@
 // 학급 제출물 확인 · 상담 기록 (0.5.82)
 // 상담 기록은 특히 민감: 이 PC 에만 저장, 검색·브리핑·AI·텔레그램에 쓰지 않음. 화면에서도 내용은 눌러야 펼쳐짐.
 import { api } from '../api.js';
+import { icon } from '../icons.js';
 import { el, clear, guarded, toast, todayIso, ddayInfo, longDate, dayLabel } from '../ui.js';
 import { refreshSide, findTab, openPopup } from '../shell.js';
 import { store } from '../store.js';
@@ -235,7 +236,7 @@ export function renderCounsel(pane) {
             el('div.cl-head', el('h1', ro ? `상담 기록 · ${d.year}학년도 보관함` : '상담 기록'),
                 el('span.muted', ro ? `${d.year}.3.1 ~ ${d.year + 1}.2.말` : `${d.year}학년도 (${d.year}.3.1부터) · 왼쪽에서 학생을 고르면 그 학생의 기록을 모아 봅니다. 지난 학년도는 왼쪽 위 '학년도'의 보관함에서 봅니다.`),
                 el('span.spacer'),
-                !ro && el('button.btn', { onclick: () => openCallImport(), title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, '📱 통화·문자 불러오기'),
+                !ro && el('button.btn', { onclick: () => openCallImport(), title: '휴대폰 백업 앱이 내보낸 통화·문자 파일로 상담 기록 초안 만들기' }, icon('phone'), '통화·문자 불러오기'),
                 !ro && el('button.btn.primary', { onclick: () => openCounselForm({}) }, '+ 상담 기록'),
                 ro && d.records.length > 0 && el('button.btn', { onclick: () => printNode(el('div',
                     el('h1', `상담 기록 — ${d.year}학년도 (보관함)`, el('small', ` ${longDate(todayIso())} 인쇄`)),
@@ -244,7 +245,7 @@ export function renderCounsel(pane) {
                             el('td', `${c.method} · ${c.with_whom}`), el('td', c.topic), el('td.pre', c.content || ''), el('td.pre', c.followup || '')))))), true) }, '보관함 인쇄')),
             archive, note,
             tgPending?.drafts.length > 0 && el('div.card.cl-tg-pending',
-                el('h3', `📱 텔레그램으로 받은 초안 ${tgPending.drafts.length}건`),
+                el('h3', `텔레그램으로 받은 초안 ${tgPending.drafts.length}건`),
                 el('p.small.muted', `확인해 저장하기 전에는 상담 기록이 아닙니다. 저장하지 않은 초안은 받은 날부터 ${tgPending.keep_days}일 뒤 지워집니다.`),
                 el('div.row',
                     el('button.btn.primary', { onclick: () => openCallImport(tgPending) }, '확인하고 저장하기'),
