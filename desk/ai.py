@@ -488,11 +488,15 @@ class ItemJob:
     - 눌렀거나 연 항목(start)은 맨 앞으로, 새로 들어온 항목(scan)은 자동으로 최신 순으로 줄을 섬.
     - 한 번에 한 건만 (브리핑 요약이 도는 중이면 그것이 끝날 때까지 기다림). 원문이 안 바뀌었으면 다시 만들지 않음.
     - LM Studio 가 꺼져 있으면 자동 요약은 조용히 쉬었다가 5분 뒤 다시 (눌러서 시킨 것만 오류를 보여 줌).
+    - 0.5.98: 자동 요약은 gate() 가 True 일 때(내 수업 시간, aiclass.allowed)만. 아닐 때 생긴 것은 DB 에 그대로
+      남아 있다가 다음 수업 교시에 찾아 요약. 수업이 끝나면 새 자동 요약은 시작하지 않음(만들던 1건은 마침).
+      눌러서 시킨 것은 언제든 바로.
     """
 
-    def __init__(self, db, config, busy=None, clock=time.monotonic):
+    def __init__(self, db, config, busy=None, clock=time.monotonic, gate=None):
         self.db, self.config = db, config
         self.busy = busy or (lambda: False)
+        self.gate = gate or (lambda: True)
         self.clock = clock
         self.lock = threading.Lock()
         self.queue = []            # 앞이 먼저
@@ -543,6 +547,9 @@ class ItemJob:
         """새로 들어온(또는 원문이 바뀐) 항목을 찾아 줄 세움. 새로 줄 선 건수."""
         enabled = bool(self.config["ai_enabled"] and self.config["ai_auto_item"])
         now = self.clock()
+        if enabled and not self.gate():   # 수업 시간이 아님: 줄 세우지 않음 (다음 수업 교시에 다시 찾음)
+            self._drop_auto()
+            return 0
         if not enabled or now < self.paused_until:
             if not enabled:
                 with self.lock:
@@ -596,6 +603,22 @@ class ItemJob:
             except Exception as e:   # 뒤에서 도는 일이 조용히 죽지 않게
                 self.db.log(f"항목 AI 요약 찾기 오류: {type(e).__name__}: {e}", "error")
 
+    def pending(self):
+        """자동 요약을 기다리는 항목 수 (수업 시간이 아니라 모아 둔 것 포함, 최대 300)."""
+        if not (self.config["ai_enabled"] and self.config["ai_auto_item"]):
+            return 0
+        since = (date.today() - timedelta(days=AUTO_DAYS)).isoformat()
+        marks = ",".join("?" * len(AUTO_SOURCES))
+        rows = self.db.query(
+            f"SELECT body, ai_summary, ai_summary_hash FROM items WHERE source IN ({marks}) "
+            "AND status IN ('new', 'read') AND received_at >= ? LIMIT 300", (*AUTO_SOURCES, since))
+        return sum(1 for r in rows if len((r["body"] or "").strip()) >= AUTO_MIN_CHARS
+                   and not (r["ai_summary"] and r["ai_summary_hash"] == body_hash(r["body"])))
+
+    def _drop_auto(self):
+        with self.lock:
+            self.queue = [i for i in self.queue if i in self.forced]
+
     # ---- 만들기
     def _ensure_worker(self):   # self.lock 을 잡고 부름
         if self.worker_alive:
@@ -611,6 +634,9 @@ class ItemJob:
                     self.current = None
                     self.worker_alive = False
                     return
+                if self.queue[0] not in self.forced and not self.gate():
+                    self.queue = [i for i in self.queue if i in self.forced]   # 수업이 끝남: 자동 요약은 다음 교시에
+                    continue
                 wait = self.busy()   # 브리핑 요약이 도는 중이면 같은 LM Studio 를 쓰므로 끝나길 기다림
                 if not wait:
                     item_id = self.queue.pop(0)

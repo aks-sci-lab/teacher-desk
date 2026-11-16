@@ -19,7 +19,7 @@ from urllib.request import url2pathname
 import base64
 import binascii
 
-from . import VERSION, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, aiclass, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -155,7 +155,9 @@ class App:
         self.update_checker = None   # desk.py 가 켬 (시험에서는 없음)
         self.ai_job = ai.Job(db, config)   # AI 요약은 뒤에서 하나씩
         # 항목별 AI 요약 대기열: 새 항목은 자동으로, 눌렀거나 연 항목은 맨 앞으로 (브리핑 요약이 도는 중이면 기다림)
-        self.item_ai = ai.ItemJob(db, config, busy=lambda: self.ai_job.running)
+        # 0.5.98: 선생님이 누르지 않은 자동 요약은 내 수업 시간에만 (aiclass)
+        self.item_ai = ai.ItemJob(db, config, busy=lambda: self.ai_job.running,
+                                  gate=lambda: aiclass.allowed(db, config))
         self.gcal = gcal.Sync(db, config)   # 선생님 구글 캘린더와 일정 공유 (desk.py 가 뒤에서 켬)
         self.cloud = cloudsync.Sync(db, config)   # 여러 PC 이어 쓰기·구글 드라이브 (desk.py 가 켤 때 받고 끌 때 올림)
 
@@ -1799,7 +1801,13 @@ def timetable_swap_delete(app, q, body, sid):
 
 @api("GET", "/api/ai/weekly")
 def ai_weekly_get(app, q, body):
-    return app.ai_job.state()
+    return {**app.ai_job.state(), "auto_window": aiclass.window(app.db, app.config)}
+
+
+@api("GET", "/api/ai/auto-window")
+def ai_auto_window(app, q, body):
+    """자동 요약을 지금 돌려도 되는지 (내 수업 시간) · 설정 화면의 '다음 자동 요약' 표시."""
+    return {**aiclass.window(app.db, app.config), "queue": app.item_ai.summary(), "pending": app.item_ai.pending()}
 
 
 @api("POST", "/api/ai/weekly")
@@ -1813,8 +1821,11 @@ def ai_weekly_run(app, q, body):
     kind = "new" if body.get("kind") == "new" else "full"
     # 범위: visit(마지막으로 닫은 이후, 기본) / week(지난 1주일)
     since = visits.since(app.db) if body.get("range", "visit") == "visit" else None
+    win = aiclass.window(app.db, app.config)
+    if body.get("auto") is True and not win["allowed"]:   # 브리핑을 열 때 저절로: 수업 시간이 아니면 시작하지 않음
+        return {**app.ai_job.state(), "auto_window": win}
     app.ai_job.start(kind, since=since)
-    return app.ai_job.state()
+    return {**app.ai_job.state(), "auto_window": win}
 
 
 @api("POST", "/api/ai/hidden")
