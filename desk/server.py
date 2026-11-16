@@ -1156,7 +1156,7 @@ def _open_web_image(src, timeout=15):
 
 
 def fetch_web_image(src):
-    """인터넷 주소 사진을 이 PC 가 내려받음 (0.5.101, 선생님 요청: 쿨메신저 사진을 텔레그램으로 함께).
+    """인터넷 주소 사진을 이 PC 가 내려받음 (0.6.2, 선생님 요청: 쿨메신저 사진을 텔레그램으로 함께).
     화면이 같은 주소를 직접 불러오는 것과 같은 범위. 이 PC 자신을 가리키는 주소는 읽지 않음."""
     u = urlparse(src)
     if u.scheme not in ("http", "https") or _is_loopback(u.hostname):
@@ -1169,7 +1169,7 @@ def fetch_web_image(src):
 
 def read_item_image(app, src):
     """쿨메신저 사진 하나의 (바이트, 종류), 못 읽으면 None. 텔레그램으로 보낼 때 씀.
-    쪽지 안 그림(data:), 허용한 폴더 안의 PC 파일, 인터넷 주소(이 PC 가 내려받음, 0.5.101)."""
+    쪽지 안 그림(data:), 허용한 폴더 안의 PC 파일, 인터넷 주소(이 PC 가 내려받음, 0.6.2)."""
     if src.lower().startswith(("http://", "https://")):
         return fetch_web_image(src)
     m = re.match(r"^data:(image/(?:png|jpeg|gif|bmp|webp));base64,(.+)$", src, re.S)

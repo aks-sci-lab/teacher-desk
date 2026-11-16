@@ -616,8 +616,9 @@ function renderToday(pane) {
                     card('오늘 조퇴·외출', s.passes.length, s.passes.length
                         ? el('ul.list', s.passes.map(p => el('li', { onclick: () => openPass(p) },
                             el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
-                            el('span.meta', KIND[p.kind], p.time_out || '', p.time_return ? `~${p.time_return}` : '',
-                                p.kind === 'out' ? (p.status === 'returned' ? '복귀함' : '복귀 전') : ''))))
+                            el('span.meta', el('span', { className: `badge cat ${p.kind === 'out' ? 'cat-수업·평가' : 'cat-행사'}` }, KIND[p.kind]),
+                                el('span', (p.time_out || '') + (p.time_return ? `~${p.time_return}` : '')),
+                                p.kind === 'out' && el('span', p.status === 'returned' ? '복귀함' : '복귀 전')))))
                         : el('p.muted.small', '없음')),
                     classCard(s.classroom),
                     newCard].filter(Boolean);

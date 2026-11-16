@@ -79,7 +79,7 @@ class TelegramCoolPhotoTests(unittest.TestCase):
         self.assertEqual(self.fake.calls.count("sendPhoto"), 0)
 
     def test_internet_photos_are_sent_and_limit_and_failures_are_reported(self):
-        """0.5.101 선생님 요청: 인터넷 주소 사진도 이 PC 가 내려받아 함께 보냄. 못 읽은 사진은 몇 장인지 알림."""
+        """0.6.2 선생님 요청: 인터넷 주소 사진도 이 PC 가 내려받아 함께 보냄. 못 읽은 사진은 몇 장인지 알림."""
         self.read.side_effect = lambda src: (b"\xff\xd8 jpeg", "image/jpeg") if "ok" in src else None
         web = self.item("인터넷 사진", ["https://example.com/ok.jpg", "https://example.com/gone.jpg"])
         self.run_notify(web)

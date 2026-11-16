@@ -1,6 +1,7 @@
 // 🏫 학급 경영: 좌석 배치도 · 역할(청소 구역·1인 1역·주번/일일 당번) · 모둠 (0.5.80)
 // 자료는 이 PC 의 desk.db 에만 (검색·AI·텔레그램에 쓰지 않음). 학생은 학생 명단의 번호로 연결.
 import { api } from '../api.js';
+import { icon } from '../icons.js';
 import { el, clear, guarded, toast, longDate, todayIso } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on, showView } from '../shell.js';
 import { store } from '../store.js';
@@ -163,7 +164,7 @@ function seatCell(s, i) {
         el('button.lock', {
             type: 'button', title: locked ? '자리 고정 풀기' : '자리 고정 (무작위 배치 때 그대로)', 'aria-pressed': locked,
             onclick: guarded(() => saveSeats({ ...s, locked: locked ? s.locked.filter(x => x !== i) : [...s.locked, i] })),
-        }, locked ? '🔒' : '🔓'));
+        }, icon(locked ? 'lock' : 'unlock')));
     return dropTarget(cell, guarded(async d => {
         if (off) return;
         if (d.seat != null) await moveSeat(d.seat, i);
@@ -253,8 +254,8 @@ function renderSeats(pane) {
                     el('button', { className: s.view !== 'teacher' ? 'on' : '', onclick: setView('student'), title: '학생이 칠판을 바라보는 방향 (칠판이 위)' }, '학생 쪽에서'),
                     el('button', { className: s.view === 'teacher' ? 'on' : '', onclick: setView('teacher'), title: '선생님이 교탁에서 바라보는 방향 (칠판이 아래)' }, '교사 쪽에서'))),
             el('div.row.cl-tools',
-                el('button.btn.primary', { onclick: shuffle, title: '🔒 고정한 자리는 그대로 두고 나머지를 무작위로' }, '🎲 무작위 배치'),
-                el('button.btn', { disabled: !undo.length, title: '방금 바꾼 것 되돌리기 (Ctrl+Z)', onclick: guarded(() => saveSeats(undo.pop(), { noUndo: true })) }, '↶ 되돌리기'),
+                el('button.btn.primary', { onclick: shuffle, title: '고정한 자리(자물쇠)는 그대로 두고 나머지를 무작위로' }, icon('shuffle'), '무작위 배치'),
+                el('button.btn', { disabled: !undo.length, title: '방금 바꾼 것 되돌리기 (Ctrl+Z)', onclick: guarded(() => saveSeats(undo.pop(), { noUndo: true })) }, icon('undo'), '되돌리기'),
                 el('button.btn', { onclick: guarded(async () => {
                     const r = await api.post('/api/class/seats/record', { label: '직접 남긴 기록' });
                     seatHistory = r.history;
@@ -317,7 +318,7 @@ function seatSettings(s) {
                 el('span.hint', s.apart.length ? s.apart.map(p => p.map(who).join(' ↔ ')).join(' · ') : '앞뒤·옆·대각선으로 붙지 않게')),
             el('label.check', el('input', { type: 'checkbox', checked: s.avoid_mates, onchange: e => save({ avoid_mates: e.target.checked })() }),
                 '지난 배치의 짝과 다시 짝이 되지 않게')),
-        el('p.small.muted', '🔒 를 누른 자리는 무작위 배치 때 그대로 남습니다. 무작위 배치를 하면 그 전 배치가 왼쪽 기록에 저장됩니다(최근 30개).'));
+        el('p.small.muted', '자물쇠를 누른 자리는 무작위 배치 때 그대로 남습니다. 무작위 배치를 하면 그 전 배치가 왼쪽 기록에 저장됩니다(최근 30개).'));
 }
 
 function printSeats(view) {
@@ -418,7 +419,7 @@ function renderRot(body, kind) {
                     if (r.current && !confirm(`이번 기간(${r.label}) 배정을 새로 섞을까요?`)) return;
                     rotCache[kind] = await api.post(`/api/class/rot/${kind}/shuffle`, {});
                     findTab('classroom')?.rerender();
-                }) }, '🎲 다시 섞기'),
+                }) }, icon('shuffle'), '다시 섞기'),
                 el('button.btn', { disabled: !r.current, onclick: () => printNode(el('div',
                     el('h1', `${classTitle()} ${kind === 'clean' ? '청소 구역' : '1인 1역'}`, el('small', ` ${r.label}`)), rotTable(r, false))) }, '인쇄')),
             !cfg.items.length
@@ -550,7 +551,7 @@ function renderGroups(pane) {
             el('div.cl-head', el('h1', '모둠'),
                 el('span.muted', g.at ? `${g.at.slice(0, 16)} 나눔 · 학생을 끌어서 다른 모둠으로 옮길 수 있습니다` : '아직 나누지 않았습니다'),
                 el('span.spacer'),
-                el('button.btn.primary', { onclick: make }, '🎲 모둠 나누기'),
+                el('button.btn.primary', { onclick: make }, icon('shuffle'), '모둠 나누기'),
                 el('button.btn', { disabled: !g.groups.length, onclick: () => printNode(el('div', el('h1', `${t} 모둠`),
                     el('div.cl-groups', g.groups.map((m, k) => el('div.cl-group', el('h3', `${k + 1}모둠`), el('div', m.map(who).join(', ')))))), true) }, '인쇄')),
             groupProblems.length > 0 && el('div.cl-warn', el('b', '같은 모둠이 된 떼어 놓을 학생: '), groupProblems.map(p => p.map(who).join('·')).join(', ')),

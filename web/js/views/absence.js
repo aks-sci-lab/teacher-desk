@@ -1,5 +1,6 @@
 // 결석계: 작성 → 미리보기 → 인쇄 → 기록
 import { api } from '../api.js';
+import { icon } from '../icons.js';
 import { el, clear, toast, guarded, todayIso, dayLabel, longDate, monthNav, monthKey, dayHead } from '../ui.js';
 import { refreshSide, on, emit, openPopup, popupOpen } from '../shell.js';
 import { store } from '../store.js';
@@ -65,7 +66,7 @@ export async function openAbsenceById(id) {
 export function renderAbsenceSide(body, actions) {
     actions.append(el('button.icon-btn', {
         title: '새로 고침', onclick: guarded(async () => { await loadDay(); refreshSide(); }),
-    }, '⟳'));
+    }, icon('refresh')));
     const pick = guarded(async iso => { selectedDate = iso; await loadDay(); refreshSide(); });
     const first = `${monthKey(selectedDate)}-01`;
     const monthNo = Number(monthKey(selectedDate).slice(5));

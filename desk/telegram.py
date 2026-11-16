@@ -2122,7 +2122,7 @@ class Bot:
 
     def send_collect_photos(self, stats):
         """새 쿨메신저 쪽지에 든 사진을 텔레그램으로도 보냄 (사용자 요청 2026-11-02, 설정 telegram_photos).
-        쪽지 안 그림·허용한 폴더의 PC 파일·인터넷 주소 사진(이 PC 가 내려받아 보냄, 0.5.101). 한 번에 최대 10장.
+        쪽지 안 그림·허용한 폴더의 PC 파일·인터넷 주소 사진(이 PC 가 내려받아 보냄, 0.6.2). 한 번에 최대 10장.
         못 보낸 사진이 있으면 몇 장인지 알려 줌 (예전에는 못 읽은 사진을 말없이 건너뜀)."""
         ids = list(stats.get("new_ids") or [])
         if not (ids and self.chat_id and self.read_image and self.config["telegram_photos"]):

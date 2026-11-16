@@ -9,7 +9,7 @@ class FakeTelegram:
     def __init__(self, port=0):
         self.updates, self.sent, self.calls, self.docs, self.edited = [], [], [], [], []
         self.files, self.deleted, self.fail_delete = {}, [], False   # 받은 파일 시험 (0.5.84)
-        self.fail_photo = False   # 사진을 거절하는 텔레그램 (0.5.101)
+        self.fail_photo = False   # 사진을 거절하는 텔레그램 (0.6.2)
         self.next_id = 1
         self.connections = 0       # 새로 연 연결 수 (연결 다시 쓰기 시험)
         self.connect_delay = 0.0   # 새 연결마다 기다리는 초 (실제 TLS 연결 비용 흉내)

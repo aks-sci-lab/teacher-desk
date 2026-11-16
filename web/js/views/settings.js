@@ -2,6 +2,7 @@
 // 칸은 고치면 바로 저장되고(저장 상태는 위에 표시), 잘못된 값은 칸 아래에 바로 안내합니다.
 // 설정 키 이름·config.json 형식은 예전 그대로입니다 (새 키는 설정 도우미 상태 setup_wizard 하나).
 import { api } from '../api.js';
+import { icon } from '../icons.js';
 import { el, clear, toast, guarded, download } from '../ui.js';
 import { registerView, openTab, findTab, on, toggleLayoutMode, menuList, setMenuOn } from '../shell.js';
 import { store, loadState, saveSettings } from '../store.js';
@@ -486,6 +487,10 @@ function navStatus(g) {
     try { return g.status(store.settings) || ''; } catch { return ''; }
 }
 
+// 설정 묶음 아이콘 (이모지 대신 선 아이콘, 0.6.0)
+const SET_ICON = { general: 'school', collect: 'inbox', schedule: 'calendar', attendance: 'attendance', telegram: 'send',
+    ai: 'spark', capture: 'globe', cloud: 'cloud', update: 'wrench' };
+
 function renderSettings(pane) {
     const st = store.state || {};
     const search = el('input.set-search', { type: 'search', placeholder: '설정 찾기 (예: 텔레그램, 폴더, 수집 시각)', 'aria-label': '설정 찾기',
@@ -494,16 +499,16 @@ function renderSettings(pane) {
     const nav = el('nav.set-nav', { 'aria-label': '설정 묶음' }, GROUPS.map(g => el('button', {
         type: 'button', dataset: { group: g.id },
         onclick: () => { if (search.value) { search.value = ''; applySearch(pane, ''); } showGroup(pane, g.id); },
-    }, el('span.set-ico', g.icon), el('span.set-nt', el('b', g.title), el('span.set-ns', navStatus(g))))));
+    }, el('span.set-ico', icon(SET_ICON[g.id]) || g.icon), el('span.set-nt', el('b', g.title), el('span.set-ns', navStatus(g))))));
     const sections = GROUPS.map(g => el('section.set-sec', { dataset: { group: g.id, search: `${g.title} ${g.desc}`.toLowerCase() } },
-        el('h2', `${g.icon} ${g.title}`), el('p.set-desc', g.desc), g.build(st, pane)));
+        el('h2.set-h', icon(SET_ICON[g.id]) || g.icon, g.title), el('p.set-desc', g.desc), g.build(st, pane)));
     pane.classList.add('set-pane');
     pane.append(
         el('div.set-head',
             el('div', el('h1', '설정'),
                 el('p.sub', `업무 데스크 ${st.version || ''} · 모든 자료는 이 PC 의 data 폴더에만 저장됩니다.`)),
             el('div.set-tools', saveStateBox(),
-                el('button.btn.small', { type: 'button', onclick: () => openSetup() }, '🧭 설정 도우미'))),
+                el('button.btn.small', { type: 'button', onclick: () => openSetup() }, icon('compass'), '설정 도우미'))),
         el('div.set-searchrow', search, el('span.small.muted.set-found', { role: 'status' })),
         el('div.set-layout', nav, el('div.set-main', sections)));
     showGroup(pane, activeGroup);
