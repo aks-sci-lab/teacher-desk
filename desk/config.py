@@ -24,6 +24,7 @@ DEFAULTS = {
     "coolmessenger_path": "",      # (선택) .udb 파일 경로를 직접 지정하면 이름보다 우선
     "coolmessenger_folder": "",    # (선택) 쿨메신저가 받은 파일을 저장하는 폴더
     "edufine_folder": "",
+    "folderdoc_folder": "",        # 0.6.0 문서 작성: 색인할 업무 폴더 (누를 때만 색인)
     # 실시간 감시 (쿨메신저 쪽지 파일·폴더가 바뀌면 바로 수집), 몇 초마다 살펴볼지
     "watch_enabled": True,
     "watch_interval": 20,
@@ -95,7 +96,7 @@ SECRET_KEYS = {"gdrive_token", "gdrive_passphrase", "gdrive_client_secret", "gca
 # 화면에서 바꿀 수 있는 값 (port, data_dir, api_base 는 파일에서만)
 EDITABLE_KEYS = {
     "school_name", "grade", "class_no", "teacher_name",
-    "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "collect_times",
+    "coolmessenger_name", "coolmessenger_path", "coolmessenger_folder", "edufine_folder", "folderdoc_folder", "collect_times",
     "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_text", "telegram_calllog", "telegram_mask_names", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_auto_class_only", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
