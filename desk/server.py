@@ -2019,7 +2019,7 @@ def post_pick(app, q, body):
 
 
 # ---- 문서 작성: 폴더 색인 → 관련 파일 찾기 → 문서·서식 채우기 (0.6.0) ----
-FORM_META = "folderdoc_form"
+FORM_META = folderdoc.FORM_META
 
 
 def _folderdoc_dir(app):

@@ -378,6 +378,29 @@ def list_outputs(out_dir, limit=20):
              "at": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")} for p in files[:limit]]
 
 
+FORM_META = "folderdoc_form"   # 화면에서 올려 둔 서식 (이름·칸) — 파일은 documents/forms/current.<확장자>
+
+
+def saved_form(db, out_dir):
+    """화면 '문서 작성'에 올려 둔 서식 → (이름, 바이트) 또는 None."""
+    meta = db.get_meta(FORM_META)
+    if not meta:
+        return None
+    p = Path(out_dir) / "forms" / ("current" + Path(meta["name"]).suffix.lower())
+    return (meta["name"], p.read_bytes()) if p.is_file() else None
+
+
+def names_in_file(p, names):
+    """만든 문서에 학생 이름(명단, 두 글자 이상)이 몇 명 들어 있는지. 읽지 못하면 None (그럴 땐 밖으로 보내지 않음).
+    AI 답은 이미 가리지만, 서식에 원래 있던 글(작년 내용 등)·참고 파일 이름은 가리지 않으므로 보내기 전에 한 번 더 봄."""
+    try:
+        text = read_text(Path(p))
+    except (docs.DocError, OSError):
+        return None
+    flat = re.sub(r"\s+", "", text or "")
+    return sum(1 for n in {n for n in names if len(n) >= 2} if n in text or n in flat)
+
+
 def output_path(out_dir, name):
     """받기: 결과 폴더 안의 파일 이름만 (경로를 벗어나지 않게)."""
     if not name or "/" in name or "\\" in name or name.startswith("."):
@@ -418,7 +441,8 @@ class Job:
         return lambda prompt, system, max_tokens: ai.ask(base, model, prompt, system=system,
                                                           max_tokens=max_tokens, db=self.db), base, model
 
-    def _start(self, kind, fn):
+    def _start(self, kind, fn, on_done=None):
+        """on_done(결과 또는 None, 오류 글 또는 None): 끝나면 부름 (텔레그램에서 시작한 일의 답, 0.6.3)."""
         with self.lock:
             if self.kind:
                 raise FolderDocError("다른 작업이 진행 중입니다. 끝난 뒤 다시 눌러 주세요")
@@ -427,27 +451,40 @@ class Job:
             self.stop_event.clear()
 
         def run():
+            result = error = None
             try:
                 out = fn()
+                result = {"kind": kind, **out}
                 with self.lock:
-                    self.result = {"kind": kind, **out}
+                    self.result = result
             except (FolderDocError, ai.AIError) as e:
+                error = str(e)
                 with self.lock:
-                    self.error, self.failed = str(e), kind
+                    self.error, self.failed = error, kind
             except Exception as e:  # 뒤에서 도는 일이 조용히 죽지 않게
+                error = f"{'색인' if kind == 'index' else '문서 만들기'} 중 오류: {type(e).__name__}"
                 with self.lock:
                     self.failed = kind
-                    self.error = f"{'색인' if kind == 'index' else '문서 만들기'} 중 오류: {type(e).__name__}"
+                    self.error = error
                 self.db.log(f"문서 작성 {kind} 오류: {type(e).__name__}: {e}", "error")
             finally:
                 with self.lock:
                     self.kind = None
                     self.progress = None
+            if on_done:
+                try:
+                    on_done(result, error)
+                except Exception as e:   # 답을 보내지 못해도 결과 파일은 그대로
+                    self.db.log(f"문서 작성 결과 알림 오류: {type(e).__name__}", "error")
 
         self.thread = threading.Thread(target=run, name=f"folderdoc-{kind}", daemon=True)
         self.thread.start()
 
-    def start_index(self, with_ai=False):
+    def busy(self):
+        with self.lock:
+            return self.kind
+
+    def start_index(self, with_ai=False, on_done=None):
         folder = str(check_folder(self.config["folderdoc_folder"]))
         summarize = None
         if with_ai:
@@ -475,16 +512,16 @@ class Job:
             st["seconds"] = round(time.monotonic() - t0, 1)
             self.db.log(f"문서 작성 폴더 색인: 파일 {st['files']}개 (새로 읽음 {st['new']}, AI 요약 {st['summarized']})")
             return st
-        self._start("index", fn)
+        self._start("index", fn, on_done)
 
-    def start_draft(self, task, paths, form=None, fmt="docx"):
+    def start_draft(self, task, paths, form=None, fmt="docx", on_done=None):
         ask, _, _ = self._ask_factory()
 
         def fn():
             with self.lock:
                 self.progress = {"step": "AI 가 쓰는 중"}
             return make_document(self.db, self.config, task, paths, form, fmt, self.out_dir, ask)
-        self._start("draft", fn)
+        self._start("draft", fn, on_done)
 
     def stop(self):
         self.stop_event.set()
