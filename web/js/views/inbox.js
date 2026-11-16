@@ -319,7 +319,9 @@ function aiSummaryBox(it, tab) {
     });
     if (a.running) {
         again();
-        return el('div.ai-item-sum', el('span.spin'), ' AI 가 이 항목을 요약하는 중… (이 PC 에서 돌아 20~30초, 길면 몇 분 걸립니다. 다른 화면을 써도 됩니다)');
+        // 0.5.99 긴 자료는 조각으로 나눠 읽은 뒤 합침: 몇 번째 조각인지 보임
+        const part = Array.isArray(a.part) && a.part[1] ? ` 긴 자료라 나눠 읽는 중 (${Math.min(a.part[0] + 1, a.part[1])}/${a.part[1]}단계)…` : '';
+        return el('div.ai-item-sum', el('span.spin'), ' AI 가 이 항목을 요약하는 중…' + part + ' (이 PC 에서 돌아 20~30초, 길면 몇 분 걸립니다. 다른 화면을 써도 됩니다)');
     }
     if (a.queued) {
         again();
