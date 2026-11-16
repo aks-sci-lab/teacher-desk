@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from desk import absence, queries
 from desk.collect import add_text_item
-from desk.telegram import (ARG_COMMANDS, BOT_MENU, COMMANDS, KEY_TEXT, KEYBOARD, MAIN_MENU, MENU_ACTIONS,
+from desk.telegram import (ARG_COMMANDS, P_DOC, P_INDEX, BOT_MENU, COMMANDS, KEY_TEXT, KEYBOARD, MAIN_MENU, MENU_ACTIONS,
                            SUBMENUS, TEXT_LIMIT, Bot)
 from tests.fake_telegram import FakeTelegram
 from tests.test_collect import Env
@@ -44,7 +44,8 @@ class TelegramMenuTests(unittest.TestCase):
                          ["brief", "week", "inbox", "calendar", "timetable", "attendance", "search", "ask"])
         for c in BOT_MENU:   # '/' 메뉴의 명령은 모두 알아들음
             slash = "/" + c["command"]
-            self.assertTrue(slash in COMMANDS or slash in ARG_COMMANDS or c["command"] == "addevent", slash)
+            self.assertTrue(slash in COMMANDS or slash in ARG_COMMANDS or c["command"] == "addevent"
+                            or P_DOC.match(slash) or P_INDEX.match(slash), slash)
             self.assertLessEqual(len(c["description"]), 256)
         rows = MAIN_MENU + [r for _, rs in SUBMENUS.values() for r in rs]
         for row in rows:
@@ -52,7 +53,8 @@ class TelegramMenuTests(unittest.TestCase):
                 self.assertTrue(action in MENU_ACTIONS or action.startswith("g:"), action)
                 self.assertLessEqual(len(f"mn:{action}".encode()), 64)
         for text in MENU_ACTIONS.values():
-            self.assertTrue(text in COMMANDS or text.split()[0] in ARG_COMMANDS or text == "일정 추가", text)
+            self.assertTrue(text in COMMANDS or text.split()[0] in ARG_COMMANDS or text == "일정 추가"
+                            or P_DOC.match(text) or P_INDEX.match(text), text)
         self.assertIsNone(self.bot.handle_update(press("mn:g:없는묶음")))
         self.assertIsNone(self.bot.handle_update(press("mn:위험한명령")))
         self.assertIsNone(self.bot.handle_update(press("mn:early", chat=6)))   # 연결 안 된 사람

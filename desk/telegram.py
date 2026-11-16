@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import VERSION, absence, ai, calllog, assist, holidays, passlink, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, calllog, assist, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -50,6 +50,8 @@ HELP = (
     "통계 — 이번 달 학급 합계 (건수만)\n"
     "\n🔍 검색 — 자료 검색 (AI 없이)\n"
     "🤖 AI 질문 — /ask 질문 (일반 질문 AI, 업무자료는 붙이지 않음)\n"
+    "📝 문서 작성 — /문서 2학기 과학과 협의회 회의록 → 관련 파일 고르기 → 새 docx, 또는 서식(hwp·hwpx·docx)을 보내면 그 칸에 채움\n"
+    "   /색인 — 업무 폴더 색인을 지금 만들기 (보낼 때만 돎, '/색인 AI' 는 AI 요약도)\n"
     "\n⚙ 기타: 메뉴 · 도움말 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기)\n"
     "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
@@ -101,6 +103,7 @@ BOT_MENU = [
     {"command": "attendance", "description": "☑ 출결 (조퇴·외출·결석계·통계)"},
     {"command": "search", "description": "🔍 자료 검색: /search 낱말"},
     {"command": "ask", "description": "🤖 AI 질문 (업무자료 제외)"},
+    {"command": "doc", "description": "📝 문서 작성: /doc 할 작업"},
     {"command": "menu", "description": "☰ 메뉴 단추"},
     {"command": "today", "description": "오늘 일정·마감"},
     {"command": "deadlines", "description": "7일 안의 마감"},
@@ -111,6 +114,7 @@ BOT_MENU = [
     {"command": "absence", "description": "결석계: /absence 이름 번호 병결 10/29~11/3"},
     {"command": "unread", "description": "안 읽은 자료"},
     {"command": "refresh", "description": "지금 수집"},
+    {"command": "index", "description": "문서 작성용 폴더 색인 만들기"},
     {"command": "status", "description": "준비 상태"},
     {"command": "update", "description": "새 버전 확인·업데이트"},
     {"command": "cancel", "description": "진행 중인 입력 취소"},
@@ -138,7 +142,7 @@ MENU_ACTIONS = {
     "today": "오늘", "deadlines": "마감", "addevent": "일정 추가",
     "lessons": "내 수업", "tomorrow": "내일 수업", "myclass": "우리 반 시간표",
     "early": "조퇴증", "out": "외출증", "absence": "결석계", "stats": "통계",
-    "search": "자료 검색", "ai": "AI 질문", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
+    "search": "자료 검색", "ai": "AI 질문", "doc": "/문서", "index": "/색인", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
 }
 MAIN_MENU = [[("📋 브리핑", "brief"), ("🗓 주간", "week"), ("📥 수신함", "g:inbox")],
              [("📅 달력", "g:calendar"), ("▦ 시간표", "g:timetable"), ("☑ 출결", "g:attendance")],
@@ -148,7 +152,7 @@ SUBMENUS = {
     "calendar": ("📅 달력", [[("📅 오늘", "today"), ("⏰ 마감 7일", "deadlines")], [("➕ 일정 추가", "addevent")]]),
     "timetable": ("▦ 시간표", [[("📚 오늘 내 수업", "lessons"), ("📚 내일 수업", "tomorrow")], [("🏫 우리 반 시간표", "myclass")]]),
     "attendance": ("☑ 출결", [[("🏃 조퇴증", "early"), ("🚶 외출증", "out")], [("📝 결석계", "absence"), ("📊 이번 달 통계", "stats")]]),
-    "more": ("⚙ 기타", [[("⚙ 상태", "status"), ("⬆ 업데이트", "update")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
+    "more": ("⚙ 기타", [[("📝 문서 작성", "doc"), ("📚 색인 만들기", "index")], [("⚙ 상태", "status"), ("⬆ 업데이트", "update")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
 }
 GROUP_HINT = {
     "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2'",
@@ -168,6 +172,12 @@ P_ADD_EVENT = re.compile(rf"^(?:/addevent(?:@\S+)?|{_EV_NOUN}\s*{_EV_VERB}{_EV_T
 P_ADD_EVENT_BARE = re.compile(rf"^(?:새\s*(?:일정|스케줄|스케쥴)|등록)(?:\s*(?:할게|할래|해\s*줘|하기|해요))?[.!~]*$")   # 뒤에 내용 없이만
 P_EVENT_QUESTION = re.compile(r"[?？]\s*$|방법|어떻게|언제|어디|뭐야|뭐지|무엇")   # 내용 자리가 질문이면 명령이 아님
 EVENT_TEXT_LIMIT = 100
+# 문서 작성 (0.6.3): '/문서 할 작업'·'/doc'·'문서 작성 …'·'문서 만들기 …', 색인은 '/색인'·'/index'·'색인 만들기' (보낼 때만 돎)
+P_DOC = re.compile(r"^(?:/doc(?:@\S+)?|/문서(?:\s*작성)?|문서\s*(?:작성|만들기)(?:\s*(?:하기|해\s*줘|해\s*주세요))?)(?:\s+(.*))?$", re.S)
+P_INDEX = re.compile(r"^(?:/index(?:@\S+)?|/색인|색인\s*(?:만들기|다시\s*만들기|해\s*줘))(?:\s+(.*))?$", re.S)
+DOC_CANDIDATES = 5     # 후보 파일 (폰 한 화면)
+DOC_PICK = 3           # 처음에 골라 두는 파일 (점수가 너무 낮은 것은 빼고)
+DOC_MIN_SCORE = 0.35
 EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
 
 
@@ -295,6 +305,7 @@ class Bot:
         self.monitor = None
         self.asking = None      # 지금 답을 만드는 질문 (한 번에 하나)
         self.read_image = None  # desk.py 가 연결: 쿨메신저 사진 주소 → (바이트, 종류) 또는 None
+        self.folderdoc = None   # desk.py 가 연결: 화면 '문서 작성'과 같은 folderdoc.Job (한 번에 하나)
         self.updates = None     # desk.py 가 연결: state()·check()·apply(force) — 텔레그램에서 업데이트
         self.sync = False       # 시험: 질문의 답을 기다렸다가 돌려줌
         self.choice_requests = {}
@@ -436,6 +447,9 @@ class Bot:
             return self.handle_button(update["callback_query"])
         msg = update.get("message") or {}
         if msg.get("document"):
+            name = (msg["document"].get("file_name") or "").lower()
+            if name.endswith(formfill.SUPPORTED):   # 문서 작성 서식 (0.6.3)
+                return self.handle_form_file(msg)
             return self.handle_calllog_file(msg)   # 통화·문자 기록 파일 (0.5.84)
         chat = msg.get("chat") or {}
         text = (msg.get("text") or "").strip()
@@ -470,6 +484,12 @@ class Bot:
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
             return self.dialog_input(cid, text)
+        m = P_DOC.match(text) or P_INDEX.match(text)
+        if m and not (m.group(1) and P_EVENT_QUESTION.search(m.group(1))):   # '문서 작성 어떻게 해?' 는 질문으로
+            self.dialog = None
+            if m.re is P_INDEX:
+                return self.start_index(cid, m.group(1) or "")
+            return self.begin_doc(cid, (m.group(1) or "").strip())
         added = self.add_event_words(text)
         if added is not None:   # '일정 추가'·'일정 등록'·'새 일정' 같은 명령 모양 또는 메뉴 단추로만 시작
             return self.begin_event(cid, added)
@@ -746,6 +766,8 @@ class Bot:
             return self.offer_general(cid, text)
         if kind == "free":
             return self.free_pick(cid, dialog, text.strip())
+        if kind == "doc":   # 할 작업 (고르는 중에 다시 보내면 그 말로 다시 찾음)
+            return self.doc_task(cid, text.strip())
         if step == "number":
             if not text.isdigit() or len(text) > 5:
                 return self.reply(cid, "학생 번호만 보내세요. 예: 7. 그만하려면 '취소'.")
@@ -1552,6 +1574,8 @@ class Bot:
             if action == "cancel":
                 self.dialog = None
                 return self.reply(cid, "입력을 취소했습니다. 저장하지 않았습니다.")
+            if dialog["kind"] == "doc":
+                return self.doc_action(cid, dialog, action, msg.get("message_id"))
             if action.startswith("fp:") and dialog["kind"] == "free" and dialog["step"] == "pick":
                 return self.free_pick(cid, dialog, action[3:], msg.get("message_id"))
             if action.startswith("type:") and dialog["kind"] == "absence" and dialog["step"] == "type":
@@ -1924,6 +1948,193 @@ class Bot:
         self.send(text, cid)
         return text
 
+    # ---- 문서 작성 (0.6.3): 화면 '문서 작성'과 같은 색인·찾기·문서 만들기(folderdoc.Job)를 텔레그램에서 ----
+    # 흐름: '/문서 할 작업' → 관련 파일 후보(번호 단추로 넣고 빼기) → [📄 새 문서] 또는 서식 파일을 보냄 → 만든 파일을 돌려받음.
+    # AI 는 화면과 같이 이 PC 의 LM Studio 만, 보내는 글·답 모두 학생 이름 가림. 색인은 '/색인' 을 보낼 때만.
+    # 만든 문서는 달라고 할 때만 선생님 채팅으로 (원본 파일 받기와 같은 범위, 설정 telegram_docwrite 로 끔).
+    # 서식에 원래 있던 글처럼 AI 가 가리지 못한 곳에 학생 이름이 있으면 보내지 않고 PC 에서 받으라고 안내.
+    DOC_PC = "업무 데스크 → 문서 작성 → 만든 문서"
+
+    def doc_ready(self):
+        if not self.config["telegram_docwrite"]:
+            return ("텔레그램 문서 작성이 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 "
+                    "'텔레그램에서 문서 작성 쓰기'를 켜세요.")
+        if not self.folderdoc:
+            return "문서 작성은 업무 데스크 앱이 켜져 있을 때만 됩니다."
+        return None
+
+    def wait_job(self):
+        """시험(sync)에서는 뒤에서 도는 문서 작업이 끝날 때까지 기다림."""
+        if self.sync and self.folderdoc and self.folderdoc.thread:
+            self.folderdoc.thread.join(60)
+
+    def begin_doc(self, cid, task):
+        err = self.doc_ready()
+        if err:
+            return self.reply(cid, err)
+        if task:
+            return self.doc_task(cid, task)
+        self.dialog = {"id": secrets.token_hex(6), "kind": "doc", "step": "task", "expires": time.monotonic() + DIALOG_TTL}
+        prompt = ("📝 만들 문서(할 작업)를 보내세요. 예: 2학기 과학과 협의회 회의록\n"
+                  "업무 폴더 색인에서 관련 파일을 찾아 보여 드립니다.\n10분 안에 입력하세요. 그만하려면 '취소'.")
+        self.send(prompt, cid, keyboard=True)
+        return prompt
+
+    def doc_task(self, cid, task):
+        err = self.doc_ready()
+        if err:
+            return self.reply(cid, err)
+        if len(task) > 300 or len(folderdoc.norm(task)) < 2:
+            return self.reply(cid, "할 작업을 2~300자로 보내 주세요. 예: 2학기 과학과 협의회 회의록")
+        if not folderdoc.counts(self.db)["files"]:
+            self.dialog = None
+            if not self.config["folderdoc_folder"]:
+                return self.reply(cid, "아직 업무 폴더를 고르지 않았습니다. PC 의 업무 데스크 → 문서 작성에서 폴더를 한 번 고르세요.")
+            return self.reply(cid, "아직 폴더 색인이 없습니다. '/색인' 을 보내면 지금 만듭니다 (파일 수에 따라 몇 분).")
+        found = folderdoc.search(self.db, task, limit=DOC_CANDIDATES)
+        if not found:
+            return self.reply(cid, f"'{cut(task, 30)}' 와 관계있는 파일을 찾지 못했습니다. 낱말을 바꿔 보내거나 "
+                                   "'/색인' 으로 색인을 새로 만드세요.")
+        sel = [i for i, f in enumerate(found[:DOC_PICK]) if f["score"] >= DOC_MIN_SCORE] or [0]
+        self.dialog = {"id": secrets.token_hex(6), "kind": "doc", "step": "pick", "task": task, "found": found,
+                       "sel": set(sel), "expires": time.monotonic() + DIALOG_TTL}
+        return self.show(cid, None, *self.doc_view(self.dialog))
+
+    def doc_view(self, dialog):
+        did, sel = dialog["id"], dialog["sel"]
+        counts = self.config["telegram_detail"] == "counts"
+        lines = [f"📝 {cut(dialog['task'], 40)}", "관련 파일 (✅ 표시한 파일을 참고해 만듭니다)"]
+        for i, f in enumerate(dialog["found"]):
+            lines.append(f"{'✅' if i in sel else '▫️'} {i + 1}. {cut(self.mask_always(f['path']), 60)}")
+            if f.get("summary") and not counts:
+                lines.append(f"     {cut(self.mask_always(f['summary']), 50)}")
+        lines.append("\n번호 단추로 넣고 빼세요. 학교 서식에 채우려면 서식 파일(hwp·hwpx·docx)을 이 대화에 보내세요.")
+        buttons = [[{"text": ("✅" if i in sel else "") + str(i + 1), "callback_data": f"dlg:{did}:dt:{i}"}
+                    for i in range(len(dialog["found"]))]]
+        row = [{"text": "📄 새 문서(docx)로 만들기", "callback_data": f"dlg:{did}:dn"}]
+        form = folderdoc.saved_form(self.db, self.folderdoc.out_dir) if self.folderdoc else None
+        if form:
+            row.append({"text": f"🖥 PC 서식에 채우기 ({cut(form[0], 14)})", "callback_data": f"dlg:{did}:dp"})
+        buttons += [row, [{"text": "✖ 취소", "callback_data": f"dlg:{did}:cancel"}]]
+        return "\n".join(lines), buttons
+
+    def doc_action(self, cid, dialog, action, message_id):
+        if dialog["step"] != "pick":
+            return self.reply(cid, "할 작업을 글로 보내 주세요. 그만하려면 '취소'.")
+        if action.startswith("dt:") and action[3:].isdigit() and int(action[3:]) < len(dialog["found"]):
+            dialog["sel"] ^= {int(action[3:])}
+            return self.show(cid, message_id, *self.doc_view(dialog))
+        if action == "dn":
+            return self.doc_run(cid, dialog, None, "새 문서(docx)")
+        if action == "dp":
+            form = folderdoc.saved_form(self.db, self.folderdoc.out_dir)
+            if not form:
+                return self.reply(cid, "PC 에 올려 둔 서식이 없습니다. 서식 파일을 이 대화에 보내 주세요.")
+            return self.doc_run(cid, dialog, form, f"PC 서식 '{cut(form[0], 30)}'")
+        return self.reply(cid, "현재 단계의 단추를 사용해 주세요. 그만하려면 '취소'.")
+
+    def handle_form_file(self, msg):
+        """문서 작성 중에 보낸 서식 파일: 메모리에서 읽어 그 서식에 채움 (서식 원본은 디스크에 따로 두지 않음)."""
+        chat = msg.get("chat") or {}
+        cid = chat.get("id")
+        if chat.get("type") != "private" or cid is None or cid != self.chat_id:
+            return None   # 연결된 선생님이 아닌 사람의 파일은 받지도, 답하지도 않음
+        err = self.doc_ready()
+        if err:
+            return self.reply(cid, "서식은 받지 않았습니다. " + err)
+        dialog = self.dialog
+        if not (dialog and dialog["kind"] == "doc" and dialog["step"] == "pick"):
+            return self.reply(cid, "서식은 받지 않았습니다. 먼저 '/문서 할 작업' 을 보내 참고할 파일을 고른 뒤 서식을 보내 주세요.")
+        if time.monotonic() > dialog["expires"]:
+            self.dialog = None
+            return self.reply(cid, "입력 시간이 10분을 넘었습니다. '/문서 할 작업' 부터 다시 해 주세요.")
+        doc = msg["document"]
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", doc.get("file_name") or "서식")[-100:]
+        try:
+            if (doc.get("file_size") or 0) > formfill.MAX_FORM_BYTES:
+                raise ValueError("서식 파일이 너무 큽니다 (10MB 이하)")
+            info = self.api("getFile", {"file_id": doc.get("file_id")}, timeout=30)
+            raw = self.download_file(info["file_path"], formfill.MAX_FORM_BYTES, "서식 파일이 너무 큽니다 (10MB 이하)")
+            fields = formfill.Form(name, raw).fields()
+        except (ValueError, formfill.FormError) as e:
+            return self.reply(cid, f"서식을 읽지 못했습니다: {e}")
+        except Exception as e:
+            self.db.log(f"텔레그램 서식 받기 오류: {type(e).__name__}", "error")
+            return self.reply(cid, "서식을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.")
+        if not fields:
+            return self.reply(cid, "이 서식에서 채울 칸을 찾지 못했습니다 (표의 이름 칸 옆 빈칸이나 {{자리표시}} 가 필요합니다). "
+                                   "위의 [📄 새 문서] 로 만들 수도 있습니다.")
+        return self.doc_run(cid, dialog, (name, raw), f"서식 '{cut(self.mask_always(name), 30)}'의 칸 {len(fields)}개를 채우는")
+
+    def doc_run(self, cid, dialog, form, what):
+        paths = [dialog["found"][i]["path"] for i in sorted(dialog["sel"])]
+        if not paths:
+            return self.reply(cid, "참고할 파일을 하나 이상 골라 주세요 (번호 단추).")
+        task = dialog["task"]
+        try:
+            self.folderdoc.start_draft(task, paths, form, "docx",
+                                       on_done=lambda res, err: self.doc_done(cid, task, res, err))
+        except (folderdoc.FolderDocError, ai.AIError) as e:
+            return self.reply(cid, f"문서를 만들 수 없습니다: {e}")
+        self.dialog = None
+        text = (f"✍ {what} 문서를 만드는 중… 참고 파일 {len(paths)}개\n"
+                "이 PC 의 AI 라 1~3분 걸립니다. 다 되면 파일을 보내 드립니다.")
+        self.reply(cid, text)
+        self.wait_job()
+        return text
+
+    def doc_done(self, cid, task, res, err):
+        if err:
+            return self.reply(cid, f"⚠ 문서를 만들지 못했습니다: {self.mask_always(err)}")
+        p = self.folderdoc.out_dir / res["file"]
+        shown = self.mask_always(res["file"])
+        found = folderdoc.names_in_file(p, [s["name"] for s in self.db.students()])
+        if found is None:
+            return self.reply(cid, f"📄 '{shown}' 을 만들었지만 내용을 확인하지 못해 텔레그램으로 보내지 않았습니다. {self.DOC_PC}에서 받으세요.")
+        if found:
+            return self.reply(cid, f"📄 '{shown}' 을 만들었습니다. 학생 이름 {found}명이 들어 있어 텔레그램으로 보내지 않았습니다. "
+                                   f"{self.DOC_PC}에서 받아 확인하세요.")
+        if p.stat().st_size > FILE_LIMIT:
+            return self.reply(cid, f"📄 '{shown}' 이 너무 커서 텔레그램으로 보낼 수 없습니다. {self.DOC_PC}에서 받으세요.")
+        lines = [f"📄 {cut(task, 40)}"]
+        if "filled" in res:
+            lines.append(f"채운 칸 {len(res['filled'])}개" + (f" · 빈 채로 둔 칸: {', '.join(res['not_filled'][:5])}"
+                                                            if res.get("not_filled") else ""))
+        lines.append(f"참고 파일 {len(res['files'])}개 · 날짜·숫자·이름은 원본과 꼭 맞춰 보세요.")
+        caption = self.mask_always("\n".join(lines))
+        try:
+            self.send_file(cid, shown, p.read_bytes(), caption=caption)
+        except (urllib.error.URLError, OSError, RuntimeError):
+            return self.reply(cid, f"📄 '{shown}' 을 만들었지만 텔레그램으로 보내지 못했습니다. {self.DOC_PC}에서 받으세요.")
+        return caption
+
+    def start_index(self, cid, arg):
+        err = self.doc_ready()
+        if err:
+            return self.reply(cid, err)
+        with_ai = "ai" in arg.lower() or "요약" in arg
+        try:
+            self.folderdoc.start_index(with_ai, on_done=lambda res, e: self.index_done(cid, res, e))
+        except (folderdoc.FolderDocError, ai.AIError) as e:
+            hint = " (업무 데스크 → 문서 작성에서 고릅니다)" if "폴더" in str(e) else ""
+            return self.reply(cid, f"색인을 시작하지 못했습니다: {e}{hint}")
+        text = ("📚 업무 폴더 색인을 만드는 중… " + ("AI 요약도 함께라 파일마다 수십 초 걸릴 수 있습니다." if with_ai else
+                                              "파일 수에 따라 몇 분 걸립니다.") + " 끝나면 알려 드립니다.")
+        self.reply(cid, text)
+        self.wait_job()
+        return text
+
+    def index_done(self, cid, st, err):
+        if err:
+            return self.reply(cid, f"⚠ 색인을 만들지 못했습니다: {self.mask_always(err)}")
+        text = (f"📚 색인 완료: 파일 {st['files']}개 (새로 읽음 {st['new']} · 그대로 {st['unchanged']} · 못 읽음 {st['errors']}"
+                + (f" · AI 요약 {st['summarized']}" if st.get("summarized") else "") + ")")
+        if st.get("stopped"):
+            text += "\n중간에 멈췄습니다. 다시 보내면 이어서 합니다."
+        if st.get("limit"):
+            text += f"\n파일이 많아 {folderdoc.MAX_FILES}개까지만 했습니다."
+        return self.reply(cid, text + "\n이제 '/문서 할 작업' 을 보내세요.")
+
     # ---- 통화·문자 기록 파일 받기 (0.5.84, 사용자 결정 2026-11-10 예외: 기본 끔, 선생님 채팅만, 처리 후 삭제, 답은 건수만) ----
     def handle_calllog_file(self, msg):
         chat = msg.get("chat") or {}
@@ -1958,12 +2169,12 @@ class Bot:
             text += "\n⚠ 보낸 파일 메시지를 지우지 못했습니다. 텔레그램 대화에서 직접 지워 주세요."
         return self.reply(cid, text)
 
-    def download_file(self, file_path):
+    def download_file(self, file_path, limit=calllog.MAX_TOTAL, too_big="파일이 너무 큽니다 (14MB 이하)"):
         url = f"{self.config['telegram_api_base'].rstrip('/')}/file/bot{self.token}/{file_path}"
         with urllib.request.urlopen(url, timeout=60) as r:
-            raw = r.read(calllog.MAX_TOTAL + 1)
-        if len(raw) > calllog.MAX_TOTAL:
-            raise ValueError("파일이 너무 큽니다 (14MB 이하)")
+            raw = r.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError(too_big)
         return raw
 
     def send_answer(self, cid, cmd):

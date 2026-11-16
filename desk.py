@@ -117,6 +117,7 @@ def run(args, config, db):
     cloud.on_mode = lambda mode, msg: db.log(f"드라이브: {mode} {msg}".strip())
     visits.app_started(db)   # 꺼져 있던 동안은 쓰지 않았음 → 브리핑 '마지막으로 닫은 이후' 기준
     bot.read_image = lambda src: read_item_image(app, src)   # 새 쿨메신저 사진을 텔레그램으로 보낼 때
+    bot.folderdoc = app.folderdoc   # 텔레그램 '/문서'·'/색인' 도 화면과 같은 작업(한 번에 하나)으로
     try:
         httpd = serve(app, open_browser=not args.no_browser)
     except OSError:
