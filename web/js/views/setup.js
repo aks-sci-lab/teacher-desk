@@ -3,6 +3,7 @@
 // - 칸은 설정 화면과 같은 부품이라 고치면 바로 저장됩니다(다음을 누르지 않아도 남음).
 // - 도우미 상태는 설정 키 setup_wizard 하나: '' 처음 · 'later' 나중에 · 'done' 마침 · 'notified' 기존 사용자에게 한 번 안내함
 import { el, clear, toast, guarded } from '../ui.js';
+import { icon } from '../icons.js';
 import { openTab, findTab, closeTab, showView } from '../shell.js';
 import { store, loadState, saveSettings } from '../store.js';
 import { openTimetable } from './timetable.js';
@@ -32,7 +33,7 @@ export const STEPS = [
         summary: s => [s.school_name, s.grade && s.class_no && `${s.grade}학년 ${s.class_no}반`, s.teacher_name].filter(has).join(' · '),
         build: ctx => [
             item('', el('div.card.setup-share',
-                el('b', '📄 학교 공통 설정 파일이 있나요? (선택)'),
+                el('b', icon('doc'), ' 학교 공통 설정 파일이 있나요? (선택)'),
                 imported
                     ? el('p.small.set-good', `불러왔습니다${shared().length ? ': ' + shared().join(' · ') : ''}. 이제 담임 이름·학년·반과 다음 단계의 쿨메신저·공문 폴더만 넣으면 됩니다.`)
                     : el('p.small', '같은 학교 선생님께 받은 "…-공통설정.deskshare.json" 파일을 불러오면 학교 이름·교시 시간·학사일정·전체 시간표가 한 번에 채워집니다. 없으면 그냥 아래 칸을 채우세요.'),
@@ -64,11 +65,11 @@ export const STEPS = [
         build: () => [
             shared().length ? el('p.small.set-good', `이미 있음: ${shared().join(' · ')} — 학교 공통 설정으로 받았거나 전에 불러온 것입니다. 학생 명단만 넣으면 됩니다.`) : null,
             item('', el('div.setup-cards',
-                el('div.card', el('b', '▦ 시간표'), el('p.small', '학교 시간표 엑셀을 불러오면 브리핑에 오늘 수업이 나옵니다.'),
+                el('div.card', el('b', icon('timetable'), ' 시간표'), el('p.small', '학교 시간표 엑셀을 불러오면 브리핑에 오늘 수업이 나옵니다.'),
                     el('button.btn.small', { type: 'button', onclick: openTimetable }, '시간표 불러오기')),
-                el('div.card', el('b', '📅 학사일정'), el('p.small', '학사일정 파일이나 나이스에서 가져오면 달력과 결석계 수업일 계산에 씁니다.'),
+                el('div.card', el('b', icon('calendar'), ' 학사일정'), el('p.small', '학사일정 파일이나 나이스에서 가져오면 달력과 결석계 수업일 계산에 씁니다.'),
                     el('button.btn.small', { type: 'button', onclick: openSchoolCal }, '학사일정 가져오기')),
-                el('div.card', el('b', '☑ 학생 명단'), el('p.small', `지금 ${store.state?.counts?.students ?? 0}명. 엑셀에서 번호·이름을 복사해 붙여 넣습니다.`),
+                el('div.card', el('b', icon('attendance'), ' 학생 명단'), el('p.small', `지금 ${store.state?.counts?.students ?? 0}명. 엑셀에서 번호·이름을 복사해 붙여 넣습니다.`),
                     el('button.btn.small', { type: 'button', onclick: openRoster }, '명단 붙여넣기')))),
             secretField('neis_key', '(선택) 나이스 인증키',
                 '나이스에서 학사일정을 가져올 때만 필요합니다. open.neis.go.kr 에 가입하면 무료로 받습니다.', 'open.neis.go.kr 에서 받은 인증키'),
@@ -135,7 +136,7 @@ function renderSetup(pane) {
     const go = n => { current = Math.max(0, Math.min(total - 1, n)); draw(); };
     const later = guarded(async () => {
         await saveSettings({ setup_wizard: 'later' });
-        toast('언제든 ⚙ 설정 → 🧭 설정 도우미에서 이어서 할 수 있습니다.', 'info', 5000);
+        toast('언제든 ⚙ 설정 → 설정 도우미에서 이어서 할 수 있습니다.', 'info', 5000);
         closeTab('setup');
     });
     const finish = guarded(async () => {
@@ -177,7 +178,7 @@ function renderSetup(pane) {
                         el('span.muted', ok ? (st.summary(s) || '설정됨') : (st.summary(s) ? `${st.summary(s)} (덜 채움)` : (skipped.has(st.id) ? '건너뜀' : '비어 있음') + (st.optional ? ' (선택)' : ''))),
                         el('button.btn.small', { type: 'button', onclick: () => go(i) }, ok ? '고치기' : '채우기'));
                 })),
-                el('p.small.muted', '이 도우미는 ⚙ 설정 → 🧭 설정 도우미에서 언제든 다시 열 수 있습니다.'));
+                el('p.small.muted', '이 도우미는 ⚙ 설정 → 설정 도우미에서 언제든 다시 열 수 있습니다.'));
             clear(foot,
                 el('button.btn', { type: 'button', onclick: () => go(current - 1) }, '◀ 이전'),
                 el('span.grow'),
@@ -189,7 +190,7 @@ function renderSetup(pane) {
 
     pane.append(
         el('div.set-head',
-            el('div', el('h1', '🧭 설정 도우미'),
+            el('div', el('h1.set-h', icon('compass'), '설정 도우미'),
                 el('p.sub', '처음 한 번만 차례대로 채우면 됩니다. 칸을 고치면 바로 저장되고, 모르는 단계는 건너뛰어도 됩니다.')),
             el('div.set-tools', saveStateBox())),
         progress, el('div.card.setup-card', body), foot);
