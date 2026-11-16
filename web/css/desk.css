@@ -1518,3 +1518,8 @@ label.check.share-row > span { display: flex; flex-direction: column; }
 .cloud-backups { list-style: none; padding: 0; margin: 8px 0; }
 .cloud-backups li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .cloud-backups li .btn { margin-left: auto; }
+.cloud-steps { list-style: none; padding-left: 0; }
+.cloud-steps > li { margin-bottom: 10px; }
+.cloud-steps .btn { margin-left: 4px; }
+.cloud-drop { border: 2px dashed var(--line-strong); border-radius: 8px; padding: 10px 12px; margin: 6px 0; }
+.cloud-drop.over { border-color: var(--accent); background: var(--accent-soft); }
