@@ -298,3 +298,52 @@ def make_draft(con, base, model, task, paths, names=(), today=None):
     text += "\n## 참고한 파일\n" + "\n".join(f"- {p}" for p in paths)
     text += "\n※ 업무 데스크가 이 PC 의 AI 로 만든 초안입니다. 날짜·숫자·이름은 원본과 꼭 맞춰 보세요."
     return text, len(prompt)
+
+
+# ---------------- 참고 자료 간소화 (선생님 요청 2026-11-16 "참고 문서 간소화시켜서 컨텍스트 양 줄여") ----------------
+KEY_WORDS = ("제출", "결정", "확정", "선정", "마감", "까지", "일시", "장소", "참석", "대상", "기간", "방법")
+DATEISH = re.compile(r"\d{1,4}\s*[./년]\s*\d{1,2}|\d{1,2}:\d{2}|\d+\s*(명|개|점|권|%)")
+COMPACT_CHARS = 900       # 참고 자료 전체 (예전 2,600자)
+COMPACT_LINE = 90         # 한 줄 최대 글자
+
+
+def _line_score(line, qgrams):
+    g = set(bigrams(line))
+    s = len(g & qgrams) * 1.0
+    if DATEISH.search(line):
+        s += 1.5
+    if any(k in line for k in KEY_WORDS):
+        s += 1.0
+    return s
+
+
+def compact_materials(con, paths, task, names=(), budget=COMPACT_CHARS, extra_terms=()):
+    """파일마다 작업과 관계있는 줄(작업 낱말이 겹치거나 날짜·숫자·'제출' 같은 말이 든 줄)만 골라 짧게.
+    AI 요약이 있으면 요약 줄도 후보에 넣음. 원래 순서는 지키고, 같은 줄은 한 번만."""
+    qgrams = set()
+    for t in list(query_terms(task)) + list(extra_terms):
+        qgrams |= set(bigrams(t))
+    rows = [con.execute("SELECT path, text, summary FROM files WHERE path=?", (p,)).fetchone() for p in paths]
+    rows = [r for r in rows if r]
+    each = budget // max(len(rows), 1)
+    parts, seen = [], set()
+    for i, r in enumerate(rows, 1):
+        cands = []
+        for n, raw in enumerate(((r["summary"] or "") + "\n" + (r["text"] or "")).splitlines()):
+            line = re.sub(r"\s+", " ", raw.strip().lstrip("-•◦·* ")).strip()
+            line = re.sub(r"^한\s*줄\s*요약\s*[:：]\s*", "", line)
+            key = norm(line)
+            if len(key) < 4 or key in seen or line.startswith("(긴 자료라"):
+                continue
+            seen.add(key)
+            cands.append((n, line[:COMPACT_LINE]))
+        scored = sorted(cands, key=lambda c: -_line_score(c[1], qgrams))
+        head = f"[자료 {i}] {Path(r['path']).stem[:30]}\n"
+        room, keep = each - len(head), []
+        for n, line in scored:
+            if _line_score(line, qgrams) <= 0 or room - len(line) - 1 < 0:
+                continue
+            keep.append((n, line))
+            room -= len(line) + 1
+        parts.append(head + "\n".join(l for _, l in sorted(keep)))
+    return ai.mask_names("\n".join(parts), names)
