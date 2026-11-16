@@ -18,6 +18,10 @@ from urllib.request import url2pathname
 
 import base64
 import binascii
+import ipaddress
+import socket
+import urllib.error
+import urllib.request
 
 from . import VERSION, aiclass, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
@@ -1103,11 +1107,71 @@ def _local_image(app, src):
     return None
 
 
-def read_item_image(app, src):
-    """쿨메신저 사진 하나의 (바이트, 종류). 쪽지 안 그림(data:)과 허용한 폴더 안의 PC 파일만, 아니면 None
-    (인터넷 주소는 읽지 않음). 텔레그램으로 보낼 때 씀."""
-    if src.lower().startswith(("http://", "https://")):
+WEB_IMAGE_MAX = 10 * 1024 * 1024   # 인터넷 주소 사진 하나의 최대 크기 (텔레그램 사진 한도)
+
+
+def _is_loopback(host):
+    """이 PC 자신(127.0.0.1 등)을 가리키는 주소인지. 업무 데스크·LM Studio 같은 이 PC 프로그램은 읽지 않으려고."""
+    host = (host or "").strip("[]").lower()
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return False   # 이름을 못 찾으면 어차피 내려받기가 실패함
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+        except ValueError:
+            continue
+        if ip.is_loopback or ip.is_unspecified:
+            return True
+    return False
+
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """다른 주소로 넘겨도 인터넷 주소(이 PC 자신이 아닌 곳)일 때만 따라감."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        u = urlparse(newurl)
+        if u.scheme not in ("http", "https") or _is_loopback(u.hostname):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_web_image(src, timeout=15):
+    """인터넷 주소에서 그림 하나를 내려받아 (바이트, 종류). 그림이 아니거나 너무 크면 None."""
+    opener = urllib.request.build_opener(_SafeRedirect())
+    req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) TeacherDesk"})
+    with opener.open(req, timeout=timeout) as r:
+        ctype = r.headers.get_content_type()
+        data = r.read(WEB_IMAGE_MAX + 1)
+    if not ctype.startswith("image/"):   # 종류를 안 알려 주면 파일 이름으로 짐작
+        guess = mimetypes.guess_type(urlparse(src).path)[0] or ""
+        if ctype not in ("application/octet-stream", "binary/octet-stream") or not guess.startswith("image/"):
+            return None
+        ctype = guess
+    if not data or len(data) > WEB_IMAGE_MAX:
         return None
+    return data, ctype
+
+
+def fetch_web_image(src):
+    """인터넷 주소 사진을 이 PC 가 내려받음 (0.5.101, 선생님 요청: 쿨메신저 사진을 텔레그램으로 함께).
+    화면이 같은 주소를 직접 불러오는 것과 같은 범위. 이 PC 자신을 가리키는 주소는 읽지 않음."""
+    u = urlparse(src)
+    if u.scheme not in ("http", "https") or _is_loopback(u.hostname):
+        return None
+    try:
+        return _open_web_image(src)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def read_item_image(app, src):
+    """쿨메신저 사진 하나의 (바이트, 종류), 못 읽으면 None. 텔레그램으로 보낼 때 씀.
+    쪽지 안 그림(data:), 허용한 폴더 안의 PC 파일, 인터넷 주소(이 PC 가 내려받음, 0.5.101)."""
+    if src.lower().startswith(("http://", "https://")):
+        return fetch_web_image(src)
     m = re.match(r"^data:(image/(?:png|jpeg|gif|bmp|webp));base64,(.+)$", src, re.S)
     if m:
         try:

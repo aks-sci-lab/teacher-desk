@@ -1,6 +1,6 @@
 import base64
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from desk import server
 from desk.collect import add_text_item
@@ -78,17 +78,24 @@ class TelegramCoolPhotoTests(unittest.TestCase):
         self.run_notify(a)
         self.assertEqual(self.fake.calls.count("sendPhoto"), 0)
 
-    def test_internet_photos_are_not_fetched_and_limit_and_failures_are_reported(self):
-        web = self.item("인터넷 사진", ["https://example.com/a.png"])
+    def test_internet_photos_are_sent_and_limit_and_failures_are_reported(self):
+        """0.5.101 선생님 요청: 인터넷 주소 사진도 이 PC 가 내려받아 함께 보냄. 못 읽은 사진은 몇 장인지 알림."""
+        self.read.side_effect = lambda src: (b"\xff\xd8 jpeg", "image/jpeg") if "ok" in src else None
+        web = self.item("인터넷 사진", ["https://example.com/ok.jpg", "https://example.com/gone.jpg"])
         self.run_notify(web)
-        self.read.assert_not_called()
-        self.assertEqual(self.fake.calls.count("sendPhoto"), 0)
-        self.assertIn("인터넷 주소 사진 1장", "\n".join(m["text"] for m in self.fake.sent))
-        many = self.item("사진 많음", [DATA + f"{i}" for i in range(10)] + ["data:image/png;base64,AAAA"] * 0)
+        self.assertEqual(self.fake.calls.count("sendPhoto"), 1)
+        self.assertIn("1장은 읽지 못해", "\n".join(m["text"] for m in self.fake.sent))
+        self.read.side_effect = lambda src: (b"\x89PNG bytes", "image/png")
+        many = self.item("사진 많음", [DATA + f"{i}" for i in range(10)])
         self.fake.calls.clear()
         self.run_notify(many, self.item("또 사진", [DATA, DATA + "x"]))
         self.assertEqual(self.fake.calls.count("sendPhoto"), 10)
-        self.assertIn("사진 2장", "\n".join(m["text"] for m in self.fake.sent))
+        self.assertIn("사진 2장은 한 번에 10장까지", "\n".join(m["text"] for m in self.fake.sent))
+
+    def test_photo_rejected_by_telegram_is_resent_as_file(self):
+        self.fake.fail_photo = True
+        self.run_notify(self.item("길쭉한 그림", [DATA]))
+        self.assertEqual(self.fake.calls.count("sendDocument"), 1)
 
     def test_gif_goes_as_file_and_refresh_command_also_sends_photos(self):
         self.read.side_effect = lambda src: (b"GIF89a", "image/gif")
@@ -99,10 +106,50 @@ class TelegramCoolPhotoTests(unittest.TestCase):
         self.run_notify(self.item("새로고침으로 받음", [DATA]), reason="telegram")
         self.assertEqual(len(self.fake.calls), 1)
 
-    def test_server_reader_reads_inline_only_never_internet(self):
+    def test_server_reader_reads_inline_and_internet_but_never_this_pc(self):
         self.assertEqual(server.read_item_image(None, DATA)[1], "image/png")
-        self.assertIsNone(server.read_item_image(None, "https://example.com/a.png"))
         self.assertIsNone(server.read_item_image(None, "data:image/png;base64,###"))
+        with patch.object(server, "_open_web_image", return_value=(b"img", "image/jpeg")) as opened, \
+                patch.object(server, "_is_loopback", side_effect=lambda h: h in ("localhost", "127.0.0.1")):
+            self.assertEqual(server.read_item_image(None, "https://school.example/a.jpg"), (b"img", "image/jpeg"))
+            self.assertIsNone(server.read_item_image(None, "http://127.0.0.1:8765/api/x.png"))
+            self.assertIsNone(server.read_item_image(None, "http://localhost/a.png"))
+            self.assertEqual(opened.call_count, 1)
+        with patch.object(server, "_open_web_image", side_effect=OSError("끊김")), \
+                patch.object(server, "_is_loopback", return_value=False):
+            self.assertIsNone(server.read_item_image(None, "https://school.example/a.jpg"))
+
+    def test_web_image_download_checks_type_and_size(self):
+        """실제 내려받기: 그림만, 크기 한도. (시험용으로 이 PC 의 작은 서버를 씀)"""
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                body, ctype = {"/a.png": (b"\x89PNG", "image/png"), "/page": (b"<html>", "text/html"),
+                               "/big.jpg": (b"x" * (server.WEB_IMAGE_MAX + 10), "image/jpeg"),
+                               "/noname.jpg": (b"\xff\xd8", "application/octet-stream")}[self.path]
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            self.assertEqual(server._open_web_image(base + "/a.png"), (b"\x89PNG", "image/png"))
+            self.assertIsNone(server._open_web_image(base + "/page"))
+            self.assertIsNone(server._open_web_image(base + "/big.jpg"))
+            self.assertEqual(server._open_web_image(base + "/noname.jpg"), (b"\xff\xd8", "image/jpeg"))
+            self.assertIsNone(server.fetch_web_image(base + "/a.png"))   # 이 PC 자신은 읽지 않음
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

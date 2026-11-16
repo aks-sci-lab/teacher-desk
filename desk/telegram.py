@@ -2122,43 +2122,50 @@ class Bot:
 
     def send_collect_photos(self, stats):
         """새 쿨메신저 쪽지에 든 사진을 텔레그램으로도 보냄 (사용자 요청 2026-11-02, 설정 telegram_photos).
-        쪽지 안 그림·허용한 폴더의 PC 파일만 (인터넷 주소 사진은 읽지 않고 개수만 알림). 한 번에 최대 10장."""
+        쪽지 안 그림·허용한 폴더의 PC 파일·인터넷 주소 사진(이 PC 가 내려받아 보냄, 0.5.101). 한 번에 최대 10장.
+        못 보낸 사진이 있으면 몇 장인지 알려 줌 (예전에는 못 읽은 사진을 말없이 건너뜀)."""
         ids = list(stats.get("new_ids") or [])
         if not (ids and self.chat_id and self.read_image and self.config["telegram_photos"]):
             return 0
         rows = self.db.query(
             f"SELECT id, title, images FROM items WHERE source = 'cool' AND images IS NOT NULL AND id IN ({','.join('?' * len(ids))}) "
             "ORDER BY received_at", ids)
-        sent = left = web = 0
+        sent = left = failed = 0
         for r in rows:
             try:
                 srcs = json.loads(r["images"] or "[]")
             except ValueError:
                 continue
             for i, src in enumerate(srcs, 1):
-                if src.lower().startswith(("http://", "https://")):
-                    web += 1
-                    continue
                 if sent >= PHOTO_LIMIT:
                     left += 1
                     continue
                 try:
                     found = self.read_image(src)
                     if not found:
+                        failed += 1
                         continue
                     data, ctype = found
                     ext = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}.get(ctype)
-                    caption = f"📷 {cut(self.mask(r['title']), 50)} ({i}/{len(srcs)})"
+                    caption = f"📷 {cut(self.mask(r['title']), 50)}" + (f" ({i}/{len(srcs)})" if len(srcs) > 1 else "")
                     if ext and len(data) <= 10 * 1024 * 1024:
-                        self.send_file(self.chat_id, f"photo{ext}", data, caption=caption, photo=True)
+                        try:
+                            self.send_file(self.chat_id, f"photo{ext}", data, caption=caption, photo=True)
+                        except (urllib.error.HTTPError, RuntimeError):   # 텔레그램이 사진으로 못 받는 그림(너무 길쭉함 등)은 파일로 다시
+                            self.send_file(self.chat_id, f"photo{ext}", data, caption=caption)
                     else:   # gif·bmp·10MB 넘는 그림은 파일로
-                        self.send_file(self.chat_id, f"photo{ext or '.bin'}", data, caption=caption)
+                        ext = ext or {"image/gif": ".gif", "image/bmp": ".bmp"}.get(ctype, ".bin")
+                        self.send_file(self.chat_id, f"photo{ext}", data, caption=caption)
                     sent += 1
                 except (urllib.error.URLError, OSError, RuntimeError):
-                    left += 1
-        if left or web:
-            parts = ([f"사진 {left}장" ] if left else []) + ([f"인터넷 주소 사진 {web}장"] if web else [])
-            self.send("📷 " + "·".join(parts) + "은 텔레그램으로 보내지 않았습니다. 업무 데스크 수신함에서 보세요.")
+                    failed += 1
+        notes = []
+        if left:
+            notes.append(f"사진 {left}장은 한 번에 {PHOTO_LIMIT}장까지라 보내지 않았습니다")
+        if failed:
+            notes.append(f"사진 {failed}장은 읽지 못해 보내지 못했습니다")
+        if notes:
+            self.send("📷 " + ", ".join(notes) + ". 업무 데스크 수신함에서 보세요.")
         return sent
 
     def send_collect_texts(self, stats):
