@@ -40,6 +40,24 @@ def _words(text, n=10):
 
 
 def answer(prompt):
+    if "[양식 채우기]" in prompt:
+        fields = [f.strip() for f in re.search(r"칸: (.+)", prompt).group(1).split(",")]
+        lines = _lines(_after(prompt, "참고 자료:"))
+        out = []
+        for f in fields:
+            key = re.sub(r"\s", "", f)
+            hit = [s for s in lines if re.sub(r"\s", "", s).startswith(key) and re.search(r"[:：]", s)]
+            if hit:
+                out.append(f"{f}: " + re.split(r"[:：]", hit[0], 1)[-1].strip())
+            elif "안건" in key or "내용" in key:
+                out.append(f"{f}:")
+                out += [f"- {s}" for s in lines if s.startswith("안건")][:4] or ["- (확인 필요)"]
+            elif "결과" in key:
+                out.append(f"{f}:")
+                out += [f"- {s}" for s in lines if "확정" in s or "결과" in s][:3] or ["- (확인 필요)"]
+            else:
+                out.append(f"{f}: (확인 필요)")
+        return "\n".join(out)
     if "[색인 키워드]" in prompt:
         return ", ".join(_words(_after(prompt, "제목:"), 10))
     if "[검색어 늘리기]" in prompt:
