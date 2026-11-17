@@ -32,7 +32,8 @@ BODY_CLASS = "Chrome_RenderWidgetHostHWND"
 OPEN_WAIT, CLOSE_WAIT = 6.0, 10.0
 TITLE_LIMIT, BODY_LIMIT = 100, 4000
 REPLY_PREFIX = "RE: "
-P_LABEL_NAME = re.compile(r"^([가-힣A-Za-z]+(?:\s[A-Za-z]+)*)")   # 조직도 글 '홍길동 1234 (2-3, 담임)' → '홍길동'
+# 조직도 글 → 이름: 학교 PC 는 '(홍길동)8661(교무기획2)'·'(홍길동)' 모양 (앞 괄호 안이 이름), '홍길동 1234' 모양도 받음
+P_LABEL_NAME = re.compile(r"^\(?\s*([가-힣A-Za-z]+(?:\s[A-Za-z]+)*)")
 
 _lock = threading.Lock()
 
@@ -53,7 +54,10 @@ def label_name(label):
 
 def clean_name(name):
     """'홍길동(과학과)'·'홍길동 선생님' → '홍길동' (보낸 사람 칸·텔레그램에 쓴 이름)."""
-    name = re.split(r"[(\[/<]", (name or "").strip(), maxsplit=1)[0].strip()
+    name = (name or "").strip()
+    if name.startswith("("):   # '(홍길동)8661' 모양은 괄호 안이 이름
+        name = name[1:]
+    name = re.split(r"[()\[/<]", name, maxsplit=1)[0].strip()
     name = re.sub(r"\s*(선생님|샘|쌤|님|교사|부장|교감|교장)$", "", name)
     return label_name(name)
 

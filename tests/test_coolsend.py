@@ -14,7 +14,7 @@ from tests.test_telegram_more import CHAT, msg, press
 class FakeUI:
     def __init__(self, people=None, locked=False):
         self.tree = people if people is not None else [
-            (11, "김철수 1234", "과학과"), (12, "이영희 2345 (2-3, 담임)", "2학년"), (13, "김철수 5555", "행정실")]
+            (11, "(김철수)1234", "과학과"), (12, "(이영희)2345(2-3, 담임)", "2학년"), (13, "(김철수)5555", "행정실")]
         self.locked = locked
         self.open = []          # 열린 쓰기 창
         self.chips = {}
@@ -66,6 +66,9 @@ class FakeUI:
 class CoolSendTests(unittest.TestCase):
     def test_names(self):
         self.assertEqual(coolsend.label_name("이영희 2345 (2-3, 담임)"), "이영희")
+        self.assertEqual(coolsend.label_name("(이영희)8605(교무기획2)"), "이영희")   # 학교 PC 조직도 모양
+        self.assertEqual(coolsend.label_name("(이영희)"), "이영희")
+        self.assertEqual(coolsend.clean_name("(이영희)8605"), "이영희")
         self.assertEqual(coolsend.clean_name("김철수(과학과)"), "김철수")
         self.assertEqual(coolsend.clean_name("김철수 선생님"), "김철수")
         self.assertEqual(coolsend.reply_title("회의 안내"), "RE: 회의 안내")
@@ -81,7 +84,7 @@ class CoolSendTests(unittest.TestCase):
         ui = FakeUI()
         person = coolsend.find_people("이영희", ui=ui)[0]
         self.assertIn("보냈습니다", coolsend.send(person, "RE: 안내", "확인했습니다", ui=ui))
-        self.assertEqual(ui.sent, [{"to": "이영희 2345 (2-3, 담임)", "title": "RE: 안내", "body": "확인했습니다"}])
+        self.assertEqual(ui.sent, [{"to": "(이영희)2345(2-3, 담임)", "title": "RE: 안내", "body": "확인했습니다"}])
 
     def test_stops_without_sending(self):
         for fail, left_open in (("chips", True), ("title", True), ("body", True), ("send", True)):
@@ -94,7 +97,7 @@ class CoolSendTests(unittest.TestCase):
             self.assertEqual(ui.sent, [], fail)
 
     def test_refuses_when_locked_or_draft_open_or_tree_changed(self):
-        person = {"label": "이영희 2345 (2-3, 담임)", "dept": "2학년", "name": "이영희"}
+        person = {"label": "(이영희)2345(2-3, 담임)", "dept": "2학년", "name": "이영희"}
         with self.assertRaises(coolsend.SendError):
             coolsend.send(person, "t", "b", ui=FakeUI(locked=True))
         ui = FakeUI()
@@ -147,7 +150,7 @@ class TelegramCoolSendTests(unittest.TestCase):
         self.assertEqual(self.ui.sent, [])
         self.bot.handle_update(msg("쪽지 김철수 자료 보냈습니다"))
         self.bot.handle_update(press(self.buttons()[1]["callback_data"]))
-        self.assertEqual(self.ui.sent[0]["to"], "김철수 5555")
+        self.assertEqual(self.ui.sent[0]["to"], "(김철수)5555")
 
     def test_reply_to_numbered_cool_item(self):
         item = add_text_item(self.env.db, "cool", "회의 자료 확인 부탁드립니다\n\n(보낸 사람: 이영희)", title="협의회 안내")["id"]
