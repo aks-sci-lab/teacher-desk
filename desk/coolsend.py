@@ -133,17 +133,20 @@ class WinUI:
         return bool(edit) and winui.set_text(edit, title)
 
     def paste_body(self, compose, body):
+        """본문 붙여넣기. 못 하면 까닭을 담은 SendError (다음에 어디서 멈췄는지 알 수 있게)."""
         target = next((h for h in winui.children(compose)
                        if winui.class_name(h) == BODY_CLASS and winui.is_visible(h)), None)
         if not target:
-            return False
+            raise SendError("쪽지 창의 본문 칸을 찾지 못해 보내지 않았습니다.", left_open=True)
         saved = winui.get_clipboard_text()
         try:
-            if not winui.set_clipboard_text(body) or not winui.bring_front(compose):
-                return False
+            if not winui.set_clipboard_text(body):
+                raise SendError("클립보드에 내용을 넣지 못해 보내지 않았습니다.", left_open=True)
+            if not winui.bring_front(compose):
+                raise SendError("쪽지 창을 앞으로 가져오지 못해 보내지 않았습니다.", left_open=True)
             pt = winui.center(target)
             if not winui.window_at(pt, target):
-                return False
+                raise SendError("본문 칸 위를 다른 창이 가리고 있어 보내지 않았습니다.", left_open=True)
             winui.click_at(*pt)
             time.sleep(0.2)
             winui.hotkey(winui.VK_CONTROL, ord("V"))

@@ -222,6 +222,16 @@ def bring_front(hwnd, wait=0.3):
         user32.keybd_event(VK_MENU, 0, 2, 0)
         user32.SetForegroundWindow(hwnd)
     time.sleep(wait)
+    if user32.GetForegroundWindow() != hwnd:   # 안 되면 맨 앞 창의 입력에 잠깐 붙어서 다시
+        me = kernel32.GetCurrentThreadId()
+        other = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+        if other and other != me and user32.AttachThreadInput(me, other, True):
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+            finally:
+                user32.AttachThreadInput(me, other, False)
+            time.sleep(wait)
     return user32.GetForegroundWindow() == hwnd
 
 
