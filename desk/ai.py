@@ -442,6 +442,63 @@ ITEM_INSTRUCTION = """아래 자료 한 건을 이 형식으로만 요약해 줘
 """
 ITEM_CHARS = 3500
 
+# 0.6.7 쿨메신저 쪽지는 선생님이 정한 다섯 칸으로 요약 (선생님 요청 2026-11-17, 텔레그램에도 이 모양으로 보냄)
+COOL_INSTRUCTION = """아래 쿨메신저 쪽지 한 건을 이 다섯 줄 형식으로만 요약해 줘 (앞뒤 인사말 없이, 다섯 줄 모두 쓰기).
+
+보낸 사람: (쪽지에 적힌 이름·부서, 모르면 '모름')
+업무 내용: (교사가 할 일이나 알아 둘 내용, 60자 안쪽)
+마감 기한: (날짜·시간을 원문 그대로, 없으면 '없음')
+첨부파일: (쪽지에 적힌 파일 이름을 쉼표로, 없으면 '없음')
+긴급 여부: (긴급 또는 보통. '긴급'·'급함'·'즉시'·'오늘까지'처럼 서두르라는 말이 있거나 마감이 오늘·내일이면 긴급)
+
+자료:
+"""
+COOL_KEYS = (("sender", "보낸 사람"), ("task", "업무 내용"), ("due", "마감 기한"), ("files", "첨부파일"), ("urgent", "긴급 여부"))
+P_COOL_FIELD = re.compile(r"^\s*[-*•·]?\s*\**\s*(보낸\s*사람|업무\s*내용|마감\s*기한|첨부\s*파일(?:\s*목록)?|긴급\s*여부)\s*\**\s*[:：]\s*(.*)$")
+P_BODY_SENDER = re.compile(r"\(보낸 사람:\s*(.+?)\)\s*$")
+P_FILE_NAME = re.compile(r"[^\s\\/:*?\"<>|,()\[\]]+\.(?:hwpx?|pdf|xlsx?|docx?|pptx?|zip|txt|csv|jpe?g|png)\b", re.I)
+URGENT_WORDS = ("긴급", "급함", "급히", "즉시", "시급")
+NONE_WORDS = ("없음", "없다", "모름", "해당 없음", "-", "")
+
+
+def cool_fields(text, body=""):
+    """쪽지 AI 요약 → {'sender','task','due','files','urgent'} (다섯 칸 중 둘 이상 읽혔을 때만, 아니면 None).
+
+    - 보낸 사람은 쪽지 끝의 '(보낸 사람: …)' 가 있으면 그것을 씀 (AI 가 틀리게 옮기지 않게).
+    - 첨부파일은 AI 가 '없음' 이라 했어도 본문에 파일 이름(…hwp, …pdf 등)이 보이면 그 이름.
+    - 긴급 여부는 '긴급' 또는 '보통' 두 가지로만.
+    """
+    found = {}
+    names = dict((label.replace(" ", ""), key) for key, label in COOL_KEYS)
+    for line in (text or "").splitlines():
+        m = P_COOL_FIELD.match(line)
+        if not m:
+            continue
+        label = re.sub(r"\s+", "", m.group(1)).replace("목록", "")
+        key = names.get(label)
+        if key and key not in found:
+            found[key] = m.group(2).strip().strip("*").strip()
+    if len(found) < 2:
+        return None
+    out = {}
+    for key, _ in COOL_KEYS:
+        v = found.get(key, "")
+        out[key] = "" if v.strip(" .'\"") in NONE_WORDS else v
+    m = P_BODY_SENDER.search(body or "")
+    if m:
+        name = m.group(1).strip()
+        same = re.fullmatch(r"(.+?)\s*\(\s*\1\s*\)", name)
+        out["sender"] = (same.group(1) if same else name)[:30]
+    if not out["files"]:
+        files = []
+        for f in P_FILE_NAME.findall(body or ""):
+            if f not in files:
+                files.append(f)
+        out["files"] = ", ".join(files[:6])
+    v = out["urgent"]
+    out["urgent"] = "긴급" if any(w in v for w in URGENT_WORDS) and not re.search(r"아님|아니|않|보통", v) else "보통"
+    return out
+
 # 0.5.99 긴 자료(첨부 hwp·pdf 를 읽은 긴 공문 등)는 나눠서 요약한 뒤 합침 (예전에는 앞 3,500자만 읽었음).
 # - 한 조각은 LM Studio 의 기억 길이(기본 4,096토큰)에 지시문·답과 함께 들어가는 크기.
 #   한국어는 글자당 대략 1토큰이라 3,500자 + 지시문 + 답(500토큰)이 4,096토큰 안쪽.
@@ -511,16 +568,17 @@ def item_ai(db, it, job=None):
 
 
 def summary_line(text):
-    """목록에 보일 한 줄: '한 줄 요약:' 뒤의 글, 없으면 첫 줄."""
+    """목록에 보일 한 줄: '한 줄 요약:'(쪽지는 '업무 내용:', 0.6.7) 뒤의 글, 없으면 첫 줄."""
+    first = ""
     for line in (text or "").splitlines():
         line = line.strip().lstrip("-*•· ").strip()
         if not line:
             continue
-        m = re.match(r"한\s*줄\s*요약\s*[:：]\s*(.*)", line)
+        m = re.match(r"\**\s*(?:한\s*줄\s*요약|업무\s*내용)\s*\**\s*[:：]\s*(.*)", line)
         if m:
             return m.group(1).strip()[:80]
-        return line[:80]
-    return ""
+        first = first or line[:80]
+    return first
 
 
 AUTO_SOURCES = ("cool", "edufine", "paste")   # 내가 보낸 쪽지·학사일정은 요약하지 않음
@@ -755,9 +813,10 @@ def summarize_item(base, model, it, body, names, size=ITEM_CHARS, db=None, progr
     """
     source = SOURCE_NAMES.get(it["source"], it["source"])
     title = it["title"] or ""
+    instruction = COOL_INSTRUCTION if it["source"] == "cool" else ITEM_INSTRUCTION
     chunks = split_chunks(body, size)
     if len(chunks) <= 1:
-        prompt = mask_names(f"{ITEM_INSTRUCTION}[{source}] {title}\n{body}", names)
+        prompt = mask_names(f"{instruction}[{source}] {title}\n{body}", names)
         return mask_names(ask(base, model, prompt, timeout, system=ITEM_SYSTEM, max_tokens=500, db=db), names)
     total = len(chunks)
     used = chunks[:CHUNK_MAX]
@@ -780,7 +839,7 @@ def summarize_item(base, model, it, body, names, size=ITEM_CHARS, db=None, progr
     if not notes:
         notes = ["- 없음"]
     joined = "\n".join(notes)
-    room = max(size - len(ITEM_INSTRUCTION) - 200, size // 2)
+    room = max(size - len(instruction) - 200, size // 2)
     for _ in range(MERGE_ROUNDS):   # 메모를 합쳐도 한 번에 안 들어가면 몇 개씩 묶어 다시 줄임
         if len(joined) <= room:
             break
@@ -793,7 +852,7 @@ def summarize_item(base, model, it, body, names, size=ITEM_CHARS, db=None, progr
             merged.append(mask_names(out, names).strip())
         joined = "\n".join(merged)
     joined = joined[:room]
-    prompt = mask_names(ITEM_INSTRUCTION + f"[{source}] " + FINAL_HEAD.replace("{n}", str(total))
+    prompt = mask_names(instruction + f"[{source}] " + FINAL_HEAD.replace("{n}", str(total))
                         .replace("{title}", title) + joined, names)
     text = mask_names(ask(base, model, prompt, timeout, system=ITEM_SYSTEM, max_tokens=500, db=db), names).strip()
     text += f"\n(긴 자료라 {len(used)}조각으로 나눠 읽고 합친 요약"
