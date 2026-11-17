@@ -332,7 +332,8 @@ def fetch_attachments(title, received_at, sender="", ui=None, log=None):
                 stable = 0.0
             last = now
         if not new:
-            raise SendError("파일이 저장되지 않았습니다 (서버 보관 기간이 지났거나 보낸 사람 PC 가 꺼져 있을 수 있음). PC 의 쿨메신저를 확인해 주세요.")
+            raise SendError("파일이 저장되지 않았습니다. 쿨메신저가 '같은 이름의 파일' 질문 창을 띄웠거나, 서버 보관 기간이 "
+                            "지났거나, 보낸 사람 PC 가 꺼져 있을 수 있습니다. PC 의 쿨메신저를 확인해 주세요.")
         if log:
             log(f"쿨메신저 첨부 {len(new)}개를 받았습니다 (텔레그램 요청)")
         return new[:ATTACH_LIMIT]
