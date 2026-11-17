@@ -1,7 +1,9 @@
 """쿨메신저 쪽지 보내기 (0.6.5): 창 조작은 가짜(FakeUI)로 바꿔 순서·안전 확인만 시험.
 실제 쿨메신저 창에서 되는지는 학교 PC 에서만 알 수 있음 (조직도 두 번 클릭·[보내기] 마우스 클릭 시험은 2026-11-17 확인)."""
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from desk import coolsend
 from desk.collect import add_text_item
@@ -70,6 +72,32 @@ class FakeUI:
         return True
 
 
+class FakeAttachUI(FakeUI):
+    def __init__(self, folder, rows):
+        super().__init__()
+        self.folder, self.list, self.picked = folder, rows, []
+
+    def download_dir(self):
+        return self.folder
+
+    def manager_window(self, main):
+        return 2
+
+    def show_inbox(self, manager):
+        self.calls.append("inbox")
+
+    def rows(self, manager):
+        return [list(r) for r in self.list]
+
+    def select_row(self, manager, i):
+        self.picked.append(i)
+        return True
+
+    def save_all(self, manager):
+        (Path(self.folder) / "안내문.pdf").write_bytes(b"%PDF-1.4 test")
+        return True
+
+
 class CoolSendTests(unittest.TestCase):
     def test_names(self):
         self.assertEqual(coolsend.label_name("이영희 2345 (2-3, 담임)"), "이영희")
@@ -122,6 +150,39 @@ class CoolSendTests(unittest.TestCase):
             coolsend.send(dict(person, dept="3학년"), "t", "b", ui=FakeUI())
         with self.assertRaises(coolsend.SendError):
             coolsend.send(person, "t", "  ", ui=FakeUI())
+
+
+class CoolAttachTests(unittest.TestCase):
+    ROWS = [["(박민수)", "다른 쪽지", "2026/11/17 09:00:00 (화)", ""],
+            ["(이영희)", "협의회 안내 자료입니다", "2026/11/17 13:45:10 (화)", "안내문.pdf"]]
+
+    def setUp(self):
+        coolsend.SETTLE = 0.5
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_match_rows(self):
+        self.assertEqual(coolsend.match_rows(self.ROWS, "협의회 안내 자료입니다 첨부 확인", "2026-11-17 13:45:00", "이영희"), [1])
+        self.assertEqual(coolsend.match_rows(self.ROWS, "협의회 안내 자료입니다", "2026-11-17 13:50:00"), [])   # 시각이 다름
+        self.assertEqual(coolsend.match_rows(self.ROWS, "협의회 안내 자료입니다", "2026-11-17 13:45:00", "김철수"), [])
+
+    def test_fetch_saves_and_returns_new_files(self):
+        ui = FakeAttachUI(self.tmp.name, self.ROWS)
+        (Path(self.tmp.name) / "예전.hwp").write_bytes(b"old")
+        files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui)
+        self.assertEqual([p.name for p in files], ["안내문.pdf"])
+        self.assertEqual(ui.picked, [1])
+
+    def test_no_attachment_or_not_found(self):
+        ui = FakeAttachUI(self.tmp.name, self.ROWS)
+        with self.assertRaises(coolsend.SendError) as e:
+            coolsend.fetch_attachments("다른 쪽지", "2026-11-17 09:00:00", ui=ui)
+        self.assertIn("첨부 파일이 없습니다", str(e.exception))
+        with self.assertRaises(coolsend.SendError):
+            coolsend.fetch_attachments("없는 쪽지", "2026-11-17 09:00:00", ui=ui)
+        self.assertEqual(ui.picked, [])
 
 
 class TelegramCoolSendTests(unittest.TestCase):
@@ -184,6 +245,21 @@ class TelegramCoolSendTests(unittest.TestCase):
         self.env.config.values["telegram_cool_send"] = False
         self.bot.handle_update(msg("쪽지 이영희 안녕하세요"))
         self.assertIn("꺼져 있습니다", self.fake.sent[-1]["text"])
+
+    def test_attach_command_sends_files(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        coolsend.SETTLE = 0.5
+        self.bot.cool_attach_ui = FakeAttachUI(tmp.name, CoolAttachTests.ROWS)
+        item = add_text_item(self.env.db, "cool", "자료 첨부합니다\n\n(보낸 사람: 이영희)", title="협의회 안내 자료입니다",
+                             received_at="2026-11-17 13:45:00")["id"]
+        self.env.db.set_meta("telegram_refs", [item])
+        self.bot.handle_update(msg("첨부 1"))
+        self.assertIn("첨부 1개를 보냈습니다", self.fake.sent[-1]["text"])
+        self.assertEqual(self.bot.cool_attach_ui.picked, [1])
+        before = len(self.bot.cool_attach_ui.picked)
+        self.bot.handle_update(msg("파일 1"))   # 쿨메신저 쪽지의 '파일 n' 도 첨부 받기로
+        self.assertEqual(len(self.bot.cool_attach_ui.picked), before + 1)
 
     def test_not_found_and_failure_message(self):
         self.bot.handle_update(msg("쪽지 박없음 안녕하세요"))

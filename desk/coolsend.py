@@ -18,17 +18,25 @@
 - 기록(db.log)에는 받는 사람 이름·내용을 남기지 않음
 """
 
+import os
 import re
 import threading
 import time
+from datetime import datetime, timedelta
+from pathlib import Path
 
-from . import winui
+from . import coolmsg, winui
 
 EXE = "CoolMessenger.exe"
 ID_TREE, ID_SEARCH = 3013, 1708            # 메인 창: 조직도, 검색칸
 ID_SEND, ID_CLOSE, ID_TITLE = 3249, 1440, 4362   # 쪽지 쓰기 창: 보내기, 닫기, 제목
 ID_CHIP_DELETE = 8010                      # 받는 사람 칩마다 붙은 지우기 단추
 ID_TO_SELF = 1661                          # [나에게 보내기] (나에게는 예약전송으로만 보내짐)
+ID_MANAGER_OPEN = 3016                     # 메인 창: 메시지관리함 열기
+ID_LIST, ID_INBOX, ID_SAVE_ALL = 3195, 4337, 3320   # 메시지관리함: 쪽지 목록, 받은메시지, 모든파일 저장
+DOWNLOAD_KEY = r"Software\Jiransoft\CoolMsg50\Option\GetFile"   # DownPath: 쿨메신저가 받은 파일을 두는 폴더
+SAVE_WAIT, SETTLE = 60.0, 2.0
+ATTACH_LIMIT = 10
 BODY_CLASS = "Chrome_RenderWidgetHostHWND"
 OPEN_WAIT, CLOSE_WAIT = 6.0, 10.0
 TITLE_LIMIT, BODY_LIMIT = 100, 4000
@@ -186,6 +194,151 @@ class WinUI:
                 return True
             time.sleep(0.2)
         return False
+
+
+class WinAttachUI(WinUI):
+    """첨부 받기: 메시지관리함에서 그 쪽지를 골라 [모든파일 저장]."""
+
+    def manager_window(self, main):
+        def find():
+            for h in winui.top_windows(EXE, visible_only=False):
+                lv = winui.item(h, ID_LIST)
+                if lv and winui.class_name(lv) == "SysListView32":
+                    return h
+            return None
+        h = find()
+        if h:
+            return h
+        if not winui.click_checked(winui.item(main, ID_MANAGER_OPEN), main):
+            raise SendError("쿨메신저 메시지관리함을 열지 못했습니다.")
+        end = time.monotonic() + OPEN_WAIT
+        while time.monotonic() < end:
+            time.sleep(0.3)
+            h = find()
+            if h:
+                time.sleep(0.8)
+                return h
+        raise SendError("쿨메신저 메시지관리함이 열리지 않았습니다.")
+
+    def show_inbox(self, manager):
+        if not winui.bring_front(manager):
+            raise SendError("메시지관리함을 앞으로 가져오지 못했습니다.")
+        if not winui.click_checked(winui.item(manager, ID_INBOX), manager):
+            raise SendError("메시지관리함의 [받은메시지]를 누르지 못했습니다.")
+        time.sleep(1.0)
+
+    def rows(self, manager):
+        return winui.list_rows(winui.item(manager, ID_LIST), columns=4, limit=1000)
+
+    def select_row(self, manager, i):
+        lv = winui.item(manager, ID_LIST)
+        if not winui.bring_front(manager):
+            return False
+        pt = winui.list_item_center(lv, i)
+        if not pt or not winui.window_at(pt, lv) or winui.foreground() != manager:
+            return False
+        winui.click_at(*pt)
+        time.sleep(1.0)
+        return True
+
+    def save_all(self, manager):
+        return winui.click_checked(winui.item(manager, ID_SAVE_ALL), manager)
+
+    def download_dir(self):
+        path = winui.registry_value(DOWNLOAD_KEY, "DownPath")
+        return Path(os.path.expandvars(path)) if path else None
+
+
+def _squash(s):
+    return re.sub(r"\s+", "", s or "")
+
+
+def match_rows(rows, title, received_at, sender=""):
+    """메시지관리함 목록 [[보낸사람, 제목(30자에서 잘림), '2026/11/17 13:45:00 (화)', 첨부]] 에서 그 쪽지 줄 번호들."""
+    try:
+        when = datetime.strptime(received_at[:19], "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return []
+    want = _squash(title)
+    out = []
+    for i, row in enumerate(rows):
+        if len(row) < 4:
+            continue
+        at = coolmsg.parse_when(row[2])
+        if not at or abs(at - when) > timedelta(minutes=1):
+            continue
+        got = _squash(row[1])
+        if got and not (want.startswith(got[:20]) or got.startswith(want[:20])):
+            continue
+        if sender and clean_name(sender) and clean_name(sender) not in row[0]:
+            continue
+        out.append(i)
+    return out
+
+
+def _files(folder):
+    out = {}
+    try:
+        for p in Path(folder).iterdir():
+            if p.is_file() and not p.name.startswith(("~$", ".")):
+                st = p.stat()
+                out[p] = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        pass
+    return out
+
+
+def fetch_attachments(title, received_at, sender="", ui=None, log=None):
+    """받은 쿨메신저 쪽지의 첨부를 쿨메신저가 받게 하고(모든파일 저장) 새로 생긴 파일 [Path] 를 돌려줌."""
+    ui = ui or WinAttachUI()
+    if not _lock.acquire(blocking=False):
+        raise SendError("쿨메신저 창을 다른 일로 쓰는 중입니다. 끝나면 다시 보내 주세요.")
+    try:
+        ui.require()
+        folder = ui.download_dir()
+        if not folder or not Path(folder).is_dir():
+            raise SendError("쿨메신저의 받은 파일 저장 폴더를 찾지 못했습니다 (쿨메신저 설정 → 파일 받기).")
+        main = ui.main_window()
+        manager = ui.manager_window(main)
+        ui.show_inbox(manager)
+        rows = ui.rows(manager)
+        found = match_rows(rows, title, received_at, sender)
+        if not found:
+            raise SendError("메시지관리함 받은메시지에서 그 쪽지를 찾지 못했습니다 (오래되어 목록에 없거나 지워졌을 수 있음).")
+        if len(found) > 1:
+            raise SendError("메시지관리함에서 같은 쪽지로 보이는 것이 여럿이라 멈췄습니다. PC 에서 직접 받아 주세요.")
+        if not (rows[found[0]][3] or "").strip():
+            raise SendError("그 쪽지에는 첨부 파일이 없습니다.")
+        before = _files(folder)
+        if not ui.select_row(manager, found[0]):
+            raise SendError("메시지관리함에서 그 쪽지를 고르지 못했습니다.")
+        # 고른 뒤 다시 읽어 같은 쪽지인지 확인 (그 사이 새 쪽지가 와서 줄이 밀렸을 수 있음)
+        again = ui.rows(manager)
+        if found[0] >= len(again) or again[found[0]] != rows[found[0]]:
+            raise SendError("그 사이 목록이 바뀌어 멈췄습니다. 다시 보내 주세요.")
+        if not ui.save_all(manager):
+            raise SendError("[모든파일 저장]을 누르지 못했습니다.")
+        new, end, last, stable = [], time.monotonic() + SAVE_WAIT, None, 0.0
+        while time.monotonic() < end:   # 새 파일이 생기고 크기가 SETTLE 초 동안 그대로면 끝
+            time.sleep(0.5)
+            now = _files(folder)
+            new = sorted(p for p, v in now.items() if before.get(p) != v)
+            if new and now == last:
+                stable += 0.5
+                if stable >= SETTLE:
+                    break
+            else:
+                stable = 0.0
+            last = now
+        if not new:
+            raise SendError("파일이 저장되지 않았습니다 (서버 보관 기간이 지났거나 보낸 사람 PC 가 꺼져 있을 수 있음). PC 의 쿨메신저를 확인해 주세요.")
+        if log:
+            log(f"쿨메신저 첨부 {len(new)}개를 받았습니다 (텔레그램 요청)")
+        return new[:ATTACH_LIMIT]
+    except winui.Unsupported as e:
+        raise SendError(str(e))
+    finally:
+        _lock.release()
 
 
 def find_people(name, ui=None):

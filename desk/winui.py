@@ -466,3 +466,41 @@ def tree_hit(tree, pt, handle):
         hit = user32.SendMessageW(tree, TVM_HITTEST, 0, r.base)
         flags, got = struct.unpack("<II", r.read(8, 8))
     return bool(hit) and got == handle and bool(flags & 0x0046)   # TVHT_ONITEM (아이콘·글·상태)
+
+
+LVM_ENSUREVISIBLE, LVM_GETITEMRECT = 0x1013, 0x100E
+
+
+def list_item_center(lv, i):
+    """ListView 의 i 번째 줄을 보이게 한 뒤 글 부분 가운데 화면 좌표 (32비트 프로세스)."""
+    user32.SendMessageW(lv, LVM_ENSUREVISIBLE, i, 0)
+    with Remote(lv) as r:
+        r.write(0, struct.pack("<iiii", 2, 0, 0, 0))   # left 칸에 LVIR_LABEL
+        if not user32.SendMessageW(lv, LVM_GETITEMRECT, i, r.base):
+            return None
+        left, top, right, bottom = struct.unpack("<iiii", r.read(0, 16))
+    pt = wintypes.POINT((left + right) // 2, (top + bottom) // 2)
+    user32.ClientToScreen(lv, ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+def click_checked(hwnd, top):
+    """hwnd 가운데를 진짜 마우스로 클릭 — 그 자리가 hwnd 이고 맨 앞 창이 top 일 때만. 눌렀으면 True."""
+    if not hwnd or not bring_front(top):
+        return False
+    pt = center(hwnd)
+    if not window_at(pt, hwnd) or foreground() != top:
+        return False
+    return click_at(*pt)
+
+
+def registry_value(path, name):
+    """HKEY_CURRENT_USER 아래 값 (없으면 None)."""
+    if not IS_WINDOWS:
+        return None
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+            return winreg.QueryValueEx(k, name)[0]
+    except OSError:
+        return None
