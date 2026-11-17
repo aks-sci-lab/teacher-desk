@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import VERSION, absence, ai, calllog, assist, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, calllog, assist, coolsend, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -35,6 +35,8 @@ HELP = (
     "\n📥 수신함\n"
     "안 읽은 자료 · 요약(최근 받은 자료) · 새로고침(지금 수집)\n"
     "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
+    "답장 2 내용 — 2번 쿨메신저 쪽지에 답장 · 쪽지 김철수 내용 — 새 쪽지 (확인 뒤 [보내기])\n"
+    "첨부 2 — 2번 쿨메신저 쪽지의 첨부 파일을 이 PC 의 쿨메신저로 받아 보냄\n"
     "\n📅 달력\n"
     "오늘 — 오늘 일정·오늘 마감·외출 인원 · 마감 — 7일 안의 마감\n"
     "일정 추가 (일정 등록·새 일정도 됨) — 달력에서 날짜를 누르고 내용을 보내면 등록 (등록 직후 취소 가능)\n"
@@ -84,6 +86,7 @@ ARG_COMMANDS = {
     "검색": "search", "/search": "search", "찾기": "search",
     "원문": "text", "/text": "text",
     "파일": "file", "/file": "file",
+    "첨부": "attach", "/attach": "attach", "첨부파일": "attach",
     "조퇴": "early", "/early": "early", "조퇴증": "early",
     "외출": "out", "/out": "out", "외출증": "out",
     "결석계": "absence", "결석": "absence", "/absence": "absence",
@@ -178,6 +181,11 @@ P_INDEX = re.compile(r"^(?:/index(?:@\S+)?|/색인|색인\s*(?:만들기|다시\
 DOC_CANDIDATES = 5     # 후보 파일 (폰 한 화면)
 DOC_PICK = 3           # 처음에 골라 두는 파일 (점수가 너무 낮은 것은 빼고)
 DOC_MIN_SCORE = 0.35
+# 쿨메신저 쪽지 보내기 (0.6.5): '쪽지 김철수 내용'·'/쪽지 …', 답장은 '답장 3 내용'·'3번 답장 내용'·'/답장 …'
+P_COOL_MEMO = re.compile(r"^(?:/memo(?:@\S+)?|/쪽지|쪽지(?:\s*보내기)?)\s+(\S+?)(?:\s*(?:선생님|샘|쌤|님))?\s*[:：]?\s+(\S.*)$", re.S)
+P_COOL_REPLY = re.compile(r"^(?:(?:/reply(?:@\S+)?|/답장|답장(?:\s*하기)?)\s+(\d+)\s*번?|(\d+)\s*번?\s*답장)\s*[:：]?\s+(\S.*)$", re.S)
+P_COOL_SENDER = re.compile(r"\(보낸 사람:\s*([^)\n]+)\)\s*$")
+COOL_PREVIEW = 600
 EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
 
 
@@ -312,6 +320,8 @@ class Bot:
         self.dialog = None
         self.local = threading.local()   # 스레드마다 다시 쓰는 텔레그램 연결 (0.5.87)
         self.direct_cache = {}
+        self.cool_ui = None     # 시험: 쿨메신저 창 조작을 가짜로 (None 이면 실제 윈도우)
+        self.cool_attach_ui = None
 
     # ---- 텔레그램 API ----
     @property
@@ -480,6 +490,8 @@ class Bot:
         if cid != self.chat_id:
             return None  # 연결되지 않은 사람에게는 답하지 않음
         head = words[0].split("@")[0].lower()
+        if self.dialog and self.dialog.get("kind") == "cool":
+            self.dialog = None   # 다른 말을 보내면 보내지 않은 쪽지 확인은 버림 ([보내기]는 '오래된 쪽지'로 안내)
         event_dialog = self.dialog and self.dialog.get("kind") == "event"
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
@@ -490,6 +502,12 @@ class Bot:
             if m.re is P_INDEX:
                 return self.start_index(cid, m.group(1) or "")
             return self.begin_doc(cid, (m.group(1) or "").strip())
+        m = P_COOL_REPLY.match(text) or P_COOL_MEMO.match(text)
+        if m:
+            self.dialog = None
+            if m.re is P_COOL_REPLY:
+                return self.begin_cool_reply(cid, int(m.group(1) or m.group(2)), m.group(3))
+            return self.begin_cool_memo(cid, m.group(1), m.group(2))
         added = self.add_event_words(text)
         if added is not None:   # '일정 추가'·'일정 등록'·'새 일정' 같은 명령 모양 또는 메뉴 단추로만 시작
             return self.begin_event(cid, added)
@@ -564,6 +582,8 @@ class Bot:
             return True
         if arg_cmd in ("early", "out"):
             return bool(P_ARG_NUMBER.match(args[0]))
+        if arg_cmd == "attach":   # '첨부 파일 어디 있어?' 는 검색·질문으로
+            return args[0].rstrip("번").isdigit() and len(args) == 1
         if arg_cmd == "absence":
             joined = " ".join(args)
             return bool(absence.P_DATE.search(joined)) or any(
@@ -1231,13 +1251,17 @@ class Bot:
             return self.send_search(cid, " ".join(args))
         if cmd == "lessons":
             return self.reply(cid, self.lessons_text(" ".join(args)))
-        if cmd in ("text", "file"):
+        if cmd in ("text", "file", "attach"):
             if not args or not args[0].isdigit():
-                return self.reply(cid, f"번호를 함께 보내세요. 예) {'원문' if cmd == 'text' else '파일'} 2")
+                return self.reply(cid, f"번호를 함께 보내세요. 예) {'원문' if cmd == 'text' else '파일' if cmd == 'file' else '첨부'} 2")
             item_id = self.ref_item(int(args[0]))
             if not item_id:
                 return self.reply(cid, f"{args[0]}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
-            return self.send_original(cid, item_id) if cmd == "text" else self.send_item_file(cid, item_id)
+            if cmd == "text":
+                return self.send_original(cid, item_id)
+            if cmd == "attach":
+                return self.begin_cool_attach(cid, item_id)
+            return self.send_item_file(cid, item_id)
         return self.start_pass(cid, cmd, args)
 
     def offer_general(self, cid, question):
@@ -1563,6 +1587,9 @@ class Bot:
             if self.config["ai_provider"] != request["provider"]:
                 return self.reply(cid, "AI 사용 방식이 바뀌었습니다. 새 설정을 확인하고 질문을 다시 보내세요.")
             return self.general_ask(cid, request["text"], request["provider"])
+        if kind == "cs":
+            dialog_id, _, action = rest.partition(":")
+            return self.cool_button(cid, dialog_id, action, msg.get("message_id"))
         if kind == "dlg":
             dialog_id, _, action = rest.partition(":")
             dialog = self.dialog
@@ -1914,6 +1941,10 @@ class Bot:
     def set_refs(self, ids):
         self.db.set_meta("telegram_refs", list(ids)[:100])
 
+    def ref_number(self, item_id):
+        ids = self.db.get_meta("telegram_refs") or []
+        return ids.index(item_id) + 1 if item_id in ids else "번호"
+
     def ref_item(self, n):
         ids = self.db.get_meta("telegram_refs") or []
         return ids[n - 1] if 0 < n <= len(ids) else None
@@ -1938,7 +1969,8 @@ class Bot:
             return self.reply(cid, "없는 자료입니다.")
         p = item_file(self.config, it["file_path"])
         if not p:
-            return self.reply(cid, "원본 파일이 없습니다 (쿨메신저 쪽지이거나 폴더에서 옮겨짐). '원문' 으로 글을 받으세요.")
+            hint = f" 쿨메신저 쪽지의 첨부는 '첨부 {self.ref_number(item_id)}'." if self.config["telegram_cool_send"] else ""
+            return self.reply(cid, "원본 파일이 없습니다 (쿨메신저 쪽지이거나 폴더에서 옮겨짐). '원문' 으로 글을 받으세요." + hint)
         if p.stat().st_size > FILE_LIMIT:
             return self.reply(cid, "파일이 너무 커서 텔레그램으로 보낼 수 없습니다 (50MB).")
         self.send_file(cid, p.name, p.read_bytes(), caption=it["title"][:200])
@@ -2257,6 +2289,131 @@ class Bot:
                 parts.append(head)
             return "📥 최근 받은 자료\n\n" + "\n\n".join(parts)
         return HELP
+
+    # ---- 쿨메신저 쪽지 보내기 (0.6.5) ----
+    def begin_cool_memo(self, cid, name, body, title=None, reply_to=None):
+        """받는 사람을 조직도에서 찾아 확인 글 + [보내기] 단추. 보내기는 단추를 누른 뒤에만."""
+        if not self.config["telegram_cool_send"]:
+            return self.reply(cid, "쿨메신저 보내기가 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 켤 수 있습니다.")
+        body = (body or "").strip()
+        if len(body) > coolsend.BODY_LIMIT:
+            return self.reply(cid, f"내용이 너무 깁니다 ({coolsend.BODY_LIMIT:,}자까지).")
+        try:
+            people = coolsend.find_people(name, ui=self.cool_ui)
+        except coolsend.SendError as e:
+            return self.reply(cid, f"⚠ {e}")
+        except Exception as e:   # 창 읽기 실패는 이름 없이 종류만
+            self.db.log(f"쿨메신저 조직도 읽기 실패: {type(e).__name__}", "warn")
+            return self.reply(cid, "⚠ 쿨메신저 조직도를 읽지 못했습니다. 쿨메신저가 켜져 있는지 확인해 주세요.")
+        shown = self.mask(coolsend.clean_name(name) or name)
+        if not people:
+            return self.reply(cid, f"쿨메신저 조직도에서 '{shown}' 을(를) 찾지 못했습니다. 조직도에 보이는 이름 그대로 보내 주세요.")
+        if title is None:
+            title = cut(body.splitlines()[0], 40)
+        self.dialog = {"id": secrets.token_hex(6), "kind": "cool", "people": people, "title": title, "body": body,
+                       "reply_to": reply_to, "expires": time.monotonic() + DIALOG_TTL}
+        text, buttons = self.cool_view(self.dialog)
+        self.send(text, cid, buttons)
+        return text
+
+    def begin_cool_reply(self, cid, n, body):
+        item_id = self.ref_item(n)
+        it = self.db.one("SELECT id, source, title, body FROM items WHERE id = ?", (item_id,)) if item_id else None
+        if not it:
+            return self.reply(cid, f"{n}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
+        if it["source"] != "cool":
+            return self.reply(cid, f"{n}번은 쿨메신저로 받은 쪽지가 아니라 답장할 수 없습니다.")
+        m = P_COOL_SENDER.search(it["body"] or "")
+        if not m:
+            return self.reply(cid, f"{n}번 쪽지의 보낸 사람을 알 수 없습니다. '쪽지 이름 내용' 으로 보내 주세요.")
+        return self.begin_cool_memo(cid, m.group(1), body, title=coolsend.reply_title(it["title"]), reply_to=item_id)
+
+    def begin_cool_attach(self, cid, item_id):
+        """쿨메신저 쪽지의 첨부를 이 PC 의 쿨메신저가 받게 하고(메시지관리함 → 모든파일 저장) 받은 파일을 보냄.
+        선생님이 '첨부 n'·'파일 n' 으로 달라고 할 때만 (원본 파일은 달라고 할 때만, 0.6.5)."""
+        if not self.config["telegram_cool_send"]:
+            return self.reply(cid, "쿨메신저 창 조작이 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 켤 수 있습니다.")
+        it = self.db.one("SELECT id, source, title, body, received_at FROM items WHERE id = ?", (item_id,))
+        if not it or it["source"] != "cool":
+            return self.reply(cid, "쿨메신저로 받은 쪽지만 첨부를 받을 수 있습니다.")
+        m = P_COOL_SENDER.search(it["body"] or "")
+        self.reply(cid, "⏳ 쿨메신저에서 첨부 파일을 받는 중… (PC 의 쿨메신저 창이 잠깐 앞으로 나옵니다)")
+        args = (cid, it, m.group(1) if m else "")
+        if self.sync:
+            return self._cool_attach(*args)
+        threading.Thread(target=self._cool_attach, args=args, name="telegram-coolattach", daemon=True).start()
+        return "받는 중"
+
+    def _cool_attach(self, cid, it, sender):
+        try:
+            files = coolsend.fetch_attachments(it["title"], it["received_at"], sender, ui=self.cool_attach_ui,
+                                               log=self.db.log)
+        except coolsend.SendError as e:
+            return self.reply(cid, f"⚠ 첨부를 받지 못했습니다: {e}")
+        except Exception as e:
+            self.db.log(f"쿨메신저 첨부 받기 오류: {type(e).__name__}", "warn")
+            return self.reply(cid, "⚠ 첨부를 받는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요.")
+        sent, big = [], []
+        for p in files:
+            try:
+                if p.stat().st_size > FILE_LIMIT:
+                    big.append(p.name)
+                    continue
+                self.send_file(cid, p.name, p.read_bytes(), caption=it["title"][:200])
+                sent.append(p.name)
+            except OSError:
+                big.append(p.name)
+        text = f"📎 첨부 {len(sent)}개를 보냈습니다." + (f" {len(big)}개는 너무 크거나 읽지 못해 PC 의 쿨메신저 저장 폴더에만 있습니다." if big else "")
+        return self.reply(cid, text)
+
+    def cool_view(self, dialog):
+        people = dialog["people"]
+        body = dialog["body"]
+        preview = body if len(body) <= COOL_PREVIEW else body[:COOL_PREVIEW] + f"… (모두 {len(body):,}자)"
+        who = self.mask(people[0]["name"])
+        lines = ["📨 쿨메신저 " + ("답장" if dialog.get("reply_to") else "새 쪽지") + " — 보내기 전에 확인하세요",
+                 f"받는 사람: {who}" + (f" ({self.mask(people[0]['dept'])})" if len(people) == 1 else ""),
+                 f"제목: {self.mask(dialog['title']) or '(없음)'}", "", self.mask(preview), ""]
+        if len(people) > 1:
+            lines.append(f"조직도에 '{who}' 이(가) {len(people)}명 있습니다. 부서를 골라 누르면 바로 보냅니다.")
+            buttons = [[{"text": f"📨 {self.mask(p['dept'])}"[:60], "callback_data": f"cs:{dialog['id']}:{i}"}]
+                       for i, p in enumerate(people[:8])]
+        else:
+            lines.append("[보내기]를 누르면 이 PC 의 쿨메신저 창이 잠깐 앞으로 나오며 보냅니다. 열려 있던 쪽지 창은 닫습니다.")
+            buttons = [[{"text": "📨 보내기", "callback_data": f"cs:{dialog['id']}:0"}]]
+        buttons.append([{"text": "✖ 취소", "callback_data": f"cs:{dialog['id']}:x"}])
+        return "\n".join(lines), buttons
+
+    def cool_button(self, cid, dialog_id, action, message_id):
+        dialog = self.dialog
+        if not dialog or dialog.get("kind") != "cool" or dialog["id"] != dialog_id:
+            return self.show(cid, message_id, "이미 처리했거나 오래된 쪽지입니다. 다시 보내 주세요.", [])
+        self.dialog = None   # 두 번 눌러 두 번 보내지 않음
+        if action == "x":
+            return self.show(cid, message_id, "쪽지 보내기를 취소했습니다. 보낸 것은 없습니다.", [])
+        if time.monotonic() > dialog["expires"]:
+            return self.show(cid, message_id, "확인 시간이 10분을 넘었습니다. 다시 보내 주세요.", [])
+        if not action.isdigit() or int(action) >= len(dialog["people"]):
+            return self.show(cid, message_id, "알 수 없는 선택입니다. 다시 보내 주세요.", [])
+        person = dialog["people"][int(action)]
+        self.show(cid, message_id, f"⏳ {self.mask(person['name'])}({self.mask(person['dept'])}) 에게 보내는 중…", [])
+        if self.sync:
+            return self._cool_send(cid, person, dialog)
+        threading.Thread(target=self._cool_send, args=(cid, person, dialog), name="telegram-coolsend", daemon=True).start()
+        return "보내는 중"
+
+    def _cool_send(self, cid, person, dialog):
+        try:
+            text = coolsend.send(person, dialog["title"], dialog["body"], ui=self.cool_ui, log=self.db.log)
+        except coolsend.SendError as e:
+            text = f"⚠ 보내지 못했습니다: {e}"
+            if e.left_open:
+                text += "\n(쓰던 쪽지 창은 PC 에 열어 두었습니다. 보내지는 않았습니다.)"
+        except Exception as e:
+            self.db.log(f"쿨메신저 쪽지 보내기 오류: {type(e).__name__}", "warn")
+            text = "⚠ 보내는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요."
+        self.reply(cid, text)
+        return text
 
     def mask(self, text):
         """텔레그램으로 나가는 글의 학생 이름: 설정 '텔레그램에서 학생 이름 가리기' 를 켰을 때만 가림.
