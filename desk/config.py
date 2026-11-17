@@ -62,7 +62,7 @@ DEFAULTS = {
     "telegram_api_base": "https://api.telegram.org",
     "telegram_photos": True,   # 새 쿨메신저 쪽지에 사진이 있으면 텔레그램으로도 보냄 (0.5.52)
     "telegram_cool_text": False,   # 새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 켠 경우만, 0.5.61)
-    "telegram_cool_summary": True,   # 새 쿨메신저 쪽지를 이 PC 의 AI 로 다섯 칸 요약해 텔레그램으로 (0.6.7 선생님 요청, AI 를 켠 경우만)
+    "telegram_cool_summary": True,   # 새 쿨메신저 쪽지를 이 PC 의 AI 로 다섯 칸 요약해 텔레그램으로 (0.6.8 선생님 요청, AI 를 켠 경우만)
     "telegram_calllog": False,   # 통화·문자 기록 파일을 텔레그램으로 받아 상담 초안으로 (선생님이 켠 경우만, 0.5.84)
     "telegram_mask_names": False,   # 텔레그램 글의 학생 이름을 김○○ 로 가림 (0.5.93 선생님 결정: 본인 채팅이라 기본 끔)
     "telegram_cool_send": True,   # 텔레그램에서 쿨메신저 쪽지·답장 보내기 (0.6.5, [보내기]를 누른 것만, desk/coolsend.py)

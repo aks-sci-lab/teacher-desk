@@ -50,7 +50,7 @@ HELP = (
     "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
     "종류: 병결·인정결·기타결·미인정결 (주말·학사일정 공휴일·휴업일 제외, 앱에 저장만)\n"
     "통계 — 이번 달 학급 합계 (건수만)\n"
-    "\n🔍 검색 — 자료 검색 (AI 없이)\n"
+    "\n🔍 검색 — 자료 검색 (AI 없이) · AI 검색 질문 — 이 PC 의 자료를 AI 가 읽고 답함 (명령 낱말이 들어 있어도 됨)\n"
     "🤖 AI 질문 — /ask 질문 (일반 질문 AI, 업무자료는 붙이지 않음)\n"
     "📝 문서 작성 — /문서 2학기 과학과 협의회 회의록 → 관련 파일 고르기 → 새 docx, 또는 서식(hwp·hwpx·docx)을 보내면 그 칸에 채움\n"
     "   /색인 — 업무 폴더 색인을 지금 만들기 (보낼 때만 돎, '/색인 AI' 는 AI 요약도)\n"
@@ -184,6 +184,14 @@ DOC_MIN_SCORE = 0.35
 # 쿨메신저 쪽지 보내기 (0.6.5): '쪽지 김철수 내용'·'/쪽지 …', 답장은 '답장 3 내용'·'3번 답장 내용'·'/답장 …'
 P_COOL_MEMO = re.compile(r"^(?:/memo(?:@\S+)?|/쪽지|쪽지(?:\s*보내기)?)\s+(\S+?)(?:\s*(?:선생님|샘|쌤|님))?\s*[:：]?\s+(\S.*)$", re.S)
 P_COOL_REPLY = re.compile(r"^(?:(?:/reply(?:@\S+)?|/답장|답장(?:\s*하기)?)\s+(\d+)\s*번?|(\d+)\s*번?\s*답장)\s*[:：]?\s+(\S.*)$", re.S)
+# 0.6.6: 명령 낱말이 들어 있어도 묻는 말·부탁이면 명령으로 바로 실행하지 않음 ('쪽지 보내는 방법 알려줘'·'7번 조퇴 관련 공문 있어?')
+P_ASKING = re.compile(r"[?？]\s*$|방법|어떻게|어디|언제|뭐야|뭐지|뭔지|무엇|알려\s*(?:줘|주세요)|찾아\s*(?:줘|주세요)|"
+                      r"검색해|요약해|정리해|있어|있나|있는지|있을까|관련|규정")
+# 쪽지 받는 사람 자리에 이런 말이 오면 사람 이름이 아님 ('쪽지 보내는 방법'·'쪽지 내용 요약해줘')
+P_NOT_NAME = re.compile(r"(?:보내|보낸|받은|받는|오는|어떻게|어디|언제|무엇|방법|기능|관련|목록|내용|확인|검색|요약|정리|"
+                        r"하는|쓰는|답장|첨부)\S*|온|뭐\S*|왜|좀|다|전부|모든")
+# 'AI 검색 질문' — 이 PC 의 자료로 AI 검색 (명령 낱말보다 먼저)
+P_AI_SEARCH = re.compile(r"^(?:/aisearch(?:@\S+)?|ai\s*검색)\s*[:：]?(?:\s+(\S.*))?$", re.S | re.I)
 P_COOL_SENDER = re.compile(r"\(보낸 사람:\s*([^)\n]+)\)\s*$")
 COOL_PREVIEW = 600
 EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
@@ -200,7 +208,7 @@ P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번�
 POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 초 (실패가 이어지면 두 배씩, 최대 300초)
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
-COOL_SUMMARY_LIMIT = 3    # 0.6.7 한 번 수집에서 AI 로 요약해 보내는 쿨메신저 쪽지 최대 (작은 PC 의 LM Studio 가 오래 바쁘지 않게)
+COOL_SUMMARY_LIMIT = 3    # 0.6.8 한 번 수집에서 AI 로 요약해 보내는 쿨메신저 쪽지 최대 (작은 PC 의 LM Studio 가 오래 바쁘지 않게)
 COOL_SUMMARY_WAIT = 180   # 요약을 기다리는 최대 시간(초). 넘으면 [원문] 단추만 보내고, 요약은 뒤에서 마저 만들어 수신함에 남음
 COOL_SUMMARY_MARKS = (("sender", "👤 보낸 사람"), ("task", "📝 업무 내용"), ("due", "⏰ 마감 기한"),
                       ("files", "📎 첨부파일"), ("urgent", "긴급 여부"))
@@ -326,7 +334,7 @@ class Bot:
         self.direct_cache = {}
         self.cool_ui = None     # 시험: 쿨메신저 창 조작을 가짜로 (None 이면 실제 윈도우)
         self.cool_attach_ui = None
-        self.item_ai = None     # desk.py 가 연결: 화면과 같은 항목별 AI 요약 대기열 (ai.ItemJob, 0.6.7 쪽지 요약)
+        self.item_ai = None     # desk.py 가 연결: 화면과 같은 항목별 AI 요약 대기열 (ai.ItemJob, 0.6.8 쪽지 요약)
         self.cool_summary_wait = COOL_SUMMARY_WAIT
 
     # ---- 텔레그램 API ----
@@ -502,18 +510,29 @@ class Bot:
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
             return self.dialog_input(cid, text)
+        asking_dialog = self.dialog and self.dialog.get("kind") in ("general", "search", "aisearch")
+        if asking_dialog and not text.startswith("/") and text not in COMMANDS:
+            # 0.6.6: AI 질문·자료 검색 글을 받는 중에는 명령 낱말('쪽지'·'조퇴'…)이 들어 있어도 질문으로.
+            # 명령은 '/…'·'취소' 나 아래 단추 판의 단추처럼 그 낱말만 보낼 때만
+            return self.dialog_input(cid, text)
+        m = P_AI_SEARCH.match(text)
+        if m:
+            self.dialog = None
+            if not m.group(1):
+                return self.begin_dialog(cid, "aisearch")
+            return self.ask(cid, m.group(1).strip())
         m = P_DOC.match(text) or P_INDEX.match(text)
         if m and not (m.group(1) and P_EVENT_QUESTION.search(m.group(1))):   # '문서 작성 어떻게 해?' 는 질문으로
             self.dialog = None
             if m.re is P_INDEX:
                 return self.start_index(cid, m.group(1) or "")
             return self.begin_doc(cid, (m.group(1) or "").strip())
-        m = P_COOL_REPLY.match(text) or P_COOL_MEMO.match(text)
+        m = self.cool_words(text)
         if m:
             self.dialog = None
-            if m.re is P_COOL_REPLY:
-                return self.begin_cool_reply(cid, int(m.group(1) or m.group(2)), m.group(3))
-            return self.begin_cool_memo(cid, m.group(1), m.group(2))
+            if not text.startswith("/") and P_ASKING.search(m.group(m.lastindex)):
+                return self.offer_cool_or_ai(cid, text)   # 쪽지인지 질문인지 애매하면 고르게 (창을 건드리기 전에)
+            return self.begin_cool(cid, m)
         added = self.add_event_words(text)
         if added is not None:   # '일정 추가'·'일정 등록'·'새 일정' 같은 명령 모양 또는 메뉴 단추로만 시작
             return self.begin_event(cid, added)
@@ -568,6 +587,8 @@ class Bot:
             return self.offer_choices(cid, text)
         # 자연스러운 말: '7번 조퇴 1시 반'·'브리핑 보여줘'·'3번 원문' 은 명령으로
         found = assist.intent(text)
+        if found and found[0] in ("early", "out") and P_ASKING.search(text):
+            found = None   # '7번 조퇴 관련 공문 있어?' 는 조퇴증이 아니라 검색·질문으로 (0.6.6)
         if found:
             cmd, args = found
             return self.send_brief(cid) if cmd == "brief" else self.run_arg(cid, cmd, args)
@@ -587,7 +608,7 @@ class Bot:
         if head.startswith("/") or not args:
             return True
         if arg_cmd in ("early", "out"):
-            return bool(P_ARG_NUMBER.match(args[0]))
+            return bool(P_ARG_NUMBER.match(args[0])) and not P_ASKING.search(" ".join(args))
         if arg_cmd == "attach":   # '첨부 파일 어디 있어?' 는 검색·질문으로
             return args[0].rstrip("번").isdigit() and len(args) == 1
         if arg_cmd == "absence":
@@ -595,6 +616,36 @@ class Bot:
             return bool(absence.P_DATE.search(joined)) or any(
                 re.search(rf"(?<!\S){w}(?!\S)", joined) for w in absence.TYPE_WORDS)
         return True
+
+    @staticmethod
+    def cool_words(text):
+        """'쪽지 이름 내용'·'답장 3 내용' 모양이면 맞은 결과, 아니면 None. 받는 사람 자리가 이름이 아닌 말이면 None."""
+        m = P_COOL_REPLY.match(text)
+        if m:
+            return m
+        m = P_COOL_MEMO.match(text)
+        if m and not text.startswith("/") and P_NOT_NAME.fullmatch(m.group(1)):
+            return None   # '쪽지 보내는 방법 알려줘' 는 쪽지가 아님
+        return m
+
+    def begin_cool(self, cid, m):
+        if m.re is P_COOL_REPLY:
+            return self.begin_cool_reply(cid, int(m.group(1) or m.group(2)), m.group(3))
+        return self.begin_cool_memo(cid, m.group(1), m.group(2))
+
+    def offer_cool_or_ai(self, cid, text):
+        """쪽지처럼 시작하지만 내용이 묻는 말이면 먼저 물음. 고르기 전에는 쿨메신저 창을 건드리지 않음."""
+        request_id = secrets.token_hex(6)
+        self.choice_requests[request_id] = {"chat_id": cid, "text": text}
+        while len(self.choice_requests) > 10:
+            del self.choice_requests[next(iter(self.choice_requests))]
+        options = [[("📨 쪽지로 준비", "cool")], [("🤖 이 내용으로 AI 검색", "ai"), ("🔍 AI 없이 자료 검색", "search")]]
+        buttons = [[{"text": label, "callback_data": f"choice:{request_id}:{action}"}
+                    for label, action in row] for row in options]
+        message = ("쿨메신저 쪽지로 보낼 글인가요, 아니면 질문인가요?\n"
+                   "[쪽지로 준비]를 누르면 받는 사람·내용을 보여 드리고, 실제로 보내는 것은 그다음 [보내기]를 눌러야 합니다.")
+        self.send(message, cid, buttons)
+        return message
 
     def send_menu(self, cid, full=False):
         if full:
@@ -764,9 +815,10 @@ class Bot:
     def begin_dialog(self, cid, kind):
         self.dialog = {"id": secrets.token_hex(6), "kind": kind, "step": "query" if kind == "search" else "number",
                        "expires": time.monotonic() + DIALOG_TTL}
-        if kind == "general":
+        if kind in ("general", "aisearch"):
             self.dialog["step"] = "question"
         prompt = ("찾을 낱말을 보내세요. 예: 연수 신청\n자료만 검색하며 AI는 실행하지 않습니다." if kind == "search" else
+                  "🤖 AI 로 찾을 질문을 보내세요. 이 PC 의 자료를 이 PC 의 AI 가 읽고 답합니다." if kind == "aisearch" else
                   "🤖 질문을 보내세요. 일반 질문 AI 로 답하며 업무자료는 붙이지 않습니다.\n학생 정보·비공개 자료는 쓰지 마세요."
                   if kind == "general" else "학생 번호를 함께 보내세요. 예: 7\n명단에 있는 번호만 쓸 수 있습니다.")
         self.send(prompt + "\n10분 안에 입력하세요. 그만하려면 '취소'.", cid, keyboard=True)
@@ -790,6 +842,9 @@ class Bot:
         if kind == "general":
             self.dialog = None
             return self.offer_general(cid, text)
+        if kind == "aisearch":
+            self.dialog = None
+            return self.ask(cid, text)
         if kind == "free":
             return self.free_pick(cid, dialog, text.strip())
         if kind == "doc":   # 할 작업 (고르는 중에 다시 보내면 그 말로 다시 찾음)
@@ -1641,13 +1696,16 @@ class Bot:
             request = self.choice_requests.get(request_id)
             if not request or request["chat_id"] != cid:
                 return self.reply(cid, "이미 처리했거나 오래된 선택입니다. 내용을 다시 보내 주세요.")
-            if action not in ("ai", "search", "brief", "today", "deadlines", "early", "out", "absence"):
+            if action not in ("ai", "search", "brief", "today", "deadlines", "early", "out", "absence", "cool"):
                 return self.reply(cid, "알 수 없는 선택입니다. 내용을 다시 보내 주세요.")
             if action == "ai" and self.asking:
                 return self.reply(cid, "앞 질문에 답하는 중입니다. 끝나면 AI 검색 단추를 다시 눌러 주세요.")
             del self.choice_requests[request_id]
             if action == "ai":
                 return self.ask(cid, request["text"])
+            if action == "cool":
+                m = self.cool_words(request["text"])
+                return self.begin_cool(cid, m) if m else self.reply(cid, "쪽지 모양이 아닙니다. '쪽지 이름 내용' 으로 보내 주세요.")
             if action == "search":
                 return self.send_search(cid, request["text"][:100])
             if action == "brief":
