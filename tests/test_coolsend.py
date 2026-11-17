@@ -174,6 +174,10 @@ class CoolAttachTests(unittest.TestCase):
         files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui)
         self.assertEqual([p.name for p in files], ["안내문.pdf"])
         self.assertEqual(ui.picked, [1])
+        ui.save_all = lambda m: (Path(self.tmp.name) / "안내문(1).pdf").write_bytes(b"%PDF again") or True
+        files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui)
+        self.assertEqual([p.name for p in files], ["안내문(1).pdf"])   # 같은 이름이 있어도 새로 받음 (번호 붙은 새 파일)
+        self.assertEqual(ui.picked, [1, 1])
 
     def test_no_attachment_or_not_found(self):
         ui = FakeAttachUI(self.tmp.name, self.ROWS)
@@ -257,9 +261,8 @@ class TelegramCoolSendTests(unittest.TestCase):
         self.bot.handle_update(msg("첨부 1"))
         self.assertIn("첨부 1개를 보냈습니다", self.fake.sent[-1]["text"])
         self.assertEqual(self.bot.cool_attach_ui.picked, [1])
-        before = len(self.bot.cool_attach_ui.picked)
-        self.bot.handle_update(msg("파일 1"))   # 쿨메신저 쪽지의 '파일 n' 도 첨부 받기로
-        self.assertEqual(len(self.bot.cool_attach_ui.picked), before + 1)
+        self.bot.handle_update(msg("파일 1"))   # '파일 n' 은 그대로, 첨부 안내만
+        self.assertIn("'첨부 1'", self.fake.sent[-1]["text"])
 
     def test_not_found_and_failure_message(self):
         self.bot.handle_update(msg("쪽지 박없음 안녕하세요"))

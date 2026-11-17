@@ -1259,9 +1259,8 @@ class Bot:
                 return self.reply(cid, f"{args[0]}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
             if cmd == "text":
                 return self.send_original(cid, item_id)
-            it = self.db.one("SELECT source, file_path FROM items WHERE id = ?", (item_id,))
-            if cmd == "attach" or (it and it["source"] == "cool" and not item_file(self.config, it["file_path"])):
-                return self.begin_cool_attach(cid, item_id)   # 쿨메신저 쪽지의 '파일 n' 은 첨부 받기로
+            if cmd == "attach":
+                return self.begin_cool_attach(cid, item_id)
             return self.send_item_file(cid, item_id)
         return self.start_pass(cid, cmd, args)
 
@@ -1942,6 +1941,10 @@ class Bot:
     def set_refs(self, ids):
         self.db.set_meta("telegram_refs", list(ids)[:100])
 
+    def ref_number(self, item_id):
+        ids = self.db.get_meta("telegram_refs") or []
+        return ids.index(item_id) + 1 if item_id in ids else "번호"
+
     def ref_item(self, n):
         ids = self.db.get_meta("telegram_refs") or []
         return ids[n - 1] if 0 < n <= len(ids) else None
@@ -1966,7 +1969,8 @@ class Bot:
             return self.reply(cid, "없는 자료입니다.")
         p = item_file(self.config, it["file_path"])
         if not p:
-            return self.reply(cid, "원본 파일이 없습니다 (쿨메신저 쪽지이거나 폴더에서 옮겨짐). '원문' 으로 글을 받으세요.")
+            hint = f" 쿨메신저 쪽지의 첨부는 '첨부 {self.ref_number(item_id)}'." if self.config["telegram_cool_send"] else ""
+            return self.reply(cid, "원본 파일이 없습니다 (쿨메신저 쪽지이거나 폴더에서 옮겨짐). '원문' 으로 글을 받으세요." + hint)
         if p.stat().st_size > FILE_LIMIT:
             return self.reply(cid, "파일이 너무 커서 텔레그램으로 보낼 수 없습니다 (50MB).")
         self.send_file(cid, p.name, p.read_bytes(), caption=it["title"][:200])

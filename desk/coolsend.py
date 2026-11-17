@@ -309,6 +309,7 @@ def fetch_attachments(title, received_at, sender="", ui=None, log=None):
             raise SendError("메시지관리함에서 같은 쪽지로 보이는 것이 여럿이라 멈췄습니다. PC 에서 직접 받아 주세요.")
         if not (rows[found[0]][3] or "").strip():
             raise SendError("그 쪽지에는 첨부 파일이 없습니다.")
+        # 저장 폴더에 같은 이름이 있어도 늘 새로 받음 (선생님 결정 2026-11-17: 쿨메신저가 '이름(1).pdf' 처럼 번호를 붙임)
         before = _files(folder)
         if not ui.select_row(manager, found[0]):
             raise SendError("메시지관리함에서 그 쪽지를 고르지 못했습니다.")
