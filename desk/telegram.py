@@ -208,6 +208,10 @@ P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번�
 POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 초 (실패가 이어지면 두 배씩, 최대 300초)
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
+COOL_SUMMARY_LIMIT = 3    # 0.6.8 한 번 수집에서 AI 로 요약해 보내는 쿨메신저 쪽지 최대 (작은 PC 의 LM Studio 가 오래 바쁘지 않게)
+COOL_SUMMARY_WAIT = 180   # 요약을 기다리는 최대 시간(초). 넘으면 [원문] 단추만 보내고, 요약은 뒤에서 마저 만들어 수신함에 남음
+COOL_SUMMARY_MARKS = (("sender", "👤 보낸 사람"), ("task", "📝 업무 내용"), ("due", "⏰ 마감 기한"),
+                      ("files", "📎 첨부파일"), ("urgent", "긴급 여부"))
 
 
 def cut(text, n=40):
@@ -330,6 +334,8 @@ class Bot:
         self.direct_cache = {}
         self.cool_ui = None     # 시험: 쿨메신저 창 조작을 가짜로 (None 이면 실제 윈도우)
         self.cool_attach_ui = None
+        self.item_ai = None     # desk.py 가 연결: 화면과 같은 항목별 AI 요약 대기열 (ai.ItemJob, 0.6.8 쪽지 요약)
+        self.cool_summary_wait = COOL_SUMMARY_WAIT
 
     # ---- 텔레그램 API ----
     @property
@@ -2617,6 +2623,88 @@ class Bot:
             self.send(f"📨 쪽지 {len(rows) - 5}건의 원문은 업무 데스크 수신함에서 보세요.")
         return sent
 
+    def send_cool_summaries(self, stats):
+        """새 쿨메신저 쪽지를 이 PC 의 AI 로 다섯 칸(보낸 사람·업무 내용·마감 기한·첨부파일·긴급 여부) 요약해 보냄
+        (선생님 요청 2026-11-17, 설정 telegram_cool_summary · AI 를 켠 경우만).
+
+        - 요약은 화면과 같은 항목별 AI 대기열(ItemJob)로 만듦: LM Studio 는 한 번에 한 건, 만든 요약은 수신함에도 남음.
+          선생님이 시킨 것과 같아 '수업 시간에만' 규칙과 관계없이 바로 만듦.
+        - AI 에는 학생 이름을 가려 보내고(127.0.0.1 로만), 받은 요약에서도 가림 (ai.summarize_item).
+        - 원문은 보내지 않음 (원문은 telegram_cool_text 를 켰거나 [원문] 단추를 누를 때만, 사용자 결정 2026-10-28).
+        - 요약이 COOL_SUMMARY_WAIT 안에 안 끝나거나 실패하면 그 쪽지는 이유 한 줄과 [원문] 단추만 보냄.
+          수집 알림·사진·원문 전달은 이것과 따로 먼저 나가므로 요약이 늦어도 막히지 않음.
+        """
+        ids = list(stats.get("new_ids") or [])
+        if not (ids and self.chat_id and self.item_ai and self.config["telegram_cool_summary"] and self.config["ai_enabled"]):
+            return 0
+        rows = self.db.query(
+            f"SELECT id FROM items WHERE source = 'cool' AND TRIM(body) != '' AND id IN ({','.join('?' * len(ids))}) "
+            "ORDER BY received_at DESC, id DESC", ids)
+        picked = [r["id"] for r in rows]
+        if not picked:
+            return 0
+        if self.sync:
+            return self._cool_summaries(picked)
+        threading.Thread(target=self._cool_summaries, args=(picked,), name="telegram-coolsummary", daemon=True).start()
+        return len(picked[:COOL_SUMMARY_LIMIT])
+
+    def _cool_summaries(self, ids):
+        try:
+            return self._cool_summaries_run(ids)
+        except Exception as e:   # 뒤에서 도는 일이 조용히 죽지 않게
+            self.note_error(e, "쪽지 AI 요약")
+            return 0
+
+    def _cool_summaries_run(self, ids):
+        more = len(ids) - COOL_SUMMARY_LIMIT
+        ids = ids[:COOL_SUMMARY_LIMIT]
+        for iid in reversed(ids):   # 대기열 맨 앞에 하나씩 세우므로 거꾸로 넣어야 최신 쪽지가 먼저
+            try:
+                self.item_ai.start(iid)
+            except ai.AIError:
+                pass
+        deadline = time.monotonic() + self.cool_summary_wait
+        waiting, sent = list(ids), 0
+        while waiting:
+            for iid in list(waiting):
+                st = self.item_ai.status(iid)
+                if st.get("running") or st.get("queued"):
+                    continue
+                waiting.remove(iid)
+                sent += self._send_cool_summary(iid, st.get("error"))
+            if not waiting or time.monotonic() >= deadline or self.stop_event.wait(1):
+                break
+        for iid in waiting:   # 너무 늦음: 요약은 뒤에서 마저 만들어 수신함에 남음
+            sent += self._send_cool_summary(iid, "요약이 늦어 기다리지 않았습니다 (PC 의 AI 가 바쁨)", late=True)
+        if more > 0:
+            self.send(f"🤖 쪽지 {more}건은 한 번에 {COOL_SUMMARY_LIMIT}건까지라 요약해 보내지 않았습니다. 업무 데스크 수신함에서 보세요.")
+        return sent
+
+    def _send_cool_summary(self, item_id, error=None, late=False):
+        it = self.db.one("SELECT id, title, body, ai_summary, ai_summary_hash FROM items WHERE id = ?", (item_id,))
+        if not it:
+            return 0
+        buttons = [[{"text": "원문 보기", "callback_data": f"o:{item_id}"}]]
+        n = self.ref_number(item_id)
+        head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
+        fresh = it["ai_summary"] and it["ai_summary_hash"] == ai.body_hash(it["body"])
+        if late or error or not fresh:
+            reason = error or "요약을 만들지 못했습니다"
+            self.send(f"{head}\n⚠ AI 요약 없음: {self.mask_always(reason)[:120]}\n원문은 아래 단추로 받을 수 있습니다.", buttons=buttons)
+            return 0
+        fields = ai.cool_fields(it["ai_summary"], it["body"])
+        if not fields:   # 모델이 다섯 칸 형식을 따르지 않음: 받은 요약을 그대로
+            self.send(f"{head}\n{self.mask(it['ai_summary']).strip()[:900]}", buttons=buttons)
+            return 1
+        lines = [head]
+        for key, label in COOL_SUMMARY_MARKS:
+            value = fields[key] or ("모름" if key == "sender" else "없음")
+            if key == "urgent":
+                label = "🚨 긴급 여부" if value == "긴급" else "✅ 긴급 여부"
+            lines.append(f"{label}: {cut(self.mask(value), 200)}")
+        self.send("\n".join(lines), buttons=buttons)
+        return 1
+
     def notify_collect(self, stats, reason):
         try:
             self.send_collect_photos(stats)
@@ -2626,13 +2714,16 @@ class Bot:
             self.send_collect_texts(stats)
         except Exception:
             pass   # 원문 전달이 실패해도 알림은 보냄
-        if reason == "telegram":
-            return  # 명령에 대한 답장으로 이미 보냄
-        msg = self.collect_message(stats)
-        if msg and self.chat_id:
-            ids = self.db.get_meta("telegram_refs", []) if stats.get("new_ids") else []
-            buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
-            self.send(msg, buttons=buttons)
+        if reason != "telegram":   # 명령에 대한 답장이면 이미 보냄
+            msg = self.collect_message(stats)
+            if msg and self.chat_id:
+                ids = self.db.get_meta("telegram_refs", []) if stats.get("new_ids") else []
+                buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
+                self.send(msg, buttons=buttons)
+        try:
+            self.send_cool_summaries(stats)   # 알림 뒤에 뒤에서 (요약이 늦어도 알림은 먼저)
+        except Exception as e:
+            self.note_error(e, "쪽지 AI 요약")
 
     def _refresh_text(self):
         stats = self.collector.run("telegram")
