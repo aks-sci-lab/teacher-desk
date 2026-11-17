@@ -84,6 +84,22 @@ class TtlTests(unittest.TestCase):
         self.assertEqual(f.requests[-1]["ttl"], 300)
         self.assertFalse(ai.ttl_unsupported(f.base, self.db))
 
+    def test_reasoning_off_sent(self):
+        # Gemma 4 는 LM Studio 에서 reasoning_effort "none" 으로만 생각을 끔 (0.6.7)
+        f = Fake()
+        self.addCleanup(f.close)
+        ai.ask(f.base, "google/gemma-4-e4b", "q", db=self.db)
+        self.assertEqual(f.requests[0]["reasoning_effort"], "none")
+        self.assertEqual(f.requests[0]["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_reasoning_effort_refused_retries_without(self):
+        f = Fake(reject=["reasoning_effort"])
+        self.addCleanup(f.close)
+        self.assertEqual(ai.ask(f.base, "m", "q", db=self.db), "답")
+        self.assertNotIn("reasoning_effort", f.requests[-1])
+        self.assertEqual(f.requests[-1]["ttl"], 300)
+        self.assertFalse(ai.ttl_unsupported(f.base, self.db))
+
     def test_other_400_is_shown(self):
         f = Fake(other_400=True)
         self.addCleanup(f.close)

@@ -83,6 +83,7 @@ class ProviderTests(unittest.TestCase):
             self.assertEqual(self.ask("local", "최별빛의 질문", confirmed=False), "로컬 답")
             self.assertEqual(ask.call_args.args[:3],
                              (self.env.config["ai_base"], "local-model", "최별빛의 질문"))
+            self.assertEqual(ask.call_args.kwargs["timeout"], 300)   # 0.6.7: 90초는 학교 PC 의 Gemma 4 에 너무 짧았음
             request.assert_not_called()
 
     def test_missing_keys_invalid_models_and_incomplete_responses(self):

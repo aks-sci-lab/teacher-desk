@@ -41,6 +41,9 @@ def check_public(db, config, question):
         raise ai.AIError("수신한 쪽지·공문과 겹치는 내용입니다. 업무자료는 로컬 AI로 질문하세요.")
 
 
+LOCAL_TIMEOUT = 300       # 이 PC 의 LM Studio 일반 질문 (0.6.7 전에는 90초라 Gemma 4 가 끊겼음)
+
+
 def _request(url, headers, payload, timeout=90):
     """payload 가 None 이면 GET (모델 목록 읽기), 아니면 POST."""
     data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -115,7 +118,8 @@ def ask(db, config, question, *, provider=None, confirmed=False):
     if provider == "browser":
         raise ai.AIError("브라우저 내장 AI는 앱의 'AI 질문' 화면에서만 사용할 수 있습니다. 텔레그램에서는 로컬 또는 외부 API를 선택하세요.")
     if provider == "local":
-        return ai.ask(config["ai_base"], ai.pick_model(config), question, timeout=90,
+        # 이 PC 의 LM Studio 는 느릴 수 있어(모델 바꿔 끼우기·내장 그래픽) 자료 검색(assist)과 같이 5분까지 기다림
+        return ai.ask(config["ai_base"], ai.pick_model(config), question, timeout=LOCAL_TIMEOUT,
                       system=SYSTEM, max_tokens=1200, db=db)
     if confirmed is not True:
         raise ai.AIError("공개 자료·일반 질문이며 외부 전송과 비용 발생에 동의하는지 먼저 확인하세요.")
