@@ -11,7 +11,8 @@
 지키는 것:
 - 선생님이 텔레그램에서 받는 사람·제목·내용을 보고 [보내기]를 누른 것만 보냄 (이 모듈은 확인 단추를 부르지 않음)
 - 클릭하기 전에 그 자리가 정말 그 단추·그 사람인지, 맨 앞 창이 쿨메신저인지 확인. 어긋나면 멈춤
-- 중간에 멈추면 쓰던 쪽지 창은 열어 둠(보내지 않음) — 선생님이 PC 에서 마저 보내거나 닫음
+- 먼저 열려 있던 쪽지 창은 [닫기]로 닫고 시작 (선생님 결정, 그 창의 글은 보내지 않고 버려짐)
+- 중간에 멈추면 이번에 쓰던 쪽지 창은 열어 둠(보내지 않음) — 선생님이 PC 에서 마저 보내거나 닫음
 - 화면이 잠겨 있으면 시작하지 않음 (윈도우가 잠금 화면에서 클릭·입력을 막음)
 - 한 번에 한 통만 (다른 보내기가 진행 중이면 기다리지 않고 거절)
 - 기록(db.log)에는 받는 사람 이름·내용을 남기지 않음
@@ -155,6 +156,22 @@ class WinUI:
         finally:
             winui.set_clipboard_text(saved)
 
+    def close_compose(self, compose):
+        """열려 있던 쪽지 창을 [닫기](1440)로 닫음 (선생님 결정 2026-11-17: 열려 있으면 닫고 보냄). 닫혔으면 True."""
+        button = winui.item(compose, ID_CLOSE)
+        if not button or not winui.bring_front(compose):
+            return False
+        pt = winui.center(button)
+        if not winui.window_at(pt, button) or winui.foreground() != compose:
+            return False
+        winui.click_at(*pt)
+        end = time.monotonic() + 3
+        while time.monotonic() < end:
+            if not winui.is_window(compose) or not winui.is_visible(compose):
+                return True
+            time.sleep(0.2)
+        return False
+
     def press_send(self, compose):
         button = winui.item(compose, ID_SEND)
         if not button or not winui.bring_front(compose):
@@ -201,8 +218,11 @@ def send(person, title, body, ui=None, log=None):
                    if label == person["label"] and dept == person["dept"]]
         if len(matches) != 1:
             raise SendError("조직도에서 받는 사람을 다시 찾지 못했습니다 (조직도가 바뀌었을 수 있음). 다시 보내 주세요.")
+        for old in ui.compose_windows():   # 열려 있던 쪽지 창은 닫고 시작 (쓰던 글은 보내지 않고 버림)
+            if not ui.close_compose(old):
+                raise SendError("쿨메신저에 열려 있던 쪽지 창을 닫지 못했습니다. 그 창을 닫은 뒤 다시 보내 주세요.")
         if ui.compose_windows():
-            raise SendError("쿨메신저에 이미 열린 쪽지 쓰기 창이 있습니다. 그 창을 보내거나 닫은 뒤 다시 보내 주세요.")
+            raise SendError("쿨메신저에 열려 있던 쪽지 창을 닫지 못했습니다. 그 창을 닫은 뒤 다시 보내 주세요.")
         compose = ui.open_compose(main, matches[0][0], person["label"])
 
         def check_recipient():

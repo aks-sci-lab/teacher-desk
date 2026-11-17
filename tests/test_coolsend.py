@@ -55,6 +55,13 @@ class FakeUI:
         self.draft["body"] = body
         return "body" not in self.fail
 
+    def close_compose(self, compose):
+        self.calls.append(("close", compose))
+        if "close" in self.fail:
+            return False
+        self.open.remove(compose)
+        return True
+
     def press_send(self, compose):
         if "send" in self.fail:
             return False
@@ -101,7 +108,13 @@ class CoolSendTests(unittest.TestCase):
         with self.assertRaises(coolsend.SendError):
             coolsend.send(person, "t", "b", ui=FakeUI(locked=True))
         ui = FakeUI()
-        ui.open.append(99)   # 선생님이 쓰던 창이 있으면 손대지 않음
+        ui.open.append(99)   # 열려 있던 쪽지 창은 닫고 보냄 (선생님 결정)
+        coolsend.send(person, "t", "b", ui=ui)
+        self.assertEqual(ui.calls[1:3], [("close", 99), ("open", 12)])
+        self.assertEqual(len(ui.sent), 1)
+        ui = FakeUI()
+        ui.open.append(99)
+        ui.fail.add("close")   # 닫지 못하면 시작하지 않음
         with self.assertRaises(coolsend.SendError):
             coolsend.send(person, "t", "b", ui=ui)
         self.assertNotIn(("open", 12), ui.calls)

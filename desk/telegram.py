@@ -2327,7 +2327,7 @@ class Bot:
             buttons = [[{"text": f"📨 {self.mask(p['dept'])}"[:60], "callback_data": f"cs:{dialog['id']}:{i}"}]
                        for i, p in enumerate(people[:8])]
         else:
-            lines.append("[보내기]를 누르면 이 PC 의 쿨메신저 창이 잠깐 앞으로 나오며 보냅니다.")
+            lines.append("[보내기]를 누르면 이 PC 의 쿨메신저 창이 잠깐 앞으로 나오며 보냅니다. 열려 있던 쪽지 창은 닫습니다.")
             buttons = [[{"text": "📨 보내기", "callback_data": f"cs:{dialog['id']}:0"}]]
         buttons.append([{"text": "✖ 취소", "callback_data": f"cs:{dialog['id']}:x"}])
         return "\n".join(lines), buttons
