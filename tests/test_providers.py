@@ -148,6 +148,54 @@ class ProviderTests(unittest.TestCase):
         self.assertFalse(Config(config.path).public()["ai_gemini_key_set"])
 
 
+class ModelListTests(unittest.TestCase):
+    """0.6.4 모델 목록 불러오기: API 키로 목록만 읽고(GET, 질문 없음) 글 대화용 모델만 남김."""
+    LISTS = {
+        "openai": {"data": [{"id": "gpt-4.1"}, {"id": "gpt-4o-mini"}, {"id": "o3"}, {"id": "dall-e-3"},
+                            {"id": "gpt-4o-audio-preview"}, {"id": "text-embedding-3-small"}, {"id": "whisper-1"},
+                            {"id": "gpt-4o-realtime-preview"}, {"id": "bad/name"}]},
+        "anthropic": {"data": [{"id": "claude-sonnet-4-5"}, {"id": "claude-haiku-4-5"}]},
+        "gemini": {"models": [
+            {"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent", "countTokens"]},
+            {"name": "models/gemini-2.5-pro", "supportedGenerationMethods": ["generateContent"]},
+            {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
+            {"name": "models/gemini-embedding-001", "supportedGenerationMethods": ["generateContent"]}]},
+    }
+
+    def setUp(self):
+        self.env = Env()
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_lists_only_chat_models_with_get_and_no_question(self):
+        self.env.config.update({f"ai_{p}_key": "saved-key" for p in providers.EXTERNAL})
+        expected = {"openai": ["o3", "gpt-4o-mini", "gpt-4.1"], "anthropic": ["claude-sonnet-4-5", "claude-haiku-4-5"],
+                    "gemini": ["gemini-2.5-flash", "gemini-2.5-pro"]}
+        for provider in providers.EXTERNAL:
+            with self.subTest(provider=provider), patch("desk.providers._request", return_value=self.LISTS[provider]) as request:
+                self.assertEqual(providers.list_models(self.env.config, provider), expected[provider])
+                url, headers, payload = request.call_args.args
+                self.assertIsNone(payload)          # GET: 보내는 내용 없음
+                self.assertTrue(url.startswith("https://"))
+                self.assertNotIn("saved-key", url)
+                self.assertIn("saved-key", " ".join(headers.values()))
+
+    def test_typed_key_wins_and_errors_before_network(self):
+        with patch("desk.providers._request", return_value=self.LISTS["anthropic"]) as request:
+            for provider, key in (("openai", ""), ("local", "k"), ("browser", "k"), ("anthropic", "한글키")):
+                with self.subTest(provider=provider), self.assertRaises(ai.AIError):
+                    providers.list_models(self.env.config, provider, key)
+            request.assert_not_called()
+            self.env.config.update({"ai_anthropic_key": "saved-key"})
+            providers.list_models(self.env.config, "anthropic", "typed-key")
+            self.assertEqual(request.call_args.args[1]["x-api-key"], "typed-key")
+        with patch("desk.providers._request", return_value={"data": []}), self.assertRaises(ai.AIError):
+            providers.list_models(self.env.config, "anthropic")
+        with patch("desk.providers._request", return_value={"oops": 1}), self.assertRaises(ai.AIError):
+            providers.list_models(self.env.config, "anthropic")
+
+
 class ProviderApiTests(unittest.TestCase):
     setUpClass = classmethod(test_server.ServerTests.setUpClass.__func__)
     tearDownClass = classmethod(test_server.ServerTests.tearDownClass.__func__)
@@ -169,6 +217,23 @@ class ProviderApiTests(unittest.TestCase):
             self.assertEqual(self.req("POST", "/api/ai/question", body)[0], 400)
         self.env.config.update({"ai_openai_key": "SECRET-KEY", "ai_provider": "openai"})
         self.assertNotIn("SECRET-KEY", json.dumps(self.req("GET", "/api/state")[1]))
+
+    def test_models_api_local_and_external(self):
+        from tests.test_ai_register import FakeLMStudio
+        fake = FakeLMStudio()
+        try:
+            self.env.config.update({"ai_base": fake.base, "ai_model": "qwen3-8b"})
+            self.assertEqual(self.req("POST", "/api/ai/models", {"provider": "local"}),
+                             (200, {"models": ["qwen3-8b"], "current": "qwen3-8b"}))
+            self.assertEqual(self.req("POST", "/api/ai/models", {"provider": "local", "base": "https://api.openai.com/v1"})[0], 400)
+        finally:
+            fake.close()
+        self.assertEqual(self.req("POST", "/api/ai/models", {"provider": "gemini"}, token=False)[0], 401)
+        with patch("desk.server.providers.list_models", return_value=["gemini-2.5-flash"]) as lm:
+            self.assertEqual(self.req("POST", "/api/ai/models", {"provider": "gemini", "key": "typed"})[1]["models"],
+                             ["gemini-2.5-flash"])
+            self.assertEqual(lm.call_args.args[1:], ("gemini", "typed"))
+        self.assertEqual(self.req("POST", "/api/ai/models", {"provider": "browser"})[0], 400)
 
 
 class TelegramProviderTests(unittest.TestCase):

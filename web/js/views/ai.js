@@ -4,6 +4,7 @@ import { askBrowser, browserAvailability } from '../browser-ai.js';
 import { el, clear, guarded, toast } from '../ui.js';
 import { registerView, openTab } from '../shell.js';
 import { store, saveSettings } from '../store.js';
+import { modelPicker } from './setfields.js';
 
 const MODES = [['local', '로컬 — 이 PC의 LM Studio'], ['browser', '브라우저 내장 — 기기 내 실행'],
     ['openai', '외부 API — OpenAI (GPT)'], ['anthropic', '외부 API — Claude'], ['gemini', '외부 API — Gemini']];
@@ -20,8 +21,14 @@ export function openAI() {
         const keyHint = el('span.hint');
         const link = el('a', { target: '_blank', rel: 'noopener noreferrer' }, '공식 API 키 관리 페이지');
         const notice = el('p.small');
-        const details = el('div', el('label.field', el('span', 'API 모델 이름 (서비스에서 제공하는 정확한 이름)'), model),
-            el('label.field', el('span', 'API 키 (이 PC에 저장, 화면에는 다시 표시하지 않음)'), key, keyHint), link);
+        // 0.6.4 모델 목록: [목록 불러오기]를 누를 때만 그 회사에 API 키로 목록을 물어봄 (질문·학교 자료는 보내지 않음)
+        const picker = modelPicker(model, async () =>
+            (await api.post('/api/ai/models', { provider: mode.value, key: key.value })).models, { label: 'API 모델 목록' });
+        const details = el('div',
+            el('label.field', el('span', 'API 키 (이 PC에 저장, 화면에는 다시 표시하지 않음)'), key, keyHint), el('div.row', { style: 'margin-bottom: 12px' }, link),
+            el('div.field', el('span', 'API 모델 (목록에서 고르기)'), picker,
+                el('p.small.muted', '목록은 입력한(또는 저장한) API 키로 그 회사에서 받아 옵니다. 질문은 보내지 않습니다. 고른 뒤 [선택·API 설정 저장]을 누르세요.')),
+            el('label.field', el('span', '목록에 없으면 직접 입력 (서비스에서 제공하는 정확한 이름)'), model));
         const status = el('p.small', { role: 'status', 'aria-live': 'polite' });
         const answer = el('pre.text', { style: 'white-space: pre-wrap; overflow-wrap: anywhere', role: 'status' });
         const question = el('textarea', { rows: 5, maxLength: 4000, placeholder: '공개 자료나 일반 지식 질문을 입력하세요.' });
@@ -29,7 +36,7 @@ export function openAI() {
         question.addEventListener('input', () => { consent.checked = false; });
         const consentLabel = el('label.check', consent, '학생 정보·비공개 업무자료가 없는 공개 질문이며 외부 전송·요금 발생을 확인했습니다 (매번 확인).');
         const busy = value => {
-            for (const control of [mode, model, key, save, send, probe, removeKey, question, consent]) control.disabled = value;
+            for (const control of [mode, model, key, save, send, probe, removeKey, question, consent, ...picker.querySelectorAll('select, button')]) control.disabled = value;
         };
         const update = () => {
             const external = !!LINKS[mode.value];
@@ -38,6 +45,7 @@ export function openAI() {
             consent.checked = false;
             key.value = '';
             model.value = store.settings[`ai_${mode.value}_model`] || '';
+            picker.reset();
             keyHint.textContent = store.settings[`ai_${mode.value}_key_set`] ? '키가 저장되어 있습니다. 비워 두면 유지합니다. 삭제 단추로 지울 수 있습니다.' : '아직 키를 저장하지 않았습니다.';
             link.href = LINKS[mode.value] || '#';
             notice.textContent = external
@@ -70,7 +78,7 @@ export function openAI() {
                 keyHint.textContent = 'API 키를 삭제했습니다.';
             } finally { busy(false); }
         }) }, '이 서비스 API 키 삭제');
-        details.append(removeKey);
+        link.after(removeKey);
         const probe = el('button.btn', { onclick: guarded(async () => {
             status.textContent = '브라우저 내장 AI 지원 여부를 확인하는 중…';
             try {
