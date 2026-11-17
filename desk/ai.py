@@ -345,7 +345,9 @@ def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db
         "temperature": 0.2, "max_tokens": max_tokens, "stream": False,
     }
     # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)
-    think = {"chat_template_kwargs": {"enable_thinking": False}}
+    # 0.6.7: Gemma 4 는 LM Studio 에서 enable_thinking 을 무시하고 reasoning_effort "none" 만 따름
+    #   (학교 PC 실측: 생각 글 1500자·27초 → 0자·4초). 둘 다 보내고, 400 이면 둘 다 빼고 다시.
+    think = {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"}
     ttl = {"ttl": IDLE_TTL}
     # 400(모르는 칸)이면 칸을 하나씩 빼며 다시 시도: (생각끄기, ttl) 조합
     tries = [(True, True), (False, True), (True, False), (False, False)]
