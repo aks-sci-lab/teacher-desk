@@ -41,12 +41,14 @@ def check_public(db, config, question):
         raise ai.AIError("수신한 쪽지·공문과 겹치는 내용입니다. 업무자료는 로컬 AI로 질문하세요.")
 
 
-def _request(url, headers, payload):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
-                                 headers={"Content-Type": "application/json", **headers}, method="POST")
+def _request(url, headers, payload, timeout=90):
+    """payload 가 None 이면 GET (모델 목록 읽기), 아니면 POST."""
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers},
+                                 method="GET" if payload is None else "POST")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
-        with opener.open(req, timeout=90) as response:
+        with opener.open(req, timeout=timeout) as response:
             data = response.read(MAX_RESPONSE + 1)
         if len(data) > MAX_RESPONSE:
             raise ai.AIError("외부 AI의 응답이 너무 큽니다.")
@@ -60,6 +62,49 @@ def _request(url, headers, payload):
         raise ai.AIError("외부 AI에 연결하지 못했습니다. 인터넷 연결과 서비스 상태를 확인하세요.") from None
     except (ValueError, UnicodeError):
         raise ai.AIError("외부 AI의 응답을 읽을 수 없습니다.") from None
+
+
+MODEL_NAME = re.compile(r"[A-Za-z0-9._:-]{1,120}")
+# OpenAI 목록에는 그림·음성·검색 전용 모델도 섞여 있어 글 대화용만 남김
+OPENAI_CHAT = re.compile(r"^(gpt-|o\d|chatgpt-)")
+OPENAI_SKIP = ("audio", "realtime", "tts", "transcribe", "image", "search", "embedding", "moderation", "instruct", "codex")
+
+
+def _key_ok(key):
+    return isinstance(key, str) and 0 < len(key) <= 512 and all(33 <= ord(c) <= 126 for c in key)
+
+
+def list_models(config, provider, key=None):
+    """외부 API 에서 쓸 수 있는 모델 이름 목록. 질문·학교 자료는 보내지 않고 API 키로 목록만 읽음."""
+    if provider not in EXTERNAL:
+        raise ai.AIError("모델 목록은 외부 API(OpenAI·Claude·Gemini)만 불러올 수 있습니다.")
+    key = (key or "").strip() or config[f"ai_{provider}_key"]
+    if not key:
+        raise ai.AIError("API 키를 먼저 입력하거나 저장하세요.")
+    if not _key_ok(key):
+        raise ai.AIError("API 키 형식이 잘못되었습니다.")
+    try:
+        if provider == "openai":
+            data = _request("https://api.openai.com/v1/models", {"Authorization": f"Bearer {key}"}, None, timeout=20)
+            names = [m["id"] for m in data["data"] if OPENAI_CHAT.match(m["id"])
+                     and not any(word in m["id"] for word in OPENAI_SKIP)]
+        elif provider == "anthropic":
+            data = _request("https://api.anthropic.com/v1/models?limit=100",
+                            {"x-api-key": key, "anthropic-version": "2023-06-01"}, None, timeout=20)
+            names = [m["id"] for m in data["data"]]
+        else:
+            data = _request("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+                            {"x-goog-api-key": key}, None, timeout=20)
+            names = [m["name"].removeprefix("models/") for m in data["models"]
+                     if "generateContent" in (m.get("supportedGenerationMethods") or [])
+                     and not any(word in m["name"] for word in ("embedding", "image", "tts", "aqa"))]
+    except (KeyError, TypeError, AttributeError):
+        raise ai.AIError("외부 AI의 모델 목록을 읽을 수 없습니다. 모델 이름을 직접 입력하세요.") from None
+    names = sorted({n for n in names if isinstance(n, str) and MODEL_NAME.fullmatch(n)},
+                   reverse=provider != "gemini")
+    if not names:
+        raise ai.AIError("쓸 수 있는 모델을 찾지 못했습니다. 모델 이름을 직접 입력하세요.")
+    return names
 
 
 def ask(db, config, question, *, provider=None, confirmed=False):

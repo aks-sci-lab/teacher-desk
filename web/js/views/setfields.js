@@ -270,6 +270,72 @@ export function refreshTelegramBoxes() {
     }
 }
 
+// 0.6.4 AI 모델 고르기: 목록(고르기 칸) + [목록 불러오기] + 직접 입력 칸.
+// input 은 실제 값이 들어가는 칸(설정 화면에서는 data-key 가 있어 고치면 바로 저장).
+// load() 는 모델 이름 배열을 돌려주는 함수. 목록을 못 불러오면 안내만 하고 직접 입력 칸은 그대로 씀.
+// opts.auto: 화면을 열 때 바로 불러올지 (이 PC 의 LM Studio 만. 외부 API 는 누를 때만)
+// opts.emptyLabel: 비워 둘 때의 뜻 (예: '자동 — 첫 모델'). 없으면 '목록에서 고르세요' 만 보이고 칸은 그대로.
+export function modelPicker(input, load, opts = {}) {
+    const sel = el('select', { 'aria-label': opts.label || '모델 목록', style: 'flex: 1; min-width: 0' });
+    const note = el('p.small.muted', opts.auto ? '모델 목록을 불러오는 중…' : '[목록 불러오기]를 누르면 쓸 수 있는 모델이 나옵니다.');
+    let names = [];
+    const draw = () => {
+        const cur = input.value.trim();
+        const opt = (value, label) => el('option', { value, selected: value === cur }, label);
+        const list = [opt('', opts.emptyLabel || (names.length ? '— 목록에서 고르세요 —' : '— 목록을 먼저 불러오세요 —'))];
+        if (cur && !names.includes(cur)) list.push(opt(cur, `${cur} (직접 입력한 이름${names.length ? ' · 목록에 없음' : ''})`));
+        for (const n of names) list.push(opt(n, n));
+        clear(sel, list);
+    };
+    sel.addEventListener('change', ev => {
+        ev.stopPropagation();   // 고르기 칸 자체는 저장하지 않고, 실제 칸(input)에 넣어 저장
+        if (!sel.value && !opts.emptyLabel) { draw(); return; }
+        if (input.value === sel.value) return;
+        input.value = sel.value;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    input.addEventListener('input', draw);
+    input.addEventListener('change', draw);
+    const refresh = el('button.btn.small', { type: 'button' }, '목록 불러오기');
+    const run = async () => {
+        refresh.disabled = true;
+        note.className = 'small muted';
+        note.textContent = '모델 목록을 불러오는 중…';
+        try {
+            names = await load();
+            note.textContent = `모델 ${names.length}개를 찾았습니다. 목록에서 고르면 바로 적용됩니다.`;
+        } catch (e) {
+            names = [];
+            note.className = 'small set-bad';
+            note.textContent = `목록을 불러오지 못했습니다: ${e.message} — 아래 칸에 모델 이름을 직접 입력해도 됩니다.`;
+        } finally {
+            refresh.disabled = false;
+            draw();
+        }
+    };
+    refresh.onclick = () => { run(); };
+    draw();
+    if (opts.auto) run();
+    const box = el('div.model-picker', el('div.row', sel, refresh), note);
+    box.reset = () => { names = []; note.className = 'small muted'; note.textContent = '[목록 불러오기]를 누르면 쓸 수 있는 모델이 나옵니다.'; draw(); };
+    return box;
+}
+
+// LM Studio AI 모델 (설정 화면): 이 PC 의 LM Studio 에서 목록을 바로 불러옴
+export function localModelField() {
+    const input = el('input', { type: 'text', value: store.settings.ai_model ?? '', maxLength: 200,
+        autocomplete: 'off', placeholder: '비워 두면 LM Studio 에서 불러온 첫 모델' });
+    input.dataset.key = 'ai_model';
+    const picker = modelPicker(input, async () => {
+        const base = document.querySelector('.pane.on [data-key="ai_base"]')?.value || store.settings.ai_base;
+        return (await api.post('/api/ai/models', { provider: 'local', base })).models;
+    }, { auto: !!store.settings.ai_enabled, label: 'LM Studio 모델 목록', emptyLabel: '자동 — LM Studio 에서 불러온 첫 모델' });
+    return item('AI 모델 이름 고르기 목록 LM Studio 모델 선택',
+        el('div.field', el('span', 'AI 모델'), picker,
+            el('label.field', el('span', '목록에 없으면 직접 입력 (다운로드한 모델의 고정 이름)'), input),
+            el('p.small.muted', '브리핑·수신함 요약, AI 검색, 문서 작성, 텔레그램 질문 모두 이 모델을 씁니다.')));
+}
+
 // LM Studio [연결 확인]
 export function aiCheck() {
     const box = el('div');
@@ -280,7 +346,7 @@ export function aiCheck() {
             const r = await api.post('/api/ai/check', { base });
             clear(box, el('p.set-good', 'LM Studio 연결됨'),
                 el('p.small', `불러온 모델: ${r.models.join(', ')}`),
-                el('p.small.muted', '모델 이름 칸을 비워 두면 첫 모델을 씁니다.'),
+                el('p.small.muted', '아래 \'AI 모델\' 에서 고를 수 있습니다. 비워 두면 첫 모델을 씁니다.'),
                 r.ttl_unsupported && el('p.small.set-bad', '이 서버는 자동 해제(ttl)를 지원하지 않아 모델이 메모리에 계속 남습니다. LM Studio를 최신 버전으로 올리면 해결될 수 있습니다.'));
         } catch (e) {
             clear(box, el('p.set-bad', e.message));

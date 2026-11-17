@@ -16,7 +16,7 @@ import { openShareExport, openShareImport } from './share.js';
 import { cloudBox, cloudLine } from './cloud.js';
 import {
     item, textField, pathField, checkField, selectField, secretField, autoSave, saveStateBox,
-    coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, aiWindowLine, TELEGRAM_STEPS,
+    coolConnect, folderCheck, telegramStatus, refreshTelegramBoxes, aiCheck, aiWindowLine, localModelField, TELEGRAM_STEPS,
 } from './setfields.js';
 import { matches } from '../setup-rules.js';
 
@@ -51,7 +51,7 @@ function aiSetup(pane) {
                         ai_base: r.settings.ai_base, ai_model: r.settings.ai_model, ai_input_size: r.settings.ai_input_size,
                     })) {
                         const input = pane.querySelector(`[data-key="${key}"]`);
-                        if (input) input.value = value;
+                        if (input) { input.value = value; input.dispatchEvent(new Event('input')); }
                     }
                     pane.querySelector('[data-key="ai_enabled"]').checked = true;
                     await loadState();
@@ -384,11 +384,11 @@ const GROUPS = [
                 '요약하는 동안 PC 가 느려지므로, 누르지 않은 요약(새 수신 항목·브리핑을 열 때)은 시간표의 내 수업 교시에만 합니다. 그 사이 받은 것은 모아 두었다가 다음 수업 때 요약합니다. 직접 누른 요약·텔레그램 질문은 언제든 바로. 시간표가 없으면 언제든.'),
             item('자동 요약 시간 다음 자동 요약 교시 수업', aiWindowLine()),
             item('LM Studio 연결 확인', aiCheck()),
+            localModelField(),
             item('LM Studio 설치 도우미 PC 사양 모델 추천 배치파일',
                 el('details.set-adv', el('summary', 'LM Studio 설치 도우미 (PC 사양 확인·모델 추천)'), el('div', aiSetup(pane)))),
             advanced(
                 textField('ai_base', 'LM Studio 서버 주소', '기본 http://127.0.0.1:1234/v1 — 이 PC 주소만 됩니다.'),
-                textField('ai_model', '모델 이름', '다운로드한 모델의 고정 이름. 비워 두면 첫 대화 모델'),
                 selectField('ai_input_size', '보내는 양',
                     [['normal', '보통 — 최대 14,000자 (더 꼼꼼, 4~5분)'], ['short', '짧게 — 최대 6,000자 (빠름, 2분 안팎)']],
                     '오래 걸리면 "짧게"를 고르세요.', 'normal'),

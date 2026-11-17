@@ -1910,6 +1910,21 @@ def ai_check(app, q, body):
         raise ApiError(400, str(e))
 
 
+@api("POST", "/api/ai/models")
+def ai_models(app, q, body):
+    """AI 모델 목록: local 은 이 PC 의 LM Studio, 그 밖은 외부 API (누를 때만, 질문·자료는 보내지 않음)."""
+    provider = text_field(body.get("provider"), "AI 사용 방식", 20) or "local"
+    try:
+        if provider == "local":
+            base = text_field(body.get("base"), "AI 주소", 200) or app.config["ai_base"]
+            return {"models": ai.models(base), "current": app.config["ai_model"]}
+        key = text_field(body.get("key"), "API 키", 512)
+        return {"models": providers.list_models(app.config, provider, key),
+                "current": app.config[f"ai_{provider}_model"] if provider in providers.EXTERNAL else ""}
+    except ai.AIError as e:
+        raise ApiError(400, str(e)) from e
+
+
 @api("POST", "/api/ai/question")
 def ai_question(app, q, body):
     provider = text_field(body.get("provider"), "AI 사용 방식", 20, True)
