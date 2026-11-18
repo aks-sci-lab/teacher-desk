@@ -6,6 +6,7 @@
 """
 
 import html
+import io
 import re
 import struct
 import zipfile
@@ -31,13 +32,20 @@ def read_document(path):
         raise DocError(f"지원하지 않는 형식입니다: {ext}")
     if path.stat().st_size > MAX_BYTES:
         raise DocError("파일이 너무 큽니다 (50MB 초과)")
-    data = path.read_bytes()
+    return read_bytes(path.name, path.read_bytes())
+
+
+def read_bytes(name, data):
+    """파일 이름(확장자)과 내용 바이트로 글 뽑기. 디스크에 쓰지 않음 (텔레그램 참고자료, 0.6.11)."""
+    ext = Path(name).suffix.lower()
+    if ext not in SUPPORTED:
+        raise DocError(f"지원하지 않는 형식입니다: {ext}")
     if ext == ".hwp":
         text = hwp_text(data)
     elif ext == ".hwpx":
         text = hwpx_text(data)
     elif ext == ".pdf":
-        text = pdf_text(path)
+        text = pdf_text(io.BytesIO(data))
     elif ext == ".xlsx":
         try:
             sheets = xlsx.read(data)
@@ -216,7 +224,7 @@ def pdf_text(path):
     except ImportError:
         raise DocError("PDF 를 읽으려면 pypdf 를 설치하세요: 명령 프롬프트에서  pip install pypdf")
     try:
-        reader = PdfReader(str(path))
+        reader = PdfReader(path if hasattr(path, "read") else str(path))
         if reader.is_encrypted:
             raise DocError("암호가 걸린 PDF 입니다")
         return "\n".join((page.extract_text() or "") for page in reader.pages[:200])

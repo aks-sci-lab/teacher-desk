@@ -98,7 +98,10 @@ class TelegramDocWriteTests(unittest.TestCase):
         form = build_hwp(section(ROWS))
         ids = {x["label"]: x["id"] for x in formfill.Form("서식.hwp", form).fields()}
         self.answer = f"{ids['일시']}: 2026. 10. 15.(목) 15:00\n{ids['장소']}: 과학실 2\n{ids['협의내용']}: 수행평가 기준 확정"
-        self.send_doc("서식1 교과협의록.hwp", form)
+        self.assertIn("어떻게 쓸까요", self.send_doc("서식1 교과협의록.hwp", form))   # 서식인지 참고자료인지 물음 (0.6.11)
+        did = self.bot.dialog["id"]
+        self.assertEqual(self.buttons(), [f"dlg:{did}:pf", f"dlg:{did}:pr"])
+        self.press(f"dlg:{did}:pf")
         self.assertIn("칸 4개를 채우는", self.texts())   # 제목 + 표 3칸
         self.assertIn("채운 칸 3개".encode(), self.fake.docs[-1])
         made = folderdoc.list_outputs(self.out)[0]["name"]
@@ -146,7 +149,7 @@ class TelegramDocWriteTests(unittest.TestCase):
     def test_bad_form_and_ai_off(self):
         self.index()
         self.say("/문서 과학과 협의회")
-        self.assertIn("서식을 읽지 못했습니다", self.send_doc("서식.hwp", b"not hwp"))
+        self.assertIn("파일을 읽지 못했습니다", self.send_doc("서식.hwp", b"not hwp"))
         self.assertEqual(self.bot.dialog["kind"], "doc")                # 다시 보낼 수 있게 그대로
         self.job._ask_factory = folderdoc.Job._ask_factory.__get__(self.job)
         did = self.bot.dialog["id"]
@@ -156,6 +159,8 @@ class TelegramDocWriteTests(unittest.TestCase):
         self.assertTrue(self.say("/문서").startswith("📝 만들 문서"))
         self.assertEqual(self.bot.dialog["step"], "task")
         self.assertIn("폴더를 고르지 않았습니다", self.say("과학과 협의회"))   # 대화로 받은 작업
+        self.assertEqual(self.bot.dialog["step"], "pick")              # 참고자료만으로도 만들 수 있게 대화는 이어짐 (0.6.11)
+        self.say("취소")
         self.assertIn("알아듣지 못했습니다", self.say("문서 작성 어떻게 해?"))   # 질문은 가로채지 않음
         self.assertTrue(self.say("문서 작성").startswith("📝"))
         self.bot.menu_button(CHAT, "doc", None)

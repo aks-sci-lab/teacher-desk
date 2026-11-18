@@ -55,6 +55,8 @@ KEY_WORDS = ("제출", "결정", "확정", "선정", "마감", "까지", "일시
 DATEISH = re.compile(r"\d{1,4}\s*[./년]\s*\d{1,2}|\d{1,2}:\d{2}|\d+\s*(명|개|점|권|%)")
 COMPACT_CHARS = 900       # 참고 자료 전체 (선생님 요청 "참고 문서 간소화시켜서 컨텍스트 양 줄여", 예전 방식 2,600자)
 COMPACT_LINE = 90
+EXTRA_CHARS = 500         # 텔레그램 참고자료 하나마다 더 주는 글자 수 (0.6.11)
+COMPACT_MAX = 2400        # 참고자료를 더해도 이보다 길게는 보내지 않음
 FIELD_WEIGHTS = {"path": 3.0, "text": 1.0, "summary": 1.5}
 
 
@@ -129,6 +131,16 @@ def read_text(p):
         except Exception as e:  # zip·xml 오류 종류가 많음
             raise docs.DocError(f"워드 파일을 읽을 수 없습니다 ({type(e).__name__})")
     return docs.read_document(p)
+
+
+def read_bytes(name, data):
+    """텔레그램으로 받은 참고자료(0.6.11): 메모리의 바이트에서 글만 (디스크에 쓰지 않음)."""
+    if Path(name).suffix.lower() == ".docx":
+        try:
+            return docs.tidy(docwrite.docx_text(data))
+        except Exception as e:  # zip·xml 오류 종류가 많음
+            raise docs.DocError(f"워드 파일을 읽을 수 없습니다 ({type(e).__name__})")
+    return docs.read_bytes(name, data)
 
 
 def index_folder(db, folder, summarize=None, progress=None, stop=None):
@@ -275,16 +287,20 @@ def _line_score(line, qgrams):
     return s
 
 
-def compact_materials(db, paths, task, names=(), budget=COMPACT_CHARS):
+def compact_materials(db, paths, task, names=(), budget=COMPACT_CHARS, extras=()):
     """파일마다 작업과 관계있는 줄(작업 낱말이 겹치거나 날짜·숫자·'제출' 같은 말이 든 줄)만 골라 짧게.
-    AI 요약이 있으면 요약 줄도 후보. 원래 순서는 지키고, 같은 줄은 한 번만. 학생 이름은 가림."""
+    AI 요약이 있으면 요약 줄도 후보. 원래 순서는 지키고, 같은 줄은 한 번만. 학생 이름은 가림.
+    extras: 선생님이 텔레그램으로 보낸 참고자료 [{"name", "text"}] (0.6.11). 선생님이 직접 고른 자료라
+    자료마다 EXTRA_CHARS 를 더 주고, 짧으면 줄을 고르지 않고 통째로 넣음."""
     qgrams = set()
     for t in query_terms(task):
         qgrams |= set(bigrams(t))
     rows = [db.one("SELECT path, text, summary FROM folder_files WHERE path = ?", (p,)) for p in paths]
-    rows = [r for r in rows if r]
+    rows = [{"name": Path(r["path"]).stem, "text": r["text"], "summary": r["summary"], "whole": False} for r in rows if r]
+    rows += [{"name": e["name"], "text": e["text"], "summary": "", "whole": True} for e in extras if e.get("text")]
     if not rows:
         return ""
+    budget = min(COMPACT_MAX, budget + EXTRA_CHARS * sum(r["whole"] for r in rows))
     each = budget // len(rows)
     parts, seen = [], set()
     for i, r in enumerate(rows, 1):
@@ -293,17 +309,20 @@ def compact_materials(db, paths, task, names=(), budget=COMPACT_CHARS):
             line = re.sub(r"\s+", " ", raw.strip().lstrip("-•◦·* ")).strip()
             line = re.sub(r"^한\s*줄\s*요약\s*[:：]\s*", "", line)
             key = norm(line)
-            if len(key) < 4 or key in seen or line.startswith("(긴 자료라"):
+            if len(key) < (1 if r["whole"] else 4) or key in seen or line.startswith("(긴 자료라"):
                 continue
             seen.add(key)
             cands.append((n, line[:COMPACT_LINE]))
-        head = f"[자료 {i}] {Path(r['path']).stem[:30]}\n"
+        head = f"[자료 {i}] {r['name'][:30]}\n"
         room, keep = each - len(head), []
-        for n, line in sorted(cands, key=lambda c: -_line_score(c[1], qgrams)):
-            if _line_score(line, qgrams) <= 0 or room - len(line) - 1 < 0:
-                continue
-            keep.append((n, line))
-            room -= len(line) + 1
+        if r["whole"] and sum(len(line) + 1 for _, line in cands) <= room:
+            keep = cands   # 짧은 참고자료(텔레그램 글 등)는 통째로
+        else:
+            for n, line in sorted(cands, key=lambda c: -_line_score(c[1], qgrams)):
+                if _line_score(line, qgrams) <= 0 or room - len(line) - 1 < 0:
+                    continue
+                keep.append((n, line))
+                room -= len(line) + 1
         parts.append(head + "\n".join(line for _, line in sorted(keep)))
     return ai.mask_names("\n".join(parts), names)
 
@@ -314,20 +333,22 @@ def safe_name(text, limit=40):
     return re.sub(r"\s+", "_", s)[:limit] or "문서"
 
 
-def make_document(db, config, task, paths, form=None, fmt="docx", out_dir=None, ask=None, today=None):
-    """문서 하나를 만들어 out_dir 에 저장. form = (이름, 바이트) 이면 그 서식을 채움. ask(prompt, system, max_tokens)."""
+def make_document(db, config, task, paths, form=None, fmt="docx", out_dir=None, ask=None, today=None, extras=()):
+    """문서 하나를 만들어 out_dir 에 저장. form = (이름, 바이트) 이면 그 서식을 채움. ask(prompt, system, max_tokens).
+    extras: 텔레그램으로 받은 참고자료 [{"name", "text"}] (메모리에만, 0.6.11)."""
     task = (task or "").strip()
     if not task:
         raise FolderDocError("할 작업을 적어 주세요")
-    if not paths:
+    extras = [e for e in extras or () if e.get("text")]
+    if not paths and not extras:
         raise FolderDocError("참고할 파일을 하나 이상 고르세요")
     names = [s["name"] for s in db.students()]
-    materials = compact_materials(db, paths, task, names)
+    materials = compact_materials(db, paths, task, names, extras=extras)
     today = today or date.today()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    res = {"task": task, "files": list(paths), "materials_chars": len(materials)}
+    res = {"task": task, "files": list(paths), "extras": [e["name"] for e in extras], "materials_chars": len(materials)}
     if form:
         fname, data = form
         try:
@@ -358,7 +379,7 @@ def make_document(db, config, task, paths, form=None, fmt="docx", out_dir=None, 
     prompt = DRAFT_INSTRUCTION.format(today=f"{today:%Y-%m-%d}", task=task, materials=materials)
     text = ai.mask_names(ask(ai.mask_names(prompt, names), DRAFT_SYSTEM, 1200), names).strip()
     # 참고한 파일 목록은 AI 가 아니라 프로그램이 붙임 (선생님이 원본을 확인할 수 있게)
-    text += "\n## 참고한 파일\n" + "\n".join(f"- {p}" for p in paths)
+    text += "\n## 참고한 파일\n" + "\n".join([f"- {p}" for p in paths] + [f"- (텔레그램) {e['name']}" for e in extras])
     text += "\n※ 업무 데스크가 이 PC 의 AI 로 만든 초안입니다. 날짜·숫자·이름은 원본과 꼭 맞춰 보세요."
     ext = ".hwpx" if fmt == "hwpx" else ".docx"
     data = docwrite.hwpx_bytes(text, title=task) if ext == ".hwpx" else docwrite.docx_bytes(text)
@@ -514,13 +535,13 @@ class Job:
             return st
         self._start("index", fn, on_done)
 
-    def start_draft(self, task, paths, form=None, fmt="docx", on_done=None):
+    def start_draft(self, task, paths, form=None, fmt="docx", on_done=None, extras=()):
         ask, _, _ = self._ask_factory()
 
         def fn():
             with self.lock:
                 self.progress = {"step": "AI 가 쓰는 중"}
-            return make_document(self.db, self.config, task, paths, form, fmt, self.out_dir, ask)
+            return make_document(self.db, self.config, task, paths, form, fmt, self.out_dir, ask, extras=extras)
         self._start("draft", fn, on_done)
 
     def stop(self):

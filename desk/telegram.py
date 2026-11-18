@@ -23,8 +23,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-from . import VERSION, absence, ai, calllog, assist, coolsend, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, calllog, assist, coolsend, docs, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -54,8 +55,9 @@ HELP = (
     "\n🔍 검색 — 자료 검색 (AI 없이) · AI 검색 질문 — 이 PC 의 자료를 AI 가 읽고 답함 (명령 낱말이 들어 있어도 됨)\n"
     "🤖 AI 질문 — /ask 질문 (일반 질문 AI, 업무자료는 붙이지 않음)\n"
     "📝 문서 작성 — /문서 2학기 과학과 협의회 회의록 → 관련 파일 고르기 → 새 docx, 또는 서식(hwp·hwpx·docx)을 보내면 그 칸에 채움\n"
+    "   참고자료 — 문서 작성 중에 파일(hwp·hwpx·docx·pdf·xlsx·txt)·사진을 보내거나 '참고 내용' 을 보내면 함께 참고\n"
     "   /색인 — 업무 폴더 색인을 지금 만들기 (보낼 때만 돎, '/색인 AI' 는 AI 요약도)\n"
-    "📎 파일 보내기 — 서식(hwp·hwpx·docx)은 칸을 채워 돌려받기 · 통화·문자 기록 파일은 업무 데스크에 저장 (설정에서 켠 경우)\n"
+    "📎 파일 보내기 — 문서 작성 중이면 서식(칸 채우기) 또는 참고자료 · 통화·문자 기록 파일은 업무 데스크에 저장 (설정에서 켠 경우)\n"
     "\n⚙ 기타: 메뉴 · 도움말 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기)\n"
     "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
@@ -115,7 +117,7 @@ BOT_MENU = [
     {"command": "search", "description": "🔍 자료 검색 (AI 없이): /search 낱말"},
     {"command": "aisearch", "description": "🧠 AI 검색 (이 PC 자료를 이 PC 의 AI 가 읽고 답함)"},
     {"command": "ask", "description": "🤖 AI 질문 (일반 질문, 업무자료 제외)"},
-    {"command": "doc", "description": "📝 문서 작성: /doc 할 작업"},
+    {"command": "doc", "description": "📝 문서 작성: /doc 할 작업 (참고자료 파일·사진도 보내기)"},
     {"command": "cool", "description": "💬 최근 쿨메신저 쪽지 (답장·첨부 받기)"},
     {"command": "memo", "description": "✉ 쿨메신저 새 쪽지 보내기"},
     {"command": "menu", "description": "☰ 메뉴 단추"},
@@ -212,6 +214,14 @@ P_INDEX = re.compile(r"^(?:/index(?:@\S+)?|/색인|색인\s*(?:만들기|다시\
 DOC_CANDIDATES = 5     # 후보 파일 (폰 한 화면)
 DOC_PICK = 3           # 처음에 골라 두는 파일 (점수가 너무 낮은 것은 빼고)
 DOC_MIN_SCORE = 0.35
+# 텔레그램 참고자료 (0.6.11, 선생님 요청 2026-11-18 "문서 작업 할 때 텔레그램으로 참고자료 보낼 수 있게")
+DOC_REFS = 5                       # 한 문서에 받는 참고자료 수
+DOC_REF_CHARS = 20000              # 참고자료 하나에서 기억해 두는 글 (AI 에는 이 가운데 관계있는 줄만)
+DOC_REF_BYTES = 10 * 1024 * 1024   # 받는 파일 크기 (서식과 같음)
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp")
+# '참고 내용'·'참고: 내용'·'참고자료 내용' — 문서 작성 중에 보낸 글을 참고자료로
+P_DOC_REF = re.compile(r"^(?:/ref(?:@\S+)?|참고(?:\s*자료|\s*내용)?)(?:\s*[:：]\s*|\s+)(\S.*)$", re.S)
+DOC_REF_HINT = "참고자료: 파일(hwp·hwpx·docx·pdf·xlsx·txt)·사진을 보내거나 '참고 내용' 을 보내면 함께 참고합니다."
 # 쿨메신저 쪽지 보내기 (0.6.5): '쪽지 김철수 내용'·'/쪽지 …', 답장은 '답장 3 내용'·'3번 답장 내용'·'/답장 …'
 P_COOL_MEMO = re.compile(r"^(?:/memo(?:@\S+)?|/쪽지|쪽지(?:\s*보내기)?)\s+(\S+?)(?:\s*(?:선생님|샘|쌤|님))?\s*[:：]?\s+(\S.*)$", re.S)
 P_COOL_REPLY = re.compile(r"^(?:(?:/reply(?:@\S+)?|/답장|답장(?:\s*하기)?)\s+(\d+)\s*번?|(\d+)\s*번?\s*답장)\s*[:：]?\s+(\S.*)$", re.S)
@@ -501,7 +511,11 @@ class Bot:
         if update.get("callback_query"):
             return self.handle_button(update["callback_query"])
         msg = update.get("message") or {}
-        if msg.get("document"):
+        if msg.get("document") or msg.get("photo"):
+            if self.doc_open():   # 문서 작성 중: 서식 또는 참고자료 (0.6.11)
+                return self.handle_form_file(msg)
+            if not msg.get("document"):
+                return None       # 문서 작성 중이 아닌 사진은 예전처럼 받지 않음
             name = (msg["document"].get("file_name") or "").lower()
             if name.endswith(formfill.SUPPORTED):   # 문서 작성 서식 (0.6.3)
                 return self.handle_form_file(msg)
@@ -542,6 +556,12 @@ class Bot:
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
             return self.dialog_input(cid, text)
+        if self.doc_open() and not text.startswith("/") and text not in COMMANDS:
+            # 문서 작성 중: '참고 내용', 다른 대화에서 전달한 글, 300자 넘는 글은 참고자료로 (0.6.11)
+            m = P_DOC_REF.match(text)
+            forwarded = any(k in msg for k in ("forward_origin", "forward_from", "forward_from_chat", "forward_date"))
+            if m or forwarded or len(text) > 300:
+                return self.doc_ref_text(cid, m.group(1).strip() if m else text)
         asking_dialog = self.dialog and self.dialog.get("kind") in ("general", "search", "aisearch", "coolreply",
                                                                     "coolmemo", "replynum", "freenames")
         if asking_dialog and not text.startswith("/") and text not in COMMANDS:
@@ -2166,9 +2186,11 @@ class Bot:
             return self.reply(cid, err)
         if task:
             return self.doc_task(cid, task)
-        self.dialog = {"id": secrets.token_hex(6), "kind": "doc", "step": "task", "expires": time.monotonic() + DIALOG_TTL}
+        self.dialog = {"id": secrets.token_hex(6), "kind": "doc", "step": "task", "refs": [],
+                       "expires": time.monotonic() + DIALOG_TTL}
         prompt = ("📝 만들 문서(할 작업)를 보내세요. 예: 2학기 과학과 협의회 회의록\n"
-                  "업무 폴더 색인에서 관련 파일을 찾아 보여 드립니다.\n10분 안에 입력하세요. 그만하려면 '취소'.")
+                  "업무 폴더 색인에서 관련 파일을 찾아 보여 드립니다.\n" + DOC_REF_HINT +
+                  "\n10분 안에 입력하세요. 그만하려면 '취소'.")
         self.send(prompt, cid, keyboard=True)
         return prompt
 
@@ -2178,41 +2200,76 @@ class Bot:
             return self.reply(cid, err)
         if len(task) > 300 or len(folderdoc.norm(task)) < 2:
             return self.reply(cid, "할 작업을 2~300자로 보내 주세요. 예: 2학기 과학과 협의회 회의록")
+        # 앞에서 보낸 텔레그램 참고자료는 할 작업을 다시 보내도 그대로 둠 (0.6.11)
+        refs = self.dialog.get("refs", []) if self.dialog and self.dialog.get("kind") == "doc" else []
+        note, found = "", []
         if not folderdoc.counts(self.db)["files"]:
-            self.dialog = None
             if not self.config["folderdoc_folder"]:
-                return self.reply(cid, "아직 업무 폴더를 고르지 않았습니다. PC 의 업무 데스크 → 문서 작성에서 폴더를 한 번 고르세요.")
-            return self.reply(cid, "아직 폴더 색인이 없습니다. '/색인' 을 보내면 지금 만듭니다 (파일 수에 따라 몇 분).")
-        found = folderdoc.search(self.db, task, limit=DOC_CANDIDATES)
-        if not found:
-            return self.reply(cid, f"'{cut(task, 30)}' 와 관계있는 파일을 찾지 못했습니다. 낱말을 바꿔 보내거나 "
-                                   "'/색인' 으로 색인을 새로 만드세요.")
-        sel = [i for i, f in enumerate(found[:DOC_PICK]) if f["score"] >= DOC_MIN_SCORE] or [0]
+                note = "아직 업무 폴더를 고르지 않았습니다 (PC 의 업무 데스크 → 문서 작성에서 폴더를 한 번 고르세요)."
+            else:
+                note = "아직 폴더 색인이 없습니다 ('/색인' 을 보내면 지금 만듭니다, 파일 수에 따라 몇 분)."
+        else:
+            found = folderdoc.search(self.db, task, limit=DOC_CANDIDATES)
+            if not found:
+                note = f"'{cut(task, 30)}' 와 관계있는 파일을 찾지 못했습니다 (낱말을 바꿔 보내거나 '/색인' 으로 색인을 새로)."
+        sel = ([i for i, f in enumerate(found[:DOC_PICK]) if f["score"] >= DOC_MIN_SCORE] or [0]) if found else []
         self.dialog = {"id": secrets.token_hex(6), "kind": "doc", "step": "pick", "task": task, "found": found,
-                       "sel": set(sel), "expires": time.monotonic() + DIALOG_TTL}
+                       "sel": set(sel), "refs": refs, "note": note, "expires": time.monotonic() + DIALOG_TTL}
         return self.show(cid, None, *self.doc_view(self.dialog))
 
     def doc_view(self, dialog):
         did, sel = dialog["id"], dialog["sel"]
         counts = self.config["telegram_detail"] == "counts"
-        lines = [f"📝 {cut(dialog['task'], 40)}", "관련 파일 (✅ 표시한 파일을 참고해 만듭니다)"]
+        lines = [f"📝 {cut(dialog['task'], 40)}"]
+        if dialog.get("note"):
+            lines.append(dialog["note"])
+        if dialog["found"]:
+            lines.append("관련 파일 (✅ 표시한 파일을 참고해 만듭니다)")
         for i, f in enumerate(dialog["found"]):
             lines.append(f"{'✅' if i in sel else '▫️'} {i + 1}. {cut(self.mask_always(f['path']), 60)}")
             if f.get("summary") and not counts:
                 lines.append(f"     {cut(self.mask_always(f['summary']), 50)}")
-        lines.append("\n번호 단추로 넣고 빼세요. 학교 서식에 채우려면 서식 파일(hwp·hwpx·docx)을 이 대화에 보내세요.")
-        buttons = [[{"text": ("✅" if i in sel else "") + str(i + 1), "callback_data": f"dlg:{did}:dt:{i}"}
-                    for i in range(len(dialog["found"]))]]
+        refs = dialog.get("refs") or []
+        if refs:
+            lines.append(f"📎 텔레그램 참고자료 {len(refs)}개 (모두 참고)")
+            lines += [f"   📎 {cut(self.mask_always(r['name']), 40)} · {len(r['text']):,}자" for r in refs]
+        if dialog["found"]:
+            lines.append("\n번호 단추로 넣고 빼세요. 학교 서식에 채우려면 서식 파일(hwp·hwpx·docx)을 이 대화에 보내세요.")
+        else:
+            lines.append("\n학교 서식에 채우려면 서식 파일(hwp·hwpx·docx)을 이 대화에 보내세요.")
+        lines.append(DOC_REF_HINT)
+        buttons = []
+        if dialog["found"]:
+            buttons.append([{"text": ("✅" if i in sel else "") + str(i + 1), "callback_data": f"dlg:{did}:dt:{i}"}
+                            for i in range(len(dialog["found"]))])
         row = [{"text": "📄 새 문서(docx)로 만들기", "callback_data": f"dlg:{did}:dn"}]
         form = folderdoc.saved_form(self.db, self.folderdoc.out_dir) if self.folderdoc else None
         if form:
             row.append({"text": f"🖥 PC 서식에 채우기 ({cut(form[0], 14)})", "callback_data": f"dlg:{did}:dp"})
-        buttons += [row, [{"text": "✖ 취소", "callback_data": f"dlg:{did}:cancel"}]]
+        last = [{"text": "✖ 취소", "callback_data": f"dlg:{did}:cancel"}]
+        if refs:
+            last.insert(0, {"text": "🗑 참고자료 비우기", "callback_data": f"dlg:{did}:dx"})
+        buttons += [row, last]
         return "\n".join(lines), buttons
 
     def doc_action(self, cid, dialog, action, message_id):
         if dialog["step"] != "pick":
             return self.reply(cid, "할 작업을 글로 보내 주세요. 그만하려면 '취소'.")
+        if action == "dx":
+            dialog["refs"] = []
+            return self.show(cid, message_id, *self.doc_view(dialog))
+        if action in ("pf", "pr"):   # 서식으로 쓸지 참고자료로 쓸지 물은 파일 (0.6.11)
+            pending = dialog.pop("pending", None)
+            if not pending:
+                return self.reply(cid, "이미 처리한 파일입니다. 다시 보내 주세요.")
+            name, raw, n = pending
+            if action == "pf":
+                return self.doc_run(cid, dialog, (name, raw), f"서식 '{cut(self.mask_always(name), 30)}'의 칸 {n}개를 채우는")
+            try:
+                text = folderdoc.read_bytes(name, raw)
+            except Exception as e:
+                return self.reply(cid, f"참고자료로 읽지 못했습니다: {self.doc_error(e)}")
+            return self.doc_add_ref(cid, dialog, name, text)
         if action.startswith("dt:") and action[3:].isdigit() and int(action[3:]) < len(dialog["found"]):
             dialog["sel"] ^= {int(action[3:])}
             return self.show(cid, message_id, *self.doc_view(dialog))
@@ -2225,51 +2282,166 @@ class Bot:
             return self.doc_run(cid, dialog, form, f"PC 서식 '{cut(form[0], 30)}'")
         return self.reply(cid, "현재 단계의 단추를 사용해 주세요. 그만하려면 '취소'.")
 
+    def doc_open(self):
+        d = self.dialog
+        return bool(d and d.get("kind") == "doc" and d.get("step") in ("task", "pick"))
+
+    @staticmethod
+    def doc_error(e):
+        """파일 읽기 오류 → 보여 줄 글 (우리 오류 글은 그대로, 그 밖에는 종류만)."""
+        if isinstance(e, (ValueError, formfill.FormError, docs.DocError, folderdoc.FolderDocError, ai.AIError)):
+            return str(e)
+        return f"읽을 수 없는 파일입니다 ({type(e).__name__})"
+
     def handle_form_file(self, msg):
-        """문서 작성 중에 보낸 서식 파일: 메모리에서 읽어 그 서식에 채움 (서식 원본은 디스크에 따로 두지 않음)."""
+        """문서 작성 중에 보낸 파일·사진 (메모리에서만 읽고 디스크에 따로 두지 않음).
+        서식(hwp·hwpx·docx 의 빈칸)이면 그 서식에 채우고(0.6.3), 그 밖에는 참고자료로 (0.6.11).
+        설명(캡션)에 '참고' 가 있으면 참고자료, '서식' 이 있으면 서식. 둘 다 될 수 있는 파일은 단추로 물음."""
         chat = msg.get("chat") or {}
         cid = chat.get("id")
         if chat.get("type") != "private" or cid is None or cid != self.chat_id:
             return None   # 연결된 선생님이 아닌 사람의 파일은 받지도, 답하지도 않음
         err = self.doc_ready()
         if err:
-            return self.reply(cid, "서식은 받지 않았습니다. " + err)
+            return self.reply(cid, "파일은 받지 않았습니다. " + err)
         dialog = self.dialog
-        if not (dialog and dialog["kind"] == "doc" and dialog["step"] == "pick"):
+        if not self.doc_open():
             return self.reply(cid, "서식은 받지 않았습니다. 먼저 '/문서 할 작업' 을 보내 참고할 파일을 고른 뒤 서식을 보내 주세요.")
         if time.monotonic() > dialog["expires"]:
             self.dialog = None
             return self.reply(cid, "입력 시간이 10분을 넘었습니다. '/문서 할 작업' 부터 다시 해 주세요.")
-        doc = msg["document"]
-        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", doc.get("file_name") or "서식")[-100:]
+        caption = (msg.get("caption") or "").strip()
+        doc = msg.get("document") or {}
+        name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", doc.get("file_name") or "")[-100:]
+        ext = Path(name).suffix.lower()
+        if msg.get("photo") or ext in IMAGE_EXT or (doc.get("mime_type") or "").startswith("image/"):
+            return self.doc_photo(cid, dialog, msg)
+        if ext not in folderdoc.SUPPORTED:
+            return self.reply(cid, f"'{cut(self.mask_always(name or '파일'), 30)}' 은 참고자료로 읽지 못하는 형식입니다. "
+                                   "hwp·hwpx·docx·pdf·xlsx·txt·html 파일이나 사진을 보내 주세요.")
+        if len(dialog.get("refs") or []) >= DOC_REFS and "서식" not in caption:
+            return self.reply(cid, f"참고자료는 {DOC_REFS}개까지 받습니다. [🗑 참고자료 비우기] 뒤 다시 보내 주세요.")
         try:
-            if (doc.get("file_size") or 0) > formfill.MAX_FORM_BYTES:
-                raise ValueError("서식 파일이 너무 큽니다 (10MB 이하)")
+            if (doc.get("file_size") or 0) > DOC_REF_BYTES:
+                raise ValueError("파일이 너무 큽니다 (10MB 이하)")
             info = self.api("getFile", {"file_id": doc.get("file_id")}, timeout=30)
-            raw = self.download_file(info["file_path"], formfill.MAX_FORM_BYTES, "서식 파일이 너무 큽니다 (10MB 이하)")
-            fields = formfill.Form(name, raw).fields()
-        except (ValueError, formfill.FormError) as e:
-            return self.reply(cid, f"서식을 읽지 못했습니다: {e}")
+            raw = self.download_file(info["file_path"], DOC_REF_BYTES, "파일이 너무 큽니다 (10MB 이하)")
+        except ValueError as e:
+            return self.reply(cid, f"파일을 받지 못했습니다: {e}")
         except Exception as e:
-            self.db.log(f"텔레그램 서식 받기 오류: {type(e).__name__}", "error")
-            return self.reply(cid, "서식을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.")
-        if not fields:
-            return self.reply(cid, "이 서식에서 채울 칸을 찾지 못했습니다 (표의 이름 칸 옆 빈칸이나 {{자리표시}} 가 필요합니다). "
-                                   "위의 [📄 새 문서] 로 만들 수도 있습니다.")
-        return self.doc_run(cid, dialog, (name, raw), f"서식 '{cut(self.mask_always(name), 30)}'의 칸 {len(fields)}개를 채우는")
+            self.db.log(f"텔레그램 문서 작성 파일 받기 오류: {type(e).__name__}", "error")
+            return self.reply(cid, "파일을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.")
+        want_ref = "참고" in caption or dialog["step"] == "task"   # 할 작업 전에 보낸 파일은 참고자료
+        fields, form_err = None, None
+        if ext in formfill.SUPPORTED and not want_ref:
+            try:
+                fields = formfill.Form(name, raw).fields()
+            except Exception as e:   # 서식으로 못 읽으면 참고자료로 읽어 봄
+                form_err = e
+        if fields and "서식" in caption:
+            return self.doc_run(cid, dialog, (name, raw), f"서식 '{cut(self.mask_always(name), 30)}'의 칸 {len(fields)}개를 채우는")
+        if fields:   # 빈칸이 있는 hwp·hwpx·docx: 서식인지 참고자료인지 물음 (공문의 빈 표 칸도 칸으로 잡히므로)
+            dialog["pending"] = (name, raw, len(fields))
+            did = dialog["id"]
+            text = (f"📄 '{cut(self.mask_always(name), 30)}' 에 채울 수 있는 칸이 {len(fields)}개 있습니다. 어떻게 쓸까요?\n"
+                    "(다음부터는 파일 설명에 '서식' 또는 '참고' 를 적으면 묻지 않습니다)")
+            buttons = [[{"text": "🧾 이 서식에 채우기", "callback_data": f"dlg:{did}:pf"},
+                        {"text": "📎 참고자료로 쓰기", "callback_data": f"dlg:{did}:pr"}]]
+            self.send(text, cid, buttons)
+            return text
+        try:
+            text = folderdoc.read_bytes(name, raw)
+        except Exception as e:
+            if "서식" in caption and form_err:
+                return self.reply(cid, f"서식을 읽지 못했습니다: {self.doc_error(form_err)}")
+            return self.reply(cid, f"파일을 읽지 못했습니다: {self.doc_error(e)}")
+        if "서식" in caption:
+            self.reply(cid, "이 파일에서 채울 칸을 찾지 못해 참고자료로 씁니다 (서식은 표의 이름 칸 옆 빈칸이나 {{자리표시}} 가 필요합니다).")
+        return self.doc_add_ref(cid, dialog, name, text)
+
+    def doc_ref_text(self, cid, text):
+        """문서 작성 중에 보낸 글 ('참고 내용'·전달한 글·긴 글)을 참고자료로."""
+        dialog = self.dialog
+        if time.monotonic() > dialog["expires"]:
+            self.dialog = None
+            return self.reply(cid, "입력 시간이 10분을 넘었습니다. '/문서 할 작업' 부터 다시 해 주세요.")
+        n = sum(1 for r in dialog.get("refs") or [] if r["name"].startswith("텔레그램 글")) + 1
+        return self.doc_add_ref(cid, dialog, f"텔레그램 글 {n}", text)
+
+    def doc_add_ref(self, cid, dialog, name, text):
+        text = (text or "").strip()
+        if not text:
+            return self.reply(cid, f"'{cut(self.mask_always(name), 30)}' 에서 글을 찾지 못했습니다. "
+                                   "스캔한 PDF·그림 파일이면 사진으로 보내 주세요 (이 PC 의 AI 가 글을 읽습니다).")
+        refs = dialog.setdefault("refs", [])
+        if len(refs) >= DOC_REFS:
+            return self.reply(cid, f"참고자료는 {DOC_REFS}개까지 받습니다. [🗑 참고자료 비우기] 뒤 다시 보내 주세요.")
+        refs.append({"name": name, "text": text[:DOC_REF_CHARS]})   # 이 PC 메모리에만 (디스크·기록에 남기지 않음)
+        dialog["expires"] = time.monotonic() + DIALOG_TTL
+        if dialog["step"] == "pick":
+            return self.show(cid, None, *self.doc_view(dialog))
+        return self.reply(cid, f"📎 참고자료 {len(refs)}개를 받았습니다 ({cut(self.mask_always(name), 30)}). "
+                               "더 보내거나, 만들 문서(할 작업)를 보내세요.")
+
+    def doc_photo(self, cid, dialog, msg):
+        """사진(또는 그림 파일) 속 글을 이 PC 의 AI(LM Studio)로 옮겨 적어 참고자료로. 사진은 메모리에서만."""
+        if not self.config["ai_enabled"]:
+            return self.reply(cid, "AI 가 꺼져 있어 사진을 읽을 수 없습니다. 사진 속 글을 '참고 내용' 으로 보내 주세요.")
+        if len(dialog.get("refs") or []) >= DOC_REFS:
+            return self.reply(cid, f"참고자료는 {DOC_REFS}개까지 받습니다. [🗑 참고자료 비우기] 뒤 다시 보내 주세요.")
+        if dialog.get("reading"):
+            return self.reply(cid, "앞에 보낸 사진을 읽는 중입니다. 끝나면 다시 보내 주세요.")
+        f = (msg.get("photo") or [None])[-1] or msg.get("document") or {}
+        try:
+            if (f.get("file_size") or 0) > DOC_REF_BYTES:
+                raise ValueError("사진이 너무 큽니다 (10MB 이하)")
+            info = self.api("getFile", {"file_id": f.get("file_id")}, timeout=30)
+            raw = self.download_file(info["file_path"], DOC_REF_BYTES, "사진이 너무 큽니다 (10MB 이하)")
+        except ValueError as e:
+            return self.reply(cid, f"사진을 받지 못했습니다: {e}")
+        except Exception as e:
+            self.db.log(f"텔레그램 참고 사진 받기 오류: {type(e).__name__}", "error")
+            return self.reply(cid, "사진을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.")
+        n = sum(1 for r in dialog.get("refs") or [] if r["name"].startswith("사진")) + 1
+        dialog["reading"] = True
+        if self.sync:
+            return self._doc_photo(cid, dialog, raw, f"사진 {n}")
+        self.send("🔎 사진 속 글을 이 PC 의 AI 로 읽는 중… (1분쯤 걸립니다)", cid)
+        threading.Thread(target=self._doc_photo, args=(cid, dialog, raw, f"사진 {n}"),
+                         name="telegram-docphoto", daemon=True).start()
+        return None
+
+    def _doc_photo(self, cid, dialog, raw, name):
+        try:
+            base = self.config["ai_base"]
+            names = [s["name"] for s in self.db.students()]
+            text = ai.read_image(base, ai.pick_model(self.config), raw, names, db=self.db)
+        except ai.AIError as e:
+            return self.reply(cid, f"사진을 읽지 못했습니다: {e}. 사진 속 글을 '참고 내용' 으로 보내 주세요.")
+        except Exception as e:   # 폴링이 멈추지 않게
+            self.db.log(f"텔레그램 참고 사진 읽기 오류: {type(e).__name__}", "error")
+            return self.reply(cid, "사진을 읽다가 오류가 났습니다. 잠시 뒤 다시 보내 주세요.")
+        finally:
+            dialog.pop("reading", None)
+        if self.dialog is not dialog:
+            return self.reply(cid, "사진을 읽었지만 그사이 문서 작성이 끝나거나 바뀌어 쓰지 않았습니다.")
+        return self.doc_add_ref(cid, dialog, name, text)
 
     def doc_run(self, cid, dialog, form, what):
         paths = [dialog["found"][i]["path"] for i in sorted(dialog["sel"])]
-        if not paths:
-            return self.reply(cid, "참고할 파일을 하나 이상 골라 주세요 (번호 단추).")
+        refs = list(dialog.get("refs") or [])
+        if not paths and not refs:
+            return self.reply(cid, "참고할 파일을 하나 이상 고르거나 (번호 단추) 참고자료를 보내 주세요.")
+        if dialog.get("reading"):
+            return self.reply(cid, "보낸 사진을 읽는 중입니다. 다 읽으면 다시 눌러 주세요.")
         task = dialog["task"]
         try:
             self.folderdoc.start_draft(task, paths, form, "docx",
-                                       on_done=lambda res, err: self.doc_done(cid, task, res, err))
+                                       on_done=lambda res, err: self.doc_done(cid, task, res, err), extras=refs)
         except (folderdoc.FolderDocError, ai.AIError) as e:
             return self.reply(cid, f"문서를 만들 수 없습니다: {e}")
         self.dialog = None
-        text = (f"✍ {what} 문서를 만드는 중… 참고 파일 {len(paths)}개\n"
+        text = (f"✍ {what} 문서를 만드는 중… 참고 파일 {len(paths)}개" + (f" · 참고자료 {len(refs)}개" if refs else "") + "\n"
                 "이 PC 의 AI 라 1~3분 걸립니다. 다 되면 파일을 보내 드립니다.")
         self.reply(cid, text)
         self.wait_job()
@@ -2292,7 +2464,8 @@ class Bot:
         if "filled" in res:
             lines.append(f"채운 칸 {len(res['filled'])}개" + (f" · 빈 채로 둔 칸: {', '.join(res['not_filled'][:5])}"
                                                             if res.get("not_filled") else ""))
-        lines.append(f"참고 파일 {len(res['files'])}개 · 날짜·숫자·이름은 원본과 꼭 맞춰 보세요.")
+        lines.append(f"참고 파일 {len(res['files'])}개" + (f" · 텔레그램 참고자료 {len(res['extras'])}개" if res.get("extras") else "")
+                     + " · 날짜·숫자·이름은 원본과 꼭 맞춰 보세요.")
         caption = self.mask_always("\n".join(lines))
         try:
             self.send_file(cid, shown, p.read_bytes(), caption=caption)

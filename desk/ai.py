@@ -6,6 +6,7 @@
 - 학생 명단의 이름은 보내기 전에 '○○○' 로 가립니다.
 """
 
+import base64
 import json
 import re
 import threading
@@ -335,13 +336,19 @@ def _note_ttl_refused(base, db):
         db.log("AI 서버가 자동 해제(ttl)를 지원하지 않아 모델이 메모리에 계속 남습니다 (" + key + ")", "warn")
 
 
-def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None):
-    """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌."""
+def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None, images=()):
+    """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌.
+    images: 함께 보낼 사진 바이트(jpg·png) — 사진을 읽는 모델(예: Gemma 4)만 (0.6.11 텔레그램 참고자료 사진)."""
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
+    content = prompt
+    if images:
+        content = [{"type": "text", "text": prompt}] + [
+            {"type": "image_url", "image_url": {"url": f"data:{image_type(b)};base64,{base64.b64encode(b).decode()}"}}
+            for b in images]
     payload = {
         "model": model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
         "temperature": 0.2, "max_tokens": max_tokens, "stream": False,
     }
     # 요약에는 '생각' 단계가 필요 없어 끔 (이 칸을 아는 모델만 따름)
@@ -377,6 +384,31 @@ def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db
         raise AIError("AI 가 생각만 하다가 요약을 쓰지 못했습니다" + (" (답 길이 한도)" if finish == "length" else "")
                       + ". LM Studio 모델 설정에서 Reasoning Budget 을 줄이거나 끄세요.")
     return text
+
+
+IMAGE_SYSTEM = "너는 사진 속 글자를 정확히 옮겨 적는 도우미다. 사진에 없는 내용은 쓰지 않는다."
+IMAGE_PROMPT = ("이 사진 속 글을 줄 바꿈을 살려 그대로 옮겨 적어 줘. 표는 '| 칸 | 칸 |' 모양으로. "
+                "글이 거의 없으면 사진 내용을 세 줄 안으로 설명해 줘. 앞뒤 인사말 없이.")
+
+
+def image_type(data):
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def read_image(base, model, data, names=(), db=None, timeout=TIMEOUT):
+    """사진 속 글을 이 PC 의 AI(LM Studio)로 옮겨 적음. 학생 이름은 답에서 가림. 사진을 못 읽는 모델이면 AIError."""
+    check_local(base)
+    try:
+        text = ask(base, model, IMAGE_PROMPT, timeout=timeout, system=IMAGE_SYSTEM, max_tokens=1500, db=db, images=[data])
+    except AIError as e:
+        if str(e).startswith("LM Studio 오류 (4"):
+            raise AIError("지금 불러온 AI 모델이 사진을 읽지 못합니다 (사진을 읽는 모델, 예: Gemma 4 가 필요합니다)")
+        raise
+    return mask_names(text, names)
 
 
 class Job:
