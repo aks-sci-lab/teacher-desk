@@ -6,7 +6,8 @@
 1. 메인 창 조직도(SysTreeView32 3013)에서 받는 사람을 찾아 두 번 클릭 → 새 쪽지 창(보내기 단추 3249)
 2. 받는 사람 칩이 정확히 그 사람 1명인지 확인
 3. 제목 칸(Edit 4362)에 글 넣기, 본문(크롬 방식 편집기)은 클립보드로 붙여넣기(원래 클립보드는 되돌림)
-4. 받는 사람을 한 번 더 확인하고 [보내기] 단추를 진짜 마우스로 클릭 → 창이 닫히면 보낸 것
+4. (0.6.9) 텔레그램에 올린 파일이 있으면 [파일 첨부] 단추 → 윈도우 '열기' 창에 파일 경로를 넣고 [열기]
+5. 받는 사람을 한 번 더 확인하고 [보내기] 단추를 진짜 마우스로 클릭 → 창이 닫히면 보낸 것
 
 지키는 것:
 - 선생님이 텔레그램에서 받는 사람·제목·내용을 보고 [보내기]를 누른 것만 보냄 (이 모듈은 확인 단추를 부르지 않음)
@@ -37,6 +38,12 @@ ID_LIST, ID_INBOX, ID_SAVE_ALL = 3195, 4337, 3320   # 메시지관리함: 쪽지
 DOWNLOAD_KEY = r"Software\Jiransoft\CoolMsg50\Option\GetFile"   # DownPath: 쿨메신저가 받은 파일을 두는 폴더
 SAVE_WAIT, SETTLE = 60.0, 2.0
 ATTACH_LIMIT = 10
+# 보낼 쪽지에 파일 붙이기 (0.6.9): 쪽지 창의 [파일 첨부] 단추 → 윈도우 '열기' 창
+ID_ATTACH = None                           # 학교 PC 에서 확인한 단추 번호를 넣음 (모르면 단추 글 '첨부'로 찾음)
+ATTACH_WORD = "첨부"                       # 단추 번호를 모를 때 찾는 단추 글
+ID_FILE_NAME, ID_FILE_NAME_OLD, ID_FILE_OK = 1148, 1152, 1   # '열기' 창: 파일 이름 칸(새·옛 모양), [열기]
+SEND_FILES_LIMIT = 5
+FILE_DIALOG_WAIT = 6.0
 BODY_CLASS = "Chrome_RenderWidgetHostHWND"
 OPEN_WAIT, CLOSE_WAIT = 6.0, 10.0
 TITLE_LIMIT, BODY_LIMIT = 100, 4000
@@ -194,6 +201,73 @@ class WinUI:
                 return True
             time.sleep(0.2)
         return False
+
+
+    # ---- 보낼 쪽지에 파일 붙이기 (0.6.9) ----
+    def attach_button(self, compose):
+        """쪽지 창의 [파일 첨부] 단추. 번호를 알면 번호로, 모르면 보이는 단추 글에 '첨부'가 든 것 하나."""
+        if ID_ATTACH:
+            h = winui.item(compose, ID_ATTACH)
+            return h if winui.is_visible(h) else None
+        found = [h for h in winui.children(compose)
+                 if winui.is_visible(h) and not winui.item_direct(h, ID_CHIP_DELETE)
+                 and winui.item_id(h) not in (ID_SEND, ID_CLOSE, ID_TITLE, ID_TO_SELF)
+                 and ATTACH_WORD in winui.text(h).replace(" ", "")]
+        return found[0] if len(found) == 1 else None
+
+    def file_dialogs(self):
+        """쿨메신저가 연 윈도우 '열기' 창들 (파일 이름 칸과 [열기] 단추가 있는 #32770)."""
+        return [h for h in winui.top_windows(EXE) if winui.class_name(h) == "#32770"
+                and (winui.item(h, ID_FILE_NAME) or winui.item(h, ID_FILE_NAME_OLD)) and winui.item_direct(h, ID_FILE_OK)]
+
+    def popups(self, known):
+        """known 에 없던 쿨메신저 알림 창(#32770)의 글들 — 파일이 너무 크다는 안내 같은 것."""
+        out = []
+        for h in winui.top_windows(EXE):
+            if h in known or winui.class_name(h) != "#32770" or winui.item(h, ID_SEND) or winui.item(h, ID_TREE):
+                continue
+            words = [winui.text(c) for c in winui.children(h) if winui.class_name(c) == "Static"]
+            out.append(" ".join(w for w in words if w).strip() or winui.text(h))
+        return out
+
+    def attach_file(self, compose, path):
+        """파일 하나 붙이기. 못 하면 까닭을 담은 SendError (쪽지 창은 열어 둠, 보내지 않음)."""
+        button = self.attach_button(compose)
+        if not button:
+            raise SendError("쪽지 창의 [파일 첨부] 단추를 찾지 못해 보내지 않았습니다.", left_open=True)
+        before = set(winui.top_windows(EXE))
+        if not winui.click_checked(button, compose):
+            raise SendError("[파일 첨부] 단추를 누르지 못해 보내지 않았습니다.", left_open=True)
+        dialog, end = None, time.monotonic() + FILE_DIALOG_WAIT
+        while time.monotonic() < end and not dialog:
+            time.sleep(0.3)
+            dialog = next((h for h in self.file_dialogs() if h not in before), None)
+        if not dialog:
+            raise SendError("파일을 고르는 창이 열리지 않아 보내지 않았습니다.", left_open=True)
+        time.sleep(0.5)
+        try:
+            edit = winui.item(dialog, ID_FILE_NAME) or winui.item(dialog, ID_FILE_NAME_OLD)
+            if winui.class_name(edit) != "Edit":   # 새 모양은 ComboBoxEx32 안의 Edit
+                edit = next((c for c in winui.children(edit) if winui.class_name(c) == "Edit"), None)
+            if not edit or not winui.set_text(edit, str(path)):
+                raise SendError("파일 고르는 창에 파일 위치를 넣지 못해 보내지 않았습니다.", left_open=True)
+            time.sleep(0.2)
+            if not winui.click_checked(winui.item_direct(dialog, ID_FILE_OK), dialog):
+                raise SendError("파일 고르는 창의 [열기]를 누르지 못해 보내지 않았습니다.", left_open=True)
+            end = time.monotonic() + FILE_DIALOG_WAIT
+            while time.monotonic() < end and winui.is_window(dialog) and winui.is_visible(dialog):
+                time.sleep(0.2)
+            if winui.is_window(dialog) and winui.is_visible(dialog):
+                raise SendError("파일 고르는 창이 닫히지 않아 보내지 않았습니다.", left_open=True)
+        except SendError:
+            if winui.is_window(dialog):
+                winui.close_window(dialog)   # '열기' 창만 취소로 닫음 (쪽지 창은 그대로)
+            raise
+        time.sleep(1.0)
+        notes = self.popups(before)
+        if notes:
+            raise SendError("쿨메신저가 파일 첨부에 대해 알림을 띄워 보내지 않았습니다: " + notes[0][:150], left_open=True)
+        return True
 
 
 class WinAttachUI(WinUI):
@@ -355,15 +429,22 @@ def find_people(name, ui=None):
             for _, label, dept in ui.people(main) if label_name(label) == want]
 
 
-def send(person, title, body, ui=None, log=None):
-    """person({'label','dept','name'})에게 쪽지 한 통. 보냈으면 안내 글, 못 보냈으면 SendError."""
+def send(person, title, body, ui=None, log=None, files=()):
+    """person({'label','dept','name'})에게 쪽지 한 통. 보냈으면 안내 글, 못 보냈으면 SendError.
+    files: 붙일 파일 경로들 (0.6.9, 텔레그램에 올린 파일을 이 PC 에 받아 둔 것)."""
     ui = ui or WinUI()
+    files = [Path(f) for f in files or ()]
     title = " ".join((title or "").split())[:TITLE_LIMIT]
     body = (body or "").strip()
     if not body:
         raise SendError("보낼 내용이 없습니다.")
     if len(body) > BODY_LIMIT:
         raise SendError(f"내용이 너무 깁니다 ({BODY_LIMIT:,}자까지).")
+    if len(files) > SEND_FILES_LIMIT:
+        raise SendError(f"파일은 {SEND_FILES_LIMIT}개까지 붙일 수 있습니다.")
+    missing = [f.name for f in files if not f.is_file()]
+    if missing:
+        raise SendError(f"붙일 파일을 이 PC 에서 찾지 못했습니다: {missing[0]}")
     if not _lock.acquire(blocking=False):
         raise SendError("다른 쪽지를 보내는 중입니다. 끝나면 다시 보내 주세요.")
     try:
@@ -381,7 +462,8 @@ def send(person, title, body, ui=None, log=None):
         compose = ui.open_compose(main, matches[0][0], person["label"])
 
         def check_recipient():
-            chips = ui.recipients(compose)
+            # 붙인 파일도 지우기 단추가 달린 칸으로 보일 수 있어 파일 이름이 든 칸은 받는 사람에서 뺌
+            chips = [c for c in ui.recipients(compose) if not any(f.name in (c or "") for f in files)]
             if len(chips) != 1 or (chips[0] and person["name"] not in chips[0]):
                 raise SendError("쪽지 창의 받는 사람이 예상과 달라 보내지 않았습니다. PC 의 쪽지 창을 확인해 주세요.",
                                 left_open=True)
@@ -391,13 +473,15 @@ def send(person, title, body, ui=None, log=None):
             raise SendError("제목을 넣지 못해 보내지 않았습니다. PC 의 쪽지 창을 확인해 주세요.", left_open=True)
         if not ui.paste_body(compose, body):
             raise SendError("내용을 넣지 못해 보내지 않았습니다. PC 의 쪽지 창을 확인해 주세요.", left_open=True)
+        for f in files:
+            ui.attach_file(compose, f)
         check_recipient()
         if not ui.press_send(compose):
             raise SendError("[보내기]를 누르지 못했거나 창이 닫히지 않았습니다. PC 의 쪽지 창을 확인해 주세요.",
                             left_open=True)
         if log:
-            log("쿨메신저 쪽지를 보냈습니다 (텔레그램에서 확인함)")
-        return "✅ 쿨메신저로 보냈습니다."
+            log("쿨메신저 쪽지를 보냈습니다 (텔레그램에서 확인함)" + (f", 파일 {len(files)}개" if files else ""))
+        return "✅ 쿨메신저로 보냈습니다." + (f" (파일 {len(files)}개 첨부)" if files else "")
     except SendError as e:
         if log:
             log(f"쿨메신저 쪽지 보내기 멈춤: {e}", "warn")

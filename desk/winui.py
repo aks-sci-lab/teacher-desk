@@ -182,6 +182,16 @@ def item(hwnd, ctrl_id):
     return None
 
 
+def item_id(hwnd):
+    """창의 컨트롤 번호."""
+    return user32.GetDlgCtrlID(hwnd)
+
+
+def close_window(hwnd):
+    """창에 닫기 신호(WM_CLOSE)를 보냄 — 윈도우 '열기' 창이면 [취소]와 같음."""
+    user32.PostMessageW(hwnd, 0x0010, 0, 0)
+
+
 def is_visible(hwnd):
     return bool(hwnd) and bool(user32.IsWindowVisible(hwnd))
 
