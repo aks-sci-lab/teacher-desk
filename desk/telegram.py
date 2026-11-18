@@ -36,6 +36,7 @@ HELP = (
     "안 읽은 자료 · 요약(최근 받은 자료) · 새로고침(지금 수집) · 쪽지 — 최근 쿨메신저 쪽지 (번호로 답장·첨부)\n"
     "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
     "답장 2 내용 — 2번 쿨메신저 쪽지에 답장 · 쪽지 김철수 내용 — 새 쪽지 (확인 뒤 [보내기])\n"
+    "쿨메신저 쪽지 원문·요약 아래 [↩ 답장 보내기] 를 눌러도 답장 (내용을 보내면 확인 뒤 [보내기])\n"
     "첨부 2 — 2번 쿨메신저 쪽지의 첨부 파일을 이 PC 의 쿨메신저로 받아 보냄\n"
     "\n📅 달력\n"
     "오늘 — 오늘 일정·오늘 마감·외출 인원 · 마감 — 7일 안의 마감\n"
@@ -188,7 +189,7 @@ GROUP_HINT = {
 DIALOG_PROMPTS = {
     "coolmemo": "✉ 쿨메신저 새 쪽지 — 받는 사람 이름과 내용을 띄어 보내세요.\n예: 김철수 내일 협의회는 3시입니다\n"
                 "보내기 전에 받는 사람·내용을 보여 드리고, [보내기]를 눌러야 갑니다.",
-    "coolreply": "↩ {n}번 쪽지에 보낼 답장 내용을 보내세요. 보내기 전에 받는 사람·내용을 보여 드립니다.",
+    "replynum": "↩ {n}번 쪽지에 보낼 답장 내용을 보내세요. 보내기 전에 받는 사람·내용을 보여 드립니다.",
     "freenames": "👥 같이 비는 시간을 볼 선생님 이름을 보내세요. 예: 김철수 이영희 (나는 자동으로 들어갑니다, 다음 주는 끝에 '다음주')",
 }
 # 메뉴가 바뀌었는지 알아보는 표시: 이것이 달라진 버전으로 처음 켜지면 아래 단추 판을 새로 보냄 (Bot.announce_menu)
@@ -541,10 +542,11 @@ class Bot:
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
             return self.dialog_input(cid, text)
-        asking_dialog = self.dialog and self.dialog.get("kind") in ("general", "search", "aisearch", "coolmemo", "coolreply", "freenames")
+        asking_dialog = self.dialog and self.dialog.get("kind") in ("general", "search", "aisearch", "coolreply",
+                                                                    "coolmemo", "replynum", "freenames")
         if asking_dialog and not text.startswith("/") and text not in COMMANDS:
             # 0.6.6: AI 질문·자료 검색 글을 받는 중에는 명령 낱말('쪽지'·'조퇴'…)이 들어 있어도 질문으로.
-            # 명령은 '/…'·'취소' 나 아래 단추 판의 단추처럼 그 낱말만 보낼 때만
+            # 명령은 '/…'·'취소' 나 아래 단추 판의 단추처럼 그 낱말만 보낼 때만. [답장] 단추 뒤의 답장 내용도 같음 (0.6.9)
             return self.dialog_input(cid, text)
         m = P_AI_SEARCH.match(text)
         if m:
@@ -565,7 +567,7 @@ class Bot:
                 return self.offer_cool_or_ai(cid, text)   # 쪽지인지 질문인지 애매하면 고르게 (창을 건드리기 전에)
             return self.begin_cool(cid, m)
         if head in ("답장", "/reply", "/답장") and len(words) == 2 and words[1].rstrip("번").isdigit():
-            return self.begin_dialog(cid, "coolreply", n=int(words[1].rstrip("번")))   # '답장 3' 만: 내용을 물음 (0.6.10)
+            return self.begin_dialog(cid, "replynum", n=int(words[1].rstrip("번")))   # '답장 3' 만: 내용을 물음 (0.6.10)
         added = self.add_event_words(text)
         if added is not None:   # '일정 추가'·'일정 등록'·'새 일정' 같은 명령 모양 또는 메뉴 단추로만 시작
             return self.begin_event(cid, added)
@@ -877,12 +879,12 @@ class Bot:
                 + "\n학생별 통계는 업무 데스크 → 출결 → 월별 통계에서 봅니다.")
 
     def begin_dialog(self, cid, kind, **extra):
-        if kind in ("coolmemo", "coolreply") and not self.config["telegram_cool_send"]:
+        if kind in ("coolmemo", "replynum") and not self.config["telegram_cool_send"]:
             self.dialog = None
             return self.reply(cid, "쿨메신저 보내기가 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 켤 수 있습니다.")
         self.dialog = {"id": secrets.token_hex(6), "kind": kind, "step": "query" if kind == "search" else "number",
                        "expires": time.monotonic() + DIALOG_TTL, **extra}
-        if kind in ("general", "aisearch", "coolmemo", "coolreply", "freenames"):
+        if kind in ("general", "aisearch", "coolmemo", "replynum", "freenames"):
             self.dialog["step"] = "question"
         prompt = (DIALOG_PROMPTS[kind].format(**extra) if kind in DIALOG_PROMPTS else
                   "찾을 낱말을 보내세요. 예: 연수 신청\n자료만 검색하며 AI는 실행하지 않습니다." if kind == "search" else
@@ -913,6 +915,9 @@ class Bot:
         if kind == "aisearch":
             self.dialog = None
             return self.ask(cid, text)
+        if kind == "coolreply":   # [답장] 단추 뒤에 받은 글 → 지금의 '답장 n 내용' 확인 단계([보내기]를 눌러야 나감)로
+            self.dialog = None
+            return self.begin_cool_reply_item(cid, dialog["item_id"], text)
         if kind == "free":
             return self.free_pick(cid, dialog, text.strip())
         if kind == "coolmemo":   # '김철수 내용' → '쪽지 김철수 내용' 과 같게 (보내기는 확인 뒤 [보내기])
@@ -921,7 +926,7 @@ class Bot:
                 return self.reply(cid, "받는 사람 이름과 내용을 띄어 보내세요. 예: 김철수 내일 협의회는 3시입니다. 그만하려면 '취소'.")
             self.dialog = None
             return self.begin_cool_memo(cid, m.group(1), m.group(2))
-        if kind == "coolreply":
+        if kind == "replynum":   # '답장 3' 만 보낸 뒤의 내용 (0.6.10)
             self.dialog = None
             return self.begin_cool_reply(cid, dialog["n"], text.strip())
         if kind == "freenames":
@@ -1806,6 +1811,8 @@ class Bot:
             return self.register_item(cid, int(rest))
         if kind == "o" and rest.isdigit():
             return self.send_original(cid, int(rest))
+        if kind == "rp" and rest.isdigit():
+            return self.ask_cool_reply(cid, int(rest))
         if kind == "f" and rest.isdigit():
             return self.send_item_file(cid, int(rest))
         if kind == "dk":
@@ -2104,12 +2111,16 @@ class Bot:
             return self.reply(cid, "없는 자료입니다.")
         head = f"📄 [{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{it['received_at'][:16]}\n\n"
         body = it["body"] or ""
+        buttons = self.cool_reply_buttons(it)
         if len(body) > TEXT_AS_FILE:   # 아주 길면 글 파일로
             name = re.sub(r'[\\/:*?"<>|]', "_", it["title"])[:60] + ".txt"
             self.send_file(cid, name, body.encode("utf-8"), caption=head.strip())
+            if buttons:   # 파일에는 단추를 달 수 없어 짧은 글로
+                self.send("이 쪽지에 답장하려면 아래 단추를 누르세요.", cid, buttons)
             return head + f"(원문 {len(body):,}자 — 글 파일로 보냄)"
-        for part in chunks(head + body):
-            self.send(part, cid)
+        parts = chunks(head + body)
+        for i, part in enumerate(parts):
+            self.send(part, cid, buttons if i == len(parts) - 1 else None)   # 단추는 마지막 조각에만
         return head + body
 
     def send_item_file(self, cid, item_id):
@@ -2467,15 +2478,50 @@ class Bot:
 
     def begin_cool_reply(self, cid, n, body):
         item_id = self.ref_item(n)
-        it = self.db.one("SELECT id, source, title, body FROM items WHERE id = ?", (item_id,)) if item_id else None
-        if not it:
+        if not item_id:
             return self.reply(cid, f"{n}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
+        return self.begin_cool_reply_item(cid, item_id, body, label=f"{n}번")
+
+    def cool_reply_target(self, item_id, label=None):
+        """답장할 쪽지와 보낸 사람 → (자료, 보낸 사람, None) 또는 (None, None, 안내 글). label 은 '3번' 처럼 (단추면 없음)."""
+        it = self.db.one("SELECT id, source, title, body FROM items WHERE id = ?", (item_id,))
+        if not it:
+            return None, None, (f"{label} 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요." if label else
+                                "없는 자료입니다 (지워졌을 수 있음).")
         if it["source"] != "cool":
-            return self.reply(cid, f"{n}번은 쿨메신저로 받은 쪽지가 아니라 답장할 수 없습니다.")
+            return None, None, f"{label or '이 자료'}은 쿨메신저로 받은 쪽지가 아니라 답장할 수 없습니다."
         m = P_COOL_SENDER.search(it["body"] or "")
         if not m:
-            return self.reply(cid, f"{n}번 쪽지의 보낸 사람을 알 수 없습니다. '쪽지 이름 내용' 으로 보내 주세요.")
-        return self.begin_cool_memo(cid, m.group(1), body, title=coolsend.reply_title(it["title"]), reply_to=item_id)
+            return None, None, f"{label + ' ' if label else '이 '}쪽지의 보낸 사람을 알 수 없습니다. '쪽지 이름 내용' 으로 보내 주세요."
+        return it, m.group(1), None
+
+    def begin_cool_reply_item(self, cid, item_id, body, label=None):
+        it, sender, error = self.cool_reply_target(item_id, label)
+        if error:
+            return self.reply(cid, error)
+        return self.begin_cool_memo(cid, sender, body, title=coolsend.reply_title(it["title"]), reply_to=item_id)
+
+    def cool_reply_buttons(self, it):
+        """쿨메신저 쪽지 원문·요약 글 아래의 [↩ 답장] 단추 (0.6.9, 쪽지 보내기를 켠 경우만, 보낸 사람을 아는 쪽지만)."""
+        if not (self.config["telegram_cool_send"] and it["source"] == "cool" and P_COOL_SENDER.search(it["body"] or "")):
+            return None
+        return [[{"text": "↩ 답장 보내기", "callback_data": f"rp:{it['id']}"}]]
+
+    def ask_cool_reply(self, cid, item_id):
+        """[답장] 단추: 받는 사람·제목을 보여 주고 답장 내용을 받음. 내용을 받으면 '답장 n 내용' 과 같은 확인([보내기]) 단계로."""
+        if not self.config["telegram_cool_send"]:
+            return self.reply(cid, "쿨메신저 보내기가 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 켤 수 있습니다.")
+        it, sender, error = self.cool_reply_target(item_id)
+        if error:
+            return self.reply(cid, error)
+        self.dialog = {"id": secrets.token_hex(6), "kind": "coolreply", "step": "body", "item_id": item_id,
+                       "expires": time.monotonic() + DIALOG_TTL}
+        who = self.mask(coolsend.clean_name(sender) or sender)
+        text = (f"↩ {who} 님께 보낼 답장 내용을 보내세요.\n제목: {self.mask(coolsend.reply_title(it['title']))}\n"
+                "보낸 글은 바로 나가지 않고, 받는 사람·내용을 한 번 더 보여 드린 뒤 [보내기]를 눌러야 나갑니다.\n"
+                "10분 안에 입력하세요. 그만하려면 '취소'.")
+        self.send(text, cid, keyboard=True)
+        return text
 
     def begin_cool_attach(self, cid, item_id):
         """쿨메신저 쪽지의 첨부를 이 PC 의 쿨메신저가 받게 하고(메시지관리함 → 모든파일 저장) 받은 파일을 보냄.
@@ -2700,9 +2746,10 @@ class Bot:
             if not body:
                 continue
             head = f"📨 쿨메신저 쪽지 · {self.mask(r['title'])}"
+            buttons = self.cool_reply_buttons({"id": r["id"], "source": "cool", "body": r["body"]})
             for k in range(0, len(body), 3500):
                 chunk = body[k:k + 3500]
-                self.send((head + "\n\n" if k == 0 else "") + chunk)
+                self.send((head + "\n\n" if k == 0 else "") + chunk, buttons=buttons if k + 3500 >= len(body) else None)
             sent += 1
         if len(rows) > 5:
             self.send(f"📨 쪽지 {len(rows) - 5}건의 원문은 업무 데스크 수신함에서 보세요.")
@@ -2770,6 +2817,9 @@ class Bot:
         if not it:
             return 0
         buttons = [[{"text": "원문 보기", "callback_data": f"o:{item_id}"}]]
+        reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": it["body"]})
+        if reply:
+            buttons[0] += reply[0]   # [원문 보기] [↩ 답장 보내기] 한 줄 (0.6.9)
         n = self.ref_number(item_id)
         head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
         fresh = it["ai_summary"] and it["ai_summary_hash"] == ai.body_hash(it["body"])

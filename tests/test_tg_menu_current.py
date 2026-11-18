@@ -54,7 +54,7 @@ class TelegramMenuCurrentTests(unittest.TestCase):
             self.assertIn("✉ 새 쪽지 보내기", self.labels(self.fake.sent[-1]))
         with patch.object(Bot, "begin_cool_reply", return_value="확인") as reply:
             self.bot.handle_update(msg("답장 1"))          # 내용 없이 번호만 → 내용을 물음
-            self.assertEqual(self.bot.dialog["kind"], "coolreply")
+            self.assertEqual(self.bot.dialog["kind"], "replynum")
             self.bot.handle_update(msg("자료는 오후에 보내겠습니다"))
             reply.assert_called_once_with(CHAT, 1, "자료는 오후에 보내겠습니다")
 
