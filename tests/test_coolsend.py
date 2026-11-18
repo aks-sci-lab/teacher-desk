@@ -64,6 +64,14 @@ class FakeUI:
         self.open.remove(compose)
         return True
 
+    def attach_file(self, compose, path):
+        if "attach" in self.fail:
+            raise coolsend.SendError("쪽지 창의 [파일 첨부] 단추를 찾지 못해 보내지 않았습니다.", left_open=True)
+        self.draft.setdefault("files", []).append(Path(path).name)
+        if "file_chip" in self.fail:   # 붙인 파일도 지우기 단추 달린 칸으로 보이는 경우
+            self.chips[compose].append(Path(path).name)
+        return True
+
     def press_send(self, compose):
         if "send" in self.fail:
             return False
@@ -150,6 +158,38 @@ class CoolSendTests(unittest.TestCase):
             coolsend.send(dict(person, dept="3학년"), "t", "b", ui=FakeUI())
         with self.assertRaises(coolsend.SendError):
             coolsend.send(person, "t", "  ", ui=FakeUI())
+
+
+class CoolSendFilesTests(unittest.TestCase):
+    """0.6.9 보낼 쪽지에 파일 붙이기 (창 조작은 가짜)."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.file = Path(self.tmp.name) / "안내문.pdf"
+        self.file.write_bytes(b"%PDF-1.4 test")
+        self.person = {"label": "(이영희)2345(2-3, 담임)", "dept": "2학년", "name": "이영희"}
+
+    def test_attaches_before_send(self):
+        ui = FakeUI()
+        ui.fail.add("file_chip")   # 파일 칸은 받는 사람 확인에서 빠짐
+        text = coolsend.send(self.person, "제목", "내용", ui=ui, files=[str(self.file)])
+        self.assertIn("파일 1개 첨부", text)
+        self.assertEqual(ui.sent[0]["files"], ["안내문.pdf"])
+
+    def test_stops_when_attach_fails_or_file_missing(self):
+        ui = FakeUI()
+        ui.fail.add("attach")
+        with self.assertRaises(coolsend.SendError) as e:
+            coolsend.send(self.person, "제목", "내용", ui=ui, files=[str(self.file)])
+        self.assertTrue(e.exception.left_open)
+        self.assertEqual(ui.sent, [])
+        ui = FakeUI()
+        with self.assertRaises(coolsend.SendError) as e:
+            coolsend.send(self.person, "제목", "내용", ui=ui, files=[str(self.file) + ".없음"])
+        self.assertIn("찾지 못했습니다", str(e.exception))
+        self.assertNotIn(("open", 12), ui.calls)   # 쪽지 창을 열기 전에 멈춤
+        with self.assertRaises(coolsend.SendError):
+            coolsend.send(self.person, "제목", "내용", ui=FakeUI(), files=[str(self.file)] * 6)
 
 
 class CoolAttachTests(unittest.TestCase):
@@ -263,6 +303,84 @@ class TelegramCoolSendTests(unittest.TestCase):
         self.assertEqual(self.bot.cool_attach_ui.picked, [1])
         self.bot.handle_update(msg("파일 1"))   # '파일 n' 은 그대로, 첨부 안내만
         self.assertIn("'첨부 1'", self.fake.sent[-1]["text"])
+
+    def send_file(self, caption=None, name="안내문.pdf", data=b"%PDF-1.4 test", fid="f1", photo=False):
+        self.fake.files[fid] = data
+        message = {"message_id": 10, "chat": {"id": CHAT, "type": "private"}}
+        if photo:
+            message["photo"] = [{"file_id": "small", "file_size": 1, "width": 90, "height": 90},
+                                {"file_id": fid, "file_size": len(data), "width": 900, "height": 900}]
+        else:
+            message["document"] = {"file_id": fid, "file_name": name, "file_size": len(data)}
+        if caption is not None:
+            message["caption"] = caption
+        return self.bot.handle_update({"update_id": 2, "message": message})
+
+    def saved(self):
+        return sorted(p.name for p in (self.env.config.data_dir / "cool-send").rglob("*") if p.is_file())
+
+    def test_file_with_caption_shows_card_then_sends_with_file(self):
+        self.send_file("쪽지 이영희 협의회 자료 보내 드립니다")
+        card = self.fake.sent[-1]["text"]
+        self.assertIn("📎 첨부:", card)
+        self.assertIn("안내문.pdf (1KB)", card)
+        self.assertEqual(self.ui.sent, [])                       # 확인 전에는 보내지 않음
+        self.assertEqual(self.saved(), ["안내문.pdf"])            # 이 PC 에 받아 둠
+        self.bot.handle_update(press(self.buttons()[0]["callback_data"]))
+        self.assertEqual(self.ui.sent[0]["files"], ["안내문.pdf"])
+        self.assertEqual(self.ui.sent[0]["body"], "협의회 자료 보내 드립니다")
+        self.assertIn("파일 1개 첨부", self.fake.sent[-1]["text"])
+        self.assertEqual(self.saved(), [])                       # 보낸 뒤 지움
+
+    def test_more_files_while_card_is_open_and_old_card_is_stale(self):
+        self.bot.handle_update(msg("쪽지 이영희 자료 두 개입니다"))
+        old = self.buttons()[0]["callback_data"]
+        self.send_file(name="계획.hwp", fid="f2")
+        self.send_file(photo=True, fid="f3", data=b"\xff\xd8jpeg")
+        card = self.fake.sent[-1]["text"]
+        self.assertIn("계획.hwp", card)
+        self.assertIn("사진_", card)
+        self.bot.handle_update(press(old))                       # 파일이 빠진 예전 확인 글로는 보내지 않음
+        self.assertEqual(self.ui.sent, [])
+        self.bot.handle_update(press(self.buttons()[0]["callback_data"]))
+        self.assertEqual(len(self.ui.sent[0]["files"]), 2)
+
+    def test_caption_only_name_or_reply_number(self):
+        item = add_text_item(self.env.db, "cool", "자료 부탁드립니다\n\n(보낸 사람: 이영희)", title="자료 요청")["id"]
+        self.env.db.set_meta("telegram_refs", [item])
+        self.send_file("답장 1")
+        card = self.fake.sent[-1]["text"]
+        self.assertIn("제목: RE: 자료 요청", card)
+        self.assertIn("첨부 파일: 안내문.pdf", card)              # 내용이 없으면 파일 이름으로 채워 보여 줌
+        self.send_file("쪽지 이영희", fid="f2")
+        self.assertIn("새 쪽지", self.fake.sent[-1]["text"])
+        self.assertEqual(self.saved(), ["안내문.pdf"])            # 앞 확인 화면의 파일은 지움
+
+    def test_cancel_and_not_found_drop_files(self):
+        self.send_file("쪽지 이영희 자료")
+        self.bot.handle_update(press(self.buttons()[-1]["callback_data"]))
+        self.assertEqual(self.saved(), [])
+        self.send_file("쪽지 박없음 자료")
+        self.assertIn("찾지 못했습니다", self.fake.sent[-1]["text"])
+        self.assertEqual(self.saved(), [])
+
+    def test_other_files_unchanged_and_setting_off(self):
+        self.send_file(name="calls.xml")                          # 설명 없는 파일은 예전 그대로 (통화 기록: 꺼져 있음)
+        self.assertIn("받지 않았습니다", self.fake.sent[-1]["text"])
+        self.send_file(photo=True)
+        self.assertIn("사진은 받지 않았습니다", self.fake.sent[-1]["text"])
+        self.assertEqual(self.ui.calls, [])                      # 쿨메신저 창은 건드리지 않음
+        self.env.config.values["telegram_cool_send"] = False
+        self.send_file("쪽지 이영희 자료")
+        self.assertIn("꺼져 있어", self.fake.sent[-1]["text"])
+        self.assertEqual(self.saved(), [])
+
+    def test_too_big_file(self):
+        self.fake.files["big"] = b"x"
+        self.bot.handle_update({"update_id": 2, "message": {
+            "message_id": 10, "chat": {"id": CHAT, "type": "private"}, "caption": "쪽지 이영희 자료",
+            "document": {"file_id": "big", "file_name": "큰.zip", "file_size": 30 * 1024 * 1024}}})
+        self.assertIn("너무 큽니다", self.fake.sent[-1]["text"])
 
     def test_not_found_and_failure_message(self):
         self.bot.handle_update(msg("쪽지 박없음 안녕하세요"))
