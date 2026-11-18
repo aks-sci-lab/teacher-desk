@@ -33,7 +33,7 @@ HELP = (
     "\n📋 브리핑 — 오늘 + 지난 접속 이후 AI 요약\n"
     "🗓 주간 — 이번 주 날짜별 일정·마감·할 일 (다음 주 단추)\n"
     "\n📥 수신함\n"
-    "안 읽은 자료 · 요약(최근 받은 자료) · 새로고침(지금 수집)\n"
+    "안 읽은 자료 · 요약(최근 받은 자료) · 새로고침(지금 수집) · 쪽지 — 최근 쿨메신저 쪽지 (번호로 답장·첨부)\n"
     "낱말만 보내면 메시지·공문 검색 · 원문 2 · 파일 2 — 2번 자료\n"
     "답장 2 내용 — 2번 쿨메신저 쪽지에 답장 · 쪽지 김철수 내용 — 새 쪽지 (확인 뒤 [보내기])\n"
     "쿨메신저 쪽지 원문·요약 아래 [↩ 답장 보내기] 를 눌러도 답장 (내용을 보내면 확인 뒤 [보내기])\n"
@@ -45,7 +45,7 @@ HELP = (
     "내 수업 · 내일 수업 · 금요일 시간표 — 내 수업 · 우리 반 시간표\n"
     "2-3 시간표 · 2-3 내일 · 2학년 3반 목요일 — 그 학급 시간표(과목·선생님)\n"
     "2-3 지금 — 지금(쉬는 시간이면 다음) 그 반 수업\n"
-    "빈 시간 김철수 이영희 [다음주] — 나와 같이 비는 시간\n"
+    "빈 시간 김철수 이영희 [다음주] — 나와 같이 비는 시간 ('빈 시간' 만 보내면 이름을 물음)\n"
     "\n☑ 출결\n"
     "조퇴 7 [13:30] · 외출 7 [13:30] [14:30] — 사유는 단추로, 발급 뒤 인쇄·웹 링크 선택\n"
     "결석계 이름 번호 종류 기간 — 예: 결석계 김가온 7 병결 10/29~11/3\n"
@@ -55,6 +55,7 @@ HELP = (
     "🤖 AI 질문 — /ask 질문 (일반 질문 AI, 업무자료는 붙이지 않음)\n"
     "📝 문서 작성 — /문서 2학기 과학과 협의회 회의록 → 관련 파일 고르기 → 새 docx, 또는 서식(hwp·hwpx·docx)을 보내면 그 칸에 채움\n"
     "   /색인 — 업무 폴더 색인을 지금 만들기 (보낼 때만 돎, '/색인 AI' 는 AI 요약도)\n"
+    "📎 파일 보내기 — 서식(hwp·hwpx·docx)은 칸을 채워 돌려받기 · 통화·문자 기록 파일은 업무 데스크에 저장 (설정에서 켠 경우)\n"
     "\n⚙ 기타: 메뉴 · 도움말 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기)\n"
     "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
@@ -79,9 +80,15 @@ COMMANDS = {
     "출결": "g-attendance", "/attendance": "g-attendance",
     "통계": "stats", "출결 통계": "stats", "이번 달 통계": "stats", "/stats": "stats",
     "AI 질문": "ai-dialog", "/ai": "ai-dialog",
+    # 0.6.10 메뉴 현행화: 쿨메신저 쪽지(0.6.5)·같이 비는 시간을 단추·'/' 메뉴에서 바로 (뒤에 말이 붙으면 예전처럼 쪽지·답장 명령)
+    "쪽지": "cool-hub", "쪽지함": "cool-hub", "쿨메신저": "cool-hub", "쿨메신저 쪽지": "cool-hub", "/cool": "cool-hub",
+    "답장": "cool-hub", "/reply": "cool-hub", "/답장": "cool-hub",
+    "쪽지 보내기": "cool-memo", "새 쪽지": "cool-memo", "/memo": "cool-memo", "/쪽지": "cool-memo",
+    "빈 시간": "free-dialog", "같이 비는 시간": "free-dialog", "/free": "free-dialog",
+    "검색 메뉴": "g-search",
 }
-MENU_COMMANDS = {"week", "unread", "tomorrow", "myclass", "stats", "ai-dialog",
-                 "g-inbox", "g-calendar", "g-timetable", "g-attendance", "g-more"}
+MENU_COMMANDS = {"week", "unread", "tomorrow", "myclass", "stats", "ai-dialog", "cool-hub", "cool-memo", "free-dialog",
+                 "g-inbox", "g-calendar", "g-timetable", "g-attendance", "g-search", "g-more"}
 # 뒤에 낱말이 붙는 명령
 ARG_COMMANDS = {
     "검색": "search", "/search": "search", "찾기": "search",
@@ -101,28 +108,37 @@ P_ARG_NUMBER = re.compile(r"^\d")   # 숫자로 시작하면 명령 ('1시' 같�
 BOT_MENU = [
     {"command": "brief", "description": "📋 브리핑 (오늘 + AI 요약)"},
     {"command": "week", "description": "🗓 주간 계획 (이번 주)"},
-    {"command": "inbox", "description": "📥 수신함 (안 읽은 자료·수집)"},
+    {"command": "inbox", "description": "📥 수신함 (안 읽은 자료·쿨메신저 쪽지·수집)"},
     {"command": "calendar", "description": "📅 달력 (오늘·마감·일정 추가)"},
-    {"command": "timetable", "description": "▦ 시간표 (내 수업·우리 반)"},
+    {"command": "timetable", "description": "▦ 시간표 (내 수업·우리 반·같이 비는 시간)"},
     {"command": "attendance", "description": "☑ 출결 (조퇴·외출·결석계·통계)"},
-    {"command": "search", "description": "🔍 자료 검색: /search 낱말"},
-    {"command": "ask", "description": "🤖 AI 질문 (업무자료 제외)"},
+    {"command": "search", "description": "🔍 자료 검색 (AI 없이): /search 낱말"},
+    {"command": "aisearch", "description": "🧠 AI 검색 (이 PC 자료를 이 PC 의 AI 가 읽고 답함)"},
+    {"command": "ask", "description": "🤖 AI 질문 (일반 질문, 업무자료 제외)"},
     {"command": "doc", "description": "📝 문서 작성: /doc 할 작업"},
+    {"command": "cool", "description": "💬 최근 쿨메신저 쪽지 (답장·첨부 받기)"},
+    {"command": "memo", "description": "✉ 쿨메신저 새 쪽지 보내기"},
     {"command": "menu", "description": "☰ 메뉴 단추"},
     {"command": "today", "description": "오늘 일정·마감"},
     {"command": "deadlines", "description": "7일 안의 마감"},
     {"command": "addevent", "description": "일정 추가 (달력에서 날짜)"},
     {"command": "lessons", "description": "오늘 내 수업"},
+    {"command": "tomorrow", "description": "내일 내 수업"},
+    {"command": "myclass", "description": "우리 반 오늘 시간표"},
+    {"command": "free", "description": "같이 비는 시간 (선생님 이름)"},
     {"command": "early", "description": "조퇴증: /early 번호 [시각]"},
     {"command": "out", "description": "외출증: /out 번호 [나감] [복귀]"},
     {"command": "absence", "description": "결석계: /absence 이름 번호 병결 10/29~11/3"},
+    {"command": "stats", "description": "이번 달 출결 통계 (건수만)"},
     {"command": "unread", "description": "안 읽은 자료"},
+    {"command": "reply", "description": "쪽지 답장: /reply 번호 내용"},
+    {"command": "attach", "description": "쪽지 첨부 받기: /attach 번호"},
     {"command": "refresh", "description": "지금 수집"},
     {"command": "index", "description": "문서 작성용 폴더 색인 만들기"},
     {"command": "status", "description": "준비 상태"},
     {"command": "update", "description": "새 버전 확인·업데이트"},
     {"command": "cancel", "description": "진행 중인 입력 취소"},
-    {"command": "help", "description": "도움말"},
+    {"command": "help", "description": "도움말 (전체 명령)"},
 ]
 # 화면(passes.js)의 사유 단추와 같음
 REASONS = {
@@ -139,35 +155,49 @@ DIALOG_TTL = 10 * 60
 # 아래 단추 판 (0.5.78): 웹 화면 왼쪽 메뉴와 같은 순서·묶음, 폰 한 화면에 3줄 × 3
 KEYBOARD = [["📋 브리핑", "🗓 주간", "📥 수신함"], ["📅 달력", "▦ 시간표", "☑ 출결"], ["🔍 검색", "🤖 AI 질문", "☰ 메뉴"]]
 KEY_TEXT = {"📋 브리핑": "브리핑", "🗓 주간": "주간", "📥 수신함": "수신함", "📅 달력": "달력", "▦ 시간표": "시간표",
-            "☑ 출결": "출결", "🔍 검색": "자료 검색", "🤖 AI 질문": "AI 질문", "☰ 메뉴": "메뉴"}
+            "☑ 출결": "출결", "🔍 검색": "검색 메뉴", "🤖 AI 질문": "AI 질문", "☰ 메뉴": "메뉴"}
 # 인라인 메뉴 단추 `mn:<이름>` → 같은 뜻의 글 명령 (여기 있는 이름만 받음)
 MENU_ACTIONS = {
     "brief": "브리핑", "week": "주간", "unread": "안 읽은 자료", "summary": "요약", "refresh": "새로고침",
     "today": "오늘", "deadlines": "마감", "addevent": "일정 추가",
     "lessons": "내 수업", "tomorrow": "내일 수업", "myclass": "우리 반 시간표",
     "early": "조퇴증", "out": "외출증", "absence": "결석계", "stats": "통계",
-    "search": "자료 검색", "ai": "AI 질문", "doc": "/문서", "index": "/색인", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
+    "search": "자료 검색", "aisearch": "AI 검색", "ai": "AI 질문",
+    "cool": "쪽지", "memo": "쪽지 보내기", "free": "빈 시간", "doc": "/문서", "index": "/색인", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
 }
 MAIN_MENU = [[("📋 브리핑", "brief"), ("🗓 주간", "week"), ("📥 수신함", "g:inbox")],
              [("📅 달력", "g:calendar"), ("▦ 시간표", "g:timetable"), ("☑ 출결", "g:attendance")],
-             [("🔍 검색", "search"), ("🤖 AI 질문", "ai"), ("⚙ 기타", "g:more")]]
+             [("🔍 검색", "g:search"), ("🤖 AI 질문", "ai"), ("⚙ 기타", "g:more")]]
 SUBMENUS = {
-    "inbox": ("📥 수신함", [[("🆕 안 읽은 자료", "unread"), ("📨 최근 받은 자료", "summary")], [("🔄 지금 수집", "refresh")]]),
+    "inbox": ("📥 수신함", [[("🆕 안 읽은 자료", "unread"), ("📨 최근 받은 자료", "summary")],
+                         [("💬 쿨메신저 쪽지", "cool"), ("✉ 쪽지 보내기", "memo")], [("🔄 지금 수집", "refresh")]]),
     "calendar": ("📅 달력", [[("📅 오늘", "today"), ("⏰ 마감 7일", "deadlines")], [("➕ 일정 추가", "addevent")]]),
-    "timetable": ("▦ 시간표", [[("📚 오늘 내 수업", "lessons"), ("📚 내일 수업", "tomorrow")], [("🏫 우리 반 시간표", "myclass")]]),
+    "timetable": ("▦ 시간표", [[("📚 오늘 내 수업", "lessons"), ("📚 내일 수업", "tomorrow")], [("🏫 우리 반 시간표", "myclass"), ("👥 같이 비는 시간", "free")]]),
     "attendance": ("☑ 출결", [[("🏃 조퇴증", "early"), ("🚶 외출증", "out")], [("📝 결석계", "absence"), ("📊 이번 달 통계", "stats")]]),
+    "search": ("🔍 검색", [[("🔍 자료 검색 (AI 없이)", "search")], [("🧠 AI 검색 (이 PC 자료로 답)", "aisearch")]]),
     "more": ("⚙ 기타", [[("📝 문서 작성", "doc"), ("📚 색인 만들기", "index")], [("⚙ 상태", "status"), ("⬆ 업데이트", "update")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
 }
 GROUP_HINT = {
-    "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2'",
+    "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2' · 쿨메신저 쪽지는 '답장 2 내용'·'첨부 2'",
     "calendar": "",
     "timetable": "학급은 '2-3 시간표'·'2-3 지금', 같이 비는 시간은 '빈 시간 이름'",
     "attendance": "글로도: 조퇴 7 13:30 · 외출 7 13:30 14:30",
+    "search": "자료 검색은 제목·내용의 낱말로, AI 검색은 이 PC 의 AI 가 자료를 읽고 답합니다 ('AI 검색 질문' 으로 바로도)",
     "more": "",
 }
+# 0.6.10 단추·'/' 메뉴로 시작하는 입력 대화의 첫 안내
+DIALOG_PROMPTS = {
+    "coolmemo": "✉ 쿨메신저 새 쪽지 — 받는 사람 이름과 내용을 띄어 보내세요.\n예: 김철수 내일 협의회는 3시입니다\n"
+                "보내기 전에 받는 사람·내용을 보여 드리고, [보내기]를 눌러야 갑니다.",
+    "replynum": "↩ {n}번 쪽지에 보낼 답장 내용을 보내세요. 보내기 전에 받는 사람·내용을 보여 드립니다.",
+    "freenames": "👥 같이 비는 시간을 볼 선생님 이름을 보내세요. 예: 김철수 이영희 (나는 자동으로 들어갑니다, 다음 주는 끝에 '다음주')",
+}
+# 메뉴가 바뀌었는지 알아보는 표시: 이것이 달라진 버전으로 처음 켜지면 아래 단추 판을 새로 보냄 (Bot.announce_menu)
+MENU_SIG = hashlib.sha1(json.dumps([BOT_MENU, KEYBOARD, MAIN_MENU, SUBMENUS], ensure_ascii=False).encode()).hexdigest()[:12]
 # 예전 '그 밖의 명령' 메시지(0.5.39~0.5.77)의 단추도 계속 받음
 MENU_MORE = ("자료 검색", "일정 추가", "요약", "새로고침", "상태", "취소")
 UNREAD_PAGE = 10
+COOL_LIST = 8   # '쪽지' 목록에 보이는 최근 쿨메신저 쪽지 (원문 단추가 8개까지라 같게)
 # 일정 추가 시작 말 (0.5.87: '일정 추가' 만 알아듣던 것을 넓힘). 문장 맨 앞이 명령 모양일 때만 — 다른 말의 '일정' 은 가로채지 않음
 _EV_NOUN = r"(?:새\s*)?(?:일정|스케줄|스케쥴)"
 _EV_VERB = r"(?:추가|등록|입력|만들기|넣기|넣어)"
@@ -493,6 +523,7 @@ class Bot:
                 self.db.set_meta("telegram_pending", {})
                 text = "✅ 업무 데스크와 연결되었습니다.\n\n" + HELP
                 self.send(text, cid, keyboard=True)
+                self.db.set_meta("telegram_menu_sig", MENU_SIG)   # 방금 새 단추 판을 보냄
                 return text
             # 코드를 마구 넣어 보는 것을 막으려고 5번 틀리면 코드를 바꿈
             fails = (self.db.get_meta("telegram_pair_fails") or 0) + 1
@@ -511,7 +542,8 @@ class Bot:
         if event_dialog and COMMANDS.get(text) != "cancel" and head != "/cancel":
             # 일정 추가 대화 중에는 '취소' 말고는 모두 대화로: 명령 낱말·'/…'·'일정 추가' 도 일정 내용으로 쓸 수 없다고 안내하고 다시 받음
             return self.dialog_input(cid, text)
-        asking_dialog = self.dialog and self.dialog.get("kind") in ("general", "search", "aisearch", "coolreply")
+        asking_dialog = self.dialog and self.dialog.get("kind") in ("general", "search", "aisearch", "coolreply",
+                                                                    "coolmemo", "replynum", "freenames")
         if asking_dialog and not text.startswith("/") and text not in COMMANDS:
             # 0.6.6: AI 질문·자료 검색 글을 받는 중에는 명령 낱말('쪽지'·'조퇴'…)이 들어 있어도 질문으로.
             # 명령은 '/…'·'취소' 나 아래 단추 판의 단추처럼 그 낱말만 보낼 때만. [답장] 단추 뒤의 답장 내용도 같음 (0.6.9)
@@ -534,6 +566,8 @@ class Bot:
             if not text.startswith("/") and P_ASKING.search(m.group(m.lastindex)):
                 return self.offer_cool_or_ai(cid, text)   # 쪽지인지 질문인지 애매하면 고르게 (창을 건드리기 전에)
             return self.begin_cool(cid, m)
+        if head in ("답장", "/reply", "/답장") and len(words) == 2 and words[1].rstrip("번").isdigit():
+            return self.begin_dialog(cid, "replynum", n=int(words[1].rstrip("번")))   # '답장 3' 만: 내용을 물음 (0.6.10)
         added = self.add_event_words(text)
         if added is not None:   # '일정 추가'·'일정 등록'·'새 일정' 같은 명령 모양 또는 메뉴 단추로만 시작
             return self.begin_event(cid, added)
@@ -706,6 +740,12 @@ class Bot:
             return self.reply(cid, self.month_stats_text())
         if cmd == "ai-dialog":
             return self.begin_dialog(cid, "general")
+        if cmd == "cool-hub":
+            return self.send_cool_list(cid)
+        if cmd == "cool-memo":
+            return self.begin_dialog(cid, "coolmemo")
+        if cmd == "free-dialog":
+            return self.begin_dialog(cid, "freenames")
         return None
 
     def week_text(self, nxt=False, today=None):
@@ -787,6 +827,31 @@ class Bot:
                              "callback_data": f"mn:unread:{offset + UNREAD_PAGE}"}])
         return "\n".join(lines), buttons
 
+    def cool_list_text(self):
+        """최근 쿨메신저 쪽지 (0.6.10 '쪽지'·/cool): 번호를 매겨 '답장 n 내용'·'첨부 n'·'원문 n' 이 바로 되게. (글, 단추)"""
+        rows = self.db.query("SELECT id, received_at, title, body FROM items WHERE source = 'cool' "
+                             "ORDER BY received_at DESC, id DESC LIMIT ?", (COOL_LIST,))
+        ids = [r["id"] for r in rows]
+        self.set_refs(ids)
+        on = self.config["telegram_cool_send"]
+        new = [[{"text": "✉ 새 쪽지 보내기", "callback_data": "mn:memo"}]] if on else []
+        if not rows:
+            return "💬 받은 쿨메신저 쪽지가 아직 없습니다.", new or None
+        lines = [f"💬 최근 쿨메신저 쪽지 {len(rows)}건"]
+        for n, r in enumerate(rows, 1):
+            who = sender_of(r["body"])
+            lines.append(f"\n{n}. {r['received_at'][5:10].replace('-', '/')}" + (f" · {self.mask(who)}" if who else ""))
+            lines.append(cut(self.mask(r["title"]), 70))
+        lines.append("\n" + ("답장: '답장 2 내용' · 첨부 받기: '첨부 2' · 원문: 단추나 '원문 2'" if on else
+                             "원문: 단추나 '원문 2' · 답장·첨부 받기는 업무 데스크 ⚙ 설정 → 텔레그램에서 쿨메신저 보내기를 켜면 됩니다."))
+        return "\n".join(lines), (self.item_buttons(ids, ids) or []) + new
+
+    def send_cool_list(self, cid):
+        self.dialog = None
+        text, buttons = self.cool_list_text()
+        self.send(text, cid, buttons)
+        return text
+
     def send_unread(self, cid, offset=0):
         text, buttons = self.unread_text(offset)
         self.send(text, cid, buttons)
@@ -813,12 +878,16 @@ class Bot:
                 f"📝 결석계 {len(rows)}건 · 결석 {sum(days.values())}일" + (f" ({kinds})" if kinds else "")
                 + "\n학생별 통계는 업무 데스크 → 출결 → 월별 통계에서 봅니다.")
 
-    def begin_dialog(self, cid, kind):
+    def begin_dialog(self, cid, kind, **extra):
+        if kind in ("coolmemo", "replynum") and not self.config["telegram_cool_send"]:
+            self.dialog = None
+            return self.reply(cid, "쿨메신저 보내기가 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 켤 수 있습니다.")
         self.dialog = {"id": secrets.token_hex(6), "kind": kind, "step": "query" if kind == "search" else "number",
-                       "expires": time.monotonic() + DIALOG_TTL}
-        if kind in ("general", "aisearch"):
+                       "expires": time.monotonic() + DIALOG_TTL, **extra}
+        if kind in ("general", "aisearch", "coolmemo", "replynum", "freenames"):
             self.dialog["step"] = "question"
-        prompt = ("찾을 낱말을 보내세요. 예: 연수 신청\n자료만 검색하며 AI는 실행하지 않습니다." if kind == "search" else
+        prompt = (DIALOG_PROMPTS[kind].format(**extra) if kind in DIALOG_PROMPTS else
+                  "찾을 낱말을 보내세요. 예: 연수 신청\n자료만 검색하며 AI는 실행하지 않습니다." if kind == "search" else
                   "🤖 AI 로 찾을 질문을 보내세요. 이 PC 의 자료를 이 PC 의 AI 가 읽고 답합니다." if kind == "aisearch" else
                   "🤖 질문을 보내세요. 일반 질문 AI 로 답하며 업무자료는 붙이지 않습니다.\n학생 정보·비공개 자료는 쓰지 마세요."
                   if kind == "general" else "학생 번호를 함께 보내세요. 예: 7\n명단에 있는 번호만 쓸 수 있습니다.")
@@ -851,6 +920,21 @@ class Bot:
             return self.begin_cool_reply_item(cid, dialog["item_id"], text)
         if kind == "free":
             return self.free_pick(cid, dialog, text.strip())
+        if kind == "coolmemo":   # '김철수 내용' → '쪽지 김철수 내용' 과 같게 (보내기는 확인 뒤 [보내기])
+            m = P_COOL_MEMO.match("쪽지 " + text.strip())
+            if not m:
+                return self.reply(cid, "받는 사람 이름과 내용을 띄어 보내세요. 예: 김철수 내일 협의회는 3시입니다. 그만하려면 '취소'.")
+            self.dialog = None
+            return self.begin_cool_memo(cid, m.group(1), m.group(2))
+        if kind == "replynum":   # '답장 3' 만 보낸 뒤의 내용 (0.6.10)
+            self.dialog = None
+            return self.begin_cool_reply(cid, dialog["n"], text.strip())
+        if kind == "freenames":
+            found = assist.timetable_intent("빈 시간 " + text.strip())
+            if not (found and found[1]["names"]):
+                return self.reply(cid, "선생님 이름을 띄어 보내세요. 예: 김철수 이영희. 그만하려면 '취소'.")
+            self.dialog = None
+            return self.timetable_command(cid, *found)
         if kind == "doc":   # 할 작업 (고르는 중에 다시 보내면 그 말로 다시 찾음)
             return self.doc_task(cid, text.strip())
         if step == "number":
@@ -1316,6 +1400,8 @@ class Bot:
             return self.send_search(cid, " ".join(args))
         if cmd == "lessons":
             return self.reply(cid, self.lessons_text(" ".join(args)))
+        if cmd == "attach" and not args:
+            return self.send_cool_list(cid)   # '첨부' 만: 최근 쪽지 목록에서 번호를 고르게 (0.6.10)
         if cmd in ("text", "file", "attach"):
             if not args or not args[0].isdigit():
                 return self.reply(cid, f"번호를 함께 보내세요. 예) {'원문' if cmd == 'text' else '파일' if cmd == 'file' else '첨부'} 2")
@@ -2848,6 +2934,21 @@ class Bot:
             return self.send(f"✅ 업무 데스크가 {VERSION} 으로 업데이트되어 다시 켜졌습니다.")
         return self.send(f"⚠ 업데이트가 끝나지 않은 것 같습니다 (목표 {target}, 지금 {VERSION}). PC 의 업데이트 창을 확인하세요.")
 
+    def announce_menu(self):
+        """메뉴(아래 단추 판·'/' 목록·☰ 메뉴)가 바뀐 버전으로 처음 켜지면 한 번 알리고 아래 단추 판을 새것으로 바꿈 (0.6.10).
+        텔레그램은 아래 단추 판을 새로 보내기 전까지 예전 것을 그대로 두므로, 업데이트 뒤에도 예전 메뉴가 남아 있었음."""
+        if not self.chat_id or self.db.get_meta("telegram_menu_sig") == MENU_SIG:
+            return False
+        try:
+            sent = self.send(f"🆕 텔레그램 메뉴를 업무 데스크 {VERSION} 기능에 맞게 새로 고쳤습니다 "
+                             "(아래 단추 판 · '/' 명령 목록 · ☰ 메뉴).\n전체 안내는 '도움말' 을 보내세요.", keyboard=True)
+        except Exception as e:   # 알림 실패가 명령 받기를 막지 않음 (다음에 켤 때 다시)
+            self.note_error(e, "메뉴 알림")
+            return False
+        if sent:
+            self.db.set_meta("telegram_menu_sig", MENU_SIG)
+        return sent
+
     def notify_update(self, info):
         """새 버전이 나왔다고 텔레그램으로 한 번 알림 (같은 버전은 다시 보내지 않음). 바꾸는 것은 화면에서 직접 눌러야 함."""
         version = str(info.get("version", ""))[:20]
@@ -2944,6 +3045,7 @@ class Bot:
                 if not menu_set:
                     self.api("setMyCommands", {"commands": BOT_MENU}, timeout=15)
                     menu_set = True
+                    self.announce_menu()
                 updates = self.api("getUpdates", {"timeout": 25, "offset": offset,
                                                   "allowed_updates": ["message", "callback_query"]}, timeout=35)
                 self.status = "연결됨" if self.chat_id else "연결 대기 (코드를 보내세요)"

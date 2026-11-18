@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from desk import absence, queries
 from desk.collect import add_text_item
-from desk.telegram import (ARG_COMMANDS, P_DOC, P_INDEX, BOT_MENU, COMMANDS, KEY_TEXT, KEYBOARD, MAIN_MENU, MENU_ACTIONS,
+from desk.telegram import (ARG_COMMANDS, P_AI_SEARCH, P_DOC, P_INDEX, BOT_MENU, COMMANDS, KEY_TEXT, KEYBOARD, MAIN_MENU, MENU_ACTIONS,
                            SUBMENUS, TEXT_LIMIT, Bot)
 from tests.fake_telegram import FakeTelegram
 from tests.test_collect import Env
@@ -40,12 +40,12 @@ class TelegramMenuTests(unittest.TestCase):
         self.assertEqual([k for row in KEYBOARD for k in row], [label for row in MAIN_MENU for label, _ in row][:8] + ["☰ 메뉴"])
         for label in (k for row in KEYBOARD for k in row):
             self.assertIn(KEY_TEXT[label], COMMANDS, label)   # 단추 글은 모두 명령
-        self.assertEqual([c["command"] for c in BOT_MENU][:8],
-                         ["brief", "week", "inbox", "calendar", "timetable", "attendance", "search", "ask"])
+        self.assertEqual([c["command"] for c in BOT_MENU][:9],
+                         ["brief", "week", "inbox", "calendar", "timetable", "attendance", "search", "aisearch", "ask"])
         for c in BOT_MENU:   # '/' 메뉴의 명령은 모두 알아들음
             slash = "/" + c["command"]
             self.assertTrue(slash in COMMANDS or slash in ARG_COMMANDS or c["command"] == "addevent"
-                            or P_DOC.match(slash) or P_INDEX.match(slash), slash)
+                            or P_DOC.match(slash) or P_INDEX.match(slash) or P_AI_SEARCH.match(slash), slash)
             self.assertLessEqual(len(c["description"]), 256)
         rows = MAIN_MENU + [r for _, rs in SUBMENUS.values() for r in rs]
         for row in rows:
@@ -54,7 +54,7 @@ class TelegramMenuTests(unittest.TestCase):
                 self.assertLessEqual(len(f"mn:{action}".encode()), 64)
         for text in MENU_ACTIONS.values():
             self.assertTrue(text in COMMANDS or text.split()[0] in ARG_COMMANDS or text == "일정 추가"
-                            or P_DOC.match(text) or P_INDEX.match(text), text)
+                            or P_DOC.match(text) or P_INDEX.match(text) or P_AI_SEARCH.match(text), text)
         self.assertIsNone(self.bot.handle_update(press("mn:g:없는묶음")))
         self.assertIsNone(self.bot.handle_update(press("mn:위험한명령")))
         self.assertIsNone(self.bot.handle_update(press("mn:early", chat=6)))   # 연결 안 된 사람
@@ -76,7 +76,9 @@ class TelegramMenuTests(unittest.TestCase):
         for word in ("📥 수신함", "📅 달력", "▦ 시간표", "/inbox", "/calendar", "/timetable", "/attendance"):
             self.bot.handle_update(msg(word))
             self.assertEqual(list(self.labels(self.fake.sent[-1]))[-1], "← 메뉴", word)
-        self.bot.handle_update(msg("🔍 검색"))
+        self.bot.handle_update(msg("🔍 검색"))   # 0.6.10: 자료 검색 / AI 검색 고르기
+        self.assertEqual(list(self.labels(self.fake.sent[-1]))[:2], ["🔍 자료 검색 (AI 없이)", "🧠 AI 검색 (이 PC 자료로 답)"])
+        self.bot.handle_update(press("mn:search"))
         self.assertEqual(self.bot.dialog["kind"], "search")
         self.bot.handle_update(msg("☰ 메뉴"))
         self.assertIsNone(self.bot.dialog)
