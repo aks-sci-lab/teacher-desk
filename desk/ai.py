@@ -17,7 +17,7 @@ import hashlib
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import extract, visits
+from . import applog, extract, visits
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 DAYS = 7
@@ -338,7 +338,16 @@ def _note_ttl_refused(base, db):
 
 def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None, images=()):
     """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌.
-    images: 함께 보낼 사진 바이트(jpg·png) — 사진을 읽는 모델(예: Gemma 4)만 (0.6.11 텔레그램 참고자료 사진)."""
+    images: 함께 보낼 사진 바이트(jpg·png) — 사진을 읽는 모델(예: Gemma 4)만 (0.6.11 텔레그램 참고자료 사진).
+    0.6.13 사용 기록: 모델·글자 수·걸린 시간·부른 곳만 남김 (보낸 글·답은 남기지 않음)."""
+    with applog.timed("ai", "LM Studio 요청", model=model, chars_in=len(prompt), images=len(images) or None,
+                      timeout=timeout, **{"from": applog.caller({"ask", "_ask_lm", "<lambda>"})}) as extra:
+        text = _ask_lm(base, model, prompt, timeout, system, max_tokens, db, images)
+        extra["chars_out"] = len(text)
+        return text
+
+
+def _ask_lm(base, model, prompt, timeout, system, max_tokens, db, images):
     if "qwen" in model.lower():
         prompt += "\n/no_think"   # Qwen3: 생각 단계 끄기
     content = prompt
@@ -450,6 +459,7 @@ class Job:
             self.error = str(e)
         except Exception as e:  # 뒤에서 도는 일이 조용히 죽지 않게
             self.error = f"요약 중 오류: {type(e).__name__}"
+            applog.exception("ai", "AI 요약", e)
             self.db.log(f"AI 요약 오류: {type(e).__name__}: {e}", "error")
 
     def state(self):
@@ -757,6 +767,7 @@ class ItemJob:
             try:
                 self.scan()
             except Exception as e:   # 뒤에서 도는 일이 조용히 죽지 않게
+                applog.exception("ai", "항목 AI 요약 찾기", e)
                 self.db.log(f"항목 AI 요약 찾기 오류: {type(e).__name__}: {e}", "error")
 
     def pending(self):
@@ -823,6 +834,7 @@ class ItemJob:
         except Exception as e:
             self.errors[item_id] = f"요약 중 오류: {type(e).__name__}"
             self.failed[item_id] = self.clock()
+            applog.exception("ai", "항목 AI 요약", e)
             self.db.log(f"항목 AI 요약 오류: {type(e).__name__}: {e}", "error")
 
     def _summarize(self, it):

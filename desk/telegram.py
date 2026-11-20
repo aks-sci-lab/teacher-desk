@@ -25,7 +25,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import VERSION, absence, ai, calllog, assist, coolsend, docs, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, applog, calllog, assist, coolsend, docs, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -59,6 +59,7 @@ HELP = (
     "   /색인 — 업무 폴더 색인을 지금 만들기 (보낼 때만 돎, '/색인 AI' 는 AI 요약도)\n"
     "📎 파일 보내기 — 문서 작성 중이면 서식(칸 채우기) 또는 참고자료 · 통화·문자 기록 파일은 업무 데스크에 저장 (설정에서 켠 경우)\n"
     "\n⚙ 기타: 메뉴 · 도움말 · 취소 · 상태 · 업데이트(새 버전 확인·바꾸기)\n"
+    "로그 — 사용 기록 파일 받기 (최근 3일, '로그 7'·'로그 전체'). 이름·내용 없이 동작만 담겨 점검을 맡길 때 씀\n"
     "조퇴증·외출증·결석계·자료 검색만 보내면 단계별로 안내합니다. 목록에 없는 말은 AI 검색 여부를 먼저 묻습니다."
 )
 COMMANDS = {
@@ -138,6 +139,7 @@ BOT_MENU = [
     {"command": "refresh", "description": "지금 수집"},
     {"command": "index", "description": "문서 작성용 폴더 색인 만들기"},
     {"command": "status", "description": "준비 상태"},
+    {"command": "log", "description": "🧾 사용 기록 파일 받기 (/log 7 = 최근 7일)"},
     {"command": "update", "description": "새 버전 확인·업데이트"},
     {"command": "cancel", "description": "진행 중인 입력 취소"},
     {"command": "help", "description": "도움말 (전체 명령)"},
@@ -165,7 +167,7 @@ MENU_ACTIONS = {
     "lessons": "내 수업", "tomorrow": "내일 수업", "myclass": "우리 반 시간표",
     "early": "조퇴증", "out": "외출증", "absence": "결석계", "stats": "통계",
     "search": "자료 검색", "aisearch": "AI 검색", "ai": "AI 질문",
-    "cool": "쪽지", "memo": "쪽지 보내기", "free": "빈 시간", "doc": "/문서", "index": "/색인", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
+    "cool": "쪽지", "memo": "쪽지 보내기", "free": "빈 시간", "doc": "/문서", "index": "/색인", "log": "로그", "status": "상태", "update": "업데이트", "help": "도움말", "cancel": "취소",
 }
 MAIN_MENU = [[("📋 브리핑", "brief"), ("🗓 주간", "week"), ("📥 수신함", "g:inbox")],
              [("📅 달력", "g:calendar"), ("▦ 시간표", "g:timetable"), ("☑ 출결", "g:attendance")],
@@ -177,7 +179,8 @@ SUBMENUS = {
     "timetable": ("▦ 시간표", [[("📚 오늘 내 수업", "lessons"), ("📚 내일 수업", "tomorrow")], [("🏫 우리 반 시간표", "myclass"), ("👥 같이 비는 시간", "free")]]),
     "attendance": ("☑ 출결", [[("🏃 조퇴증", "early"), ("🚶 외출증", "out")], [("📝 결석계", "absence"), ("📊 이번 달 통계", "stats")]]),
     "search": ("🔍 검색", [[("🔍 자료 검색 (AI 없이)", "search")], [("🧠 AI 검색 (이 PC 자료로 답)", "aisearch")]]),
-    "more": ("⚙ 기타", [[("📝 문서 작성", "doc"), ("📚 색인 만들기", "index")], [("⚙ 상태", "status"), ("⬆ 업데이트", "update")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
+    "more": ("⚙ 기타", [[("📝 문서 작성", "doc"), ("📚 색인 만들기", "index")], [("⚙ 상태", "status"), ("⬆ 업데이트", "update")],
+                       [("🧾 사용 기록 받기", "log")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
 }
 GROUP_HINT = {
     "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2' · 쿨메신저 쪽지는 '답장 2 내용'·'첨부 2'",
@@ -185,7 +188,7 @@ GROUP_HINT = {
     "timetable": "학급은 '2-3 시간표'·'2-3 지금', 같이 비는 시간은 '빈 시간 이름'",
     "attendance": "글로도: 조퇴 7 13:30 · 외출 7 13:30 14:30",
     "search": "자료 검색은 제목·내용의 낱말로, AI 검색은 이 PC 의 AI 가 자료를 읽고 답합니다 ('AI 검색 질문' 으로 바로도)",
-    "more": "",
+    "more": "🧾 사용 기록: 무엇을 언제 했는지(내용·이름 없이)를 파일로 받아 점검을 맡길 수 있습니다",
 }
 # 0.6.10 단추·'/' 메뉴로 시작하는 입력 대화의 첫 안내
 DIALOG_PROMPTS = {
@@ -233,6 +236,10 @@ P_NOT_NAME = re.compile(r"(?:보내|보낸|받은|받는|오는|어떻게|어디
                         r"하는|쓰는|답장|첨부)\S*|온|뭐\S*|왜|좀|다|전부|모든")
 # 'AI 검색 질문' — 이 PC 의 자료로 AI 검색 (명령 낱말보다 먼저)
 P_AI_SEARCH = re.compile(r"^(?:/aisearch(?:@\S+)?|ai\s*검색)\s*[:：]?(?:\s+(\S.*))?$", re.S | re.I)
+# 0.6.13 사용 기록 파일 받기: '로그'·'/log'·'로그 7'(최근 7일)·'로그 전체'·'사용 기록 보내줘'
+P_LOG = re.compile(r"^(?:/log(?:@\S+)?|/로그|로그(?:\s*파일)?|사용\s*기록(?:\s*파일)?)(?:\s+(\d{1,2}|전체|오늘)\s*일?)?"
+                   r"(?:\s*(?:보내\s*줘|보내\s*주세요|줘|주세요))?$")
+LOG_DAYS = 3
 P_COOL_SENDER = re.compile(r"\(보낸 사람:\s*([^)\n]+)\)\s*$")
 COOL_PREVIEW = 600
 EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
@@ -246,6 +253,7 @@ STALE_ERRORS = (ConnectionError, http.client.RemoteDisconnected, http.client.Can
 SAFE_ERRORS = (OSError, http.client.IncompleteRead, http.client.RemoteDisconnected)
 P_BOT_TOKEN = re.compile(r"/bot[^/\s]*")          # URL 속 '/bot<번호>:<토큰>'
 P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번호:글자)
+SEND_WRAPPERS = {"api", "_api", "send", "reply", "show", "send_file", "<lambda>", "<genexpr>", "<listcomp>"}   # 0.6.13 기록의 from=
 POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 초 (실패가 이어지면 두 배씩, 최대 300초)
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
@@ -384,6 +392,21 @@ class Bot:
         return self.config["telegram_token"]
 
     def api(self, method, params=None, timeout=35):
+        if method == "getUpdates":   # 25초마다 묻는 것은 기록하지 않음 (오류는 note_error 가 바뀔 때만 남김)
+            return self._api(method, params, timeout)
+        start, params = time.monotonic(), params or {}
+        text = params.get("text") or ""
+        fields = {"chars": len(text) or None, "h": applog.fingerprint(text) if text else None,
+                  "buttons": bool(params.get("reply_markup")) or None, "from": applog.caller(SEND_WRAPPERS)}
+        try:
+            result = self._api(method, params, timeout)
+        except Exception as e:
+            applog.event("tg.out", method, "warn", ms=(time.monotonic() - start) * 1000, error=self.describe_error(e), **fields)
+            raise
+        applog.event("tg.out", method, ms=(time.monotonic() - start) * 1000, **fields)
+        return result
+
+    def _api(self, method, params=None, timeout=35):
         base = self.config['telegram_api_base'].rstrip('/')
         url = f"{base}/bot{self.token}/{method}"
         data = json.dumps(params or {}).encode("utf-8")
@@ -481,10 +504,13 @@ class Bot:
         url = f"{self.config['telegram_api_base'].rstrip('/')}/bot{self.token}/{method}"
         req = urllib.request.Request(url, data=b"".join(parts),
                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            body = json.loads(r.read().decode("utf-8"))
-        if not body.get("ok"):
-            raise RuntimeError(body.get("description", "텔레그램 오류"))
+        fields = {"ext": Path(name).suffix.lower()[:8], "kb": len(data) / 1024, "h": applog.fingerprint(data),
+                  "from": applog.caller(SEND_WRAPPERS)}   # 파일 이름은 남기지 않음 (학생 이름이 들어갈 수 있음)
+        with applog.timed("tg.out", method, **fields):
+            with urllib.request.urlopen(req, timeout=120) as r:
+                body = json.loads(r.read().decode("utf-8"))
+            if not body.get("ok"):
+                raise RuntimeError(body.get("description", "텔레그램 오류"))
         return True
 
     # ---- 연결 (내 계정만) ----
@@ -568,6 +594,10 @@ class Bot:
             # 0.6.6: AI 질문·자료 검색 글을 받는 중에는 명령 낱말('쪽지'·'조퇴'…)이 들어 있어도 질문으로.
             # 명령은 '/…'·'취소' 나 아래 단추 판의 단추처럼 그 낱말만 보낼 때만. [답장] 단추 뒤의 답장 내용도 같음 (0.6.9)
             return self.dialog_input(cid, text)
+        m = P_LOG.match(text)
+        if m:
+            self.dialog = None
+            return self.send_log(cid, m.group(1) or "")
         m = P_AI_SEARCH.match(text)
         if m:
             self.dialog = None
@@ -1359,6 +1389,7 @@ class Bot:
         except ai.AIError as e:
             return self.send_found(cid, question, f"(AI 답을 만들지 못했습니다: {e})")
         except Exception as e:   # 폴링이 멈추지 않게
+            applog.exception("telegram", "텔레그램 질문 처리", e)
             self.db.log(f"텔레그램 질문 처리 오류: {type(e).__name__}", "error")
             return self.reply(cid, "답을 만들다가 오류가 났습니다. 잠시 뒤 다시 보내 주세요.")
         finally:
@@ -1478,6 +1509,7 @@ class Bot:
         except ai.AIError as e:
             return self.reply(cid, str(e))
         except Exception as e:
+            applog.exception("telegram", "텔레그램 일반 질문", e)
             self.db.log(f"텔레그램 일반 질문 오류: {type(e).__name__}", "error")
             return self.reply(cid, "일반 질문 처리 중 오류가 났습니다. 다시 시도하기 전에 서비스 이용 내역을 확인하세요.")
         finally:
@@ -2329,6 +2361,7 @@ class Bot:
         except ValueError as e:
             return self.reply(cid, f"파일을 받지 못했습니다: {e}")
         except Exception as e:
+            applog.exception("telegram", "텔레그램 문서 작성 파일 받기", e)
             self.db.log(f"텔레그램 문서 작성 파일 받기 오류: {type(e).__name__}", "error")
             return self.reply(cid, "파일을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.")
         want_ref = "참고" in caption or dialog["step"] == "task"   # 할 작업 전에 보낸 파일은 참고자료
@@ -2400,6 +2433,7 @@ class Bot:
         except ValueError as e:
             return self.reply(cid, f"사진을 받지 못했습니다: {e}")
         except Exception as e:
+            applog.exception("telegram", "텔레그램 참고 사진 받기", e)
             self.db.log(f"텔레그램 참고 사진 받기 오류: {type(e).__name__}", "error")
             return self.reply(cid, "사진을 받지 못했습니다. 잠시 뒤 다시 보내 주세요.")
         n = sum(1 for r in dialog.get("refs") or [] if r["name"].startswith("사진")) + 1
@@ -2419,6 +2453,7 @@ class Bot:
         except ai.AIError as e:
             return self.reply(cid, f"사진을 읽지 못했습니다: {e}. 사진 속 글을 '참고 내용' 으로 보내 주세요.")
         except Exception as e:   # 폴링이 멈추지 않게
+            applog.exception("telegram", "텔레그램 참고 사진 읽기", e)
             self.db.log(f"텔레그램 참고 사진 읽기 오류: {type(e).__name__}", "error")
             return self.reply(cid, "사진을 읽다가 오류가 났습니다. 잠시 뒤 다시 보내 주세요.")
         finally:
@@ -2526,6 +2561,7 @@ class Bot:
         except ValueError as e:   # 파일 형식 문제 (안내 글에는 파일 내용·이름이 들어가지 않음)
             text = f"파일을 읽지 못했습니다: {e}"
         except Exception as e:
+            applog.exception("telegram", "텔레그램 통화·문자 파일 받기", e)
             self.db.log(f"텔레그램 통화·문자 파일 받기 오류: {type(e).__name__}", "error")
             text = "파일을 받지 못했습니다. 잠시 뒤 다시 보내거나 업무 데스크에서 직접 불러오세요."
         try:
@@ -2636,6 +2672,7 @@ class Bot:
         except coolsend.SendError as e:
             return self.reply(cid, f"⚠ {e}")
         except Exception as e:   # 창 읽기 실패는 이름 없이 종류만
+            applog.exception("telegram", "쿨메신저 조직도 읽기 실패", e)
             self.db.log(f"쿨메신저 조직도 읽기 실패: {type(e).__name__}", "warn")
             return self.reply(cid, "⚠ 쿨메신저 조직도를 읽지 못했습니다. 쿨메신저가 켜져 있는지 확인해 주세요.")
         shown = self.mask(coolsend.clean_name(name) or name)
@@ -2719,6 +2756,7 @@ class Bot:
         except coolsend.SendError as e:
             return self.reply(cid, f"⚠ 첨부를 받지 못했습니다: {e}")
         except Exception as e:
+            applog.exception("telegram", "쿨메신저 첨부 받기", e)
             self.db.log(f"쿨메신저 첨부 받기 오류: {type(e).__name__}", "warn")
             return self.reply(cid, "⚠ 첨부를 받는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요.")
         sent, big = [], []
@@ -2778,6 +2816,7 @@ class Bot:
             if e.left_open:
                 text += "\n(쓰던 쪽지 창은 PC 에 열어 두었습니다. 보내지는 않았습니다.)"
         except Exception as e:
+            applog.exception("telegram", "쿨메신저 쪽지 보내기", e)
             self.db.log(f"쿨메신저 쪽지 보내기 오류: {type(e).__name__}", "warn")
             text = "⚠ 보내는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요."
         self.reply(cid, text)
@@ -3234,14 +3273,19 @@ class Bot:
                     if self.is_stale(u, backlog, now):
                         skipped += self.update_chat(u) == self.chat_id
                         continue
+                    what, fields = self.describe_update(u)
+                    start = time.monotonic()
                     try:
                         self.handle_update(u)
                         self.last_handled = datetime.now().strftime("%H:%M:%S")
+                        applog.event("tg.in", what, ms=(time.monotonic() - start) * 1000, **fields)
                     except Exception as e:
+                        applog.exception("tg.in", what, e, ms=(time.monotonic() - start) * 1000, **fields)
                         self.db.log(f"텔레그램 명령 처리 오류: {self.describe_error(e)}", "error")
                         self.note_error(e, "명령 처리")
                         self.tell_error(u)
                 if skipped:
+                    applog.event("tg.in", "꺼져 있던 동안 쌓인 명령 건너뜀", "warn", count=skipped)
                     self.send(f"PC 가 꺼져(또는 인터넷이 끊겨) 있던 동안 받은 명령·단추 {skipped}개는 실행하지 않았습니다. "
                               "필요하면 다시 보내 주세요.")
             except urllib.error.HTTPError as e:
@@ -3263,6 +3307,56 @@ class Bot:
                 self.note_error(e)
                 self.stop_event.wait(backoff)
                 backoff = min(backoff * 2, 300)
+
+    def send_log(self, cid, arg=""):
+        """사용 기록 파일을 선생님 채팅으로 (0.6.13). 내용·이름 없이 동작만 담긴 글 파일."""
+        if not self.config["usage_log"]:
+            return self.reply(cid, "사용 기록 남기기가 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 업데이트·고급에서 켜면 그때부터 남습니다.")
+        days = 0 if arg == "전체" else 1 if arg == "오늘" else int(arg) if arg.isdigit() else LOG_DAYS
+        days = min(days, 31)
+        data, n = applog.export_text(VERSION, days, limit=FILE_LIMIT)
+        if not n:
+            return self.reply(cid, "아직 남은 사용 기록이 없습니다. 업무 데스크를 조금 쓴 뒤 다시 보내 주세요.")
+        span = "전체" if not days else "오늘(24시간)" if days == 1 else f"최근 {days}일"
+        caption = (f"🧾 업무 데스크 사용 기록 · {span} · {n}줄 · {max(1, len(data) // 1024)}KB\n"
+                   "학생 이름·전화번호는 가렸고, 쪽지·공문 내용, 조퇴·외출 사유, 보낸 글 내용은 넣지 않았습니다.\n"
+                   "다른 기간: '로그 7'(최근 7일) · '로그 전체'")
+        self.send_file(cid, f"teacher-desk-log-{datetime.now():%Y%m%d-%H%M}.txt", data, caption)
+        self.db.log(f"텔레그램으로 사용 기록 파일 보냄 ({span}, {n}줄)")
+        return caption
+
+    def describe_update(self, u):
+        """사용 기록에 남길 '무엇을 받았나' (0.6.13): 명령 낱말·단추 이름·파일 종류만, 보낸 글의 내용은 글자 수만."""
+        fields = {"dialog": (self.dialog or {}).get("kind")}
+        cq = u.get("callback_query")
+        if cq:
+            data = re.sub(r"[0-9a-f]{8,}", "#", cq.get("data") or "")
+            return "단추 " + re.sub(r"\d+", "#", data)[:40], fields
+        msg = u.get("message") or {}
+        if msg.get("document"):
+            doc = msg["document"]
+            return f"파일 {Path(doc.get('file_name') or '').suffix.lower()[:8] or '(이름 없음)'}", {
+                **fields, "kb": (doc.get("file_size") or 0) / 1024, "caption": bool(msg.get("caption"))}
+        if msg.get("photo"):
+            return "사진", {**fields, "caption": bool(msg.get("caption"))}
+        text = (msg.get("text") or "").strip()
+        text = KEY_TEXT.get(text, text)
+        words = text.split()
+        if not words:
+            return "빈 글", fields
+        head = words[0].split("@")[0].lower()
+        fields["chars"] = len(text)
+        if text in COMMANDS:
+            return f"명령 {text}", fields
+        if head in ("/start", "연결"):
+            return "명령 연결", fields
+        for rx, label in ((P_AI_SEARCH, "AI 검색"), (P_DOC, "문서"), (P_INDEX, "색인"), (P_COOL_REPLY, "답장"), (P_COOL_MEMO, "쪽지"),
+                          (P_ADD_EVENT, "일정 추가"), (P_LOG, "로그")):
+            if rx.match(text):
+                return f"명령 {label} (+낱말)", fields
+        if head in COMMANDS or head in ARG_COMMANDS:
+            return f"명령 {head} (+{len(words) - 1}낱말)", fields
+        return f"글 ({len(words)}낱말)", fields
 
     def tell_error(self, update):
         """명령을 처리하다 오류가 나면 조용히 넘기지 않고 알림 (원인은 업무 데스크의 '기록')."""

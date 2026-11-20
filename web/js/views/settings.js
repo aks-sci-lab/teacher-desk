@@ -425,6 +425,15 @@ const GROUPS = [
             checkField('auto_update', '켤 때 새 버전 확인',
                 '켤 때 새 버전이 있으면 자동으로 바꾼 뒤 다시 켭니다 (학생 명단·기록·설정은 그대로).'),
             item('업데이트 새 버전 확인 지금 업데이트 버전', updateBox(st)),
+            checkField('usage_log', '사용 기록 파일 남기기 (점검용)',
+                '무엇을 언제 했는지(누른 메뉴·텔레그램 명령·수집·AI·오류와 걸린 시간)만 이 PC 의 data/logs 에 남깁니다. '
+                + '쪽지·공문 내용, 사유, 보낸 글은 남기지 않고 학생 이름은 가립니다. 텔레그램에서 \'로그\' 를 보내면 파일로 받습니다 (모두 10MB 까지, 오래된 것부터 지움).'),
+            item('사용 기록 로그 내려받기 점검',
+                el('div.field', el('span', '사용 기록 파일'), el('span.hint', '최근 3일 기록을 글 파일로 내려받습니다. Claude 에게 점검을 맡길 때 올리세요.')),
+                el('div.row', el('button.btn.small', { type: 'button', onclick: guarded(async () => {
+                    const res = await api.get('/api/logs/usage?days=3');
+                    download(await res.blob(), `teacher-desk-log-${new Date().toISOString().slice(0, 10)}.txt`);
+                }) }, '최근 3일 내려받기'))),
             item('설정 도우미 다시 하기 처음 설정',
                 el('div.field', el('span', '설정 도우미'), el('span.hint', '처음 설정을 단계별로 다시 확인합니다. 지금 설정은 그대로 남습니다.')),
                 el('div.row', el('button.btn.small', { type: 'button', onclick: () => openSetup() }, '설정 도우미 다시 하기'))),

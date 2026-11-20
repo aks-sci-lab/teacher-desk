@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import secrets
+import time
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,7 +24,7 @@ import socket
 import urllib.error
 import urllib.request
 
-from . import VERSION, aiclass, folderdoc, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
+from . import VERSION, applog, aiclass, folderdoc, register, cloudcrypt, cloudsync, gdrive, schoolshare, gcal, calllog, classrecords, classroom, classvote, visits, neisfill, capture as capture_mod, updater, window as window_mod, absence, ai, bell, coolmsg, extract, holidays, localai, neis, picker, printing, preview, providers, queries, schoolcal, timetable, weekplan
 from .collect import SOURCES, add_text_item, cool_me, diagnose, item_file
 from .config import APP_DIR
 from .db import now_str
@@ -191,6 +192,7 @@ def make_handler(app):
 
         def send_json(self, status, obj):
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self.sent_status = status
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
@@ -207,6 +209,7 @@ def make_handler(app):
                 self.send_header("Vary", "Origin")
 
         def send_bytes(self, status, body, ctype, extra=None):
+            self.sent_status = status
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -294,6 +297,19 @@ def make_handler(app):
                 self.send_json(e.status, {"error": e.message})
 
         def dispatch(self, method):
+            start, self.sent_status = time.monotonic(), None
+            try:
+                self._dispatch(method)
+            finally:   # 0.6.13 사용 기록: 바꾸는 요청은 모두, 읽기(GET)는 실패·느린 것만 (화면이 자주 묻는 것은 빼고)
+                path = urlparse(self.path).path
+                if path.startswith("/api/") and path not in QUIET_PATHS:
+                    ms = (time.monotonic() - start) * 1000
+                    st = self.sent_status or 0
+                    if method != "GET" or st >= 400 or ms >= SLOW_GET_MS:
+                        applog.event("server", f"{method} {log_path(path)}", "warn" if st >= 500 or ms >= 10000 else "info",
+                                     status=st, ms=ms)
+
+        def _dispatch(self, method):
             try:
                 url = urlparse(self.path)
                 is_capture = url.path in ("/capture", "/capture/ping", "/capture/form", "/capture/fill", "/capture/fill/result")
@@ -327,6 +343,7 @@ def make_handler(app):
             except ApiError as e:
                 self.send_json(e.status, {"error": e.message})
             except Exception as e:  # 예상 못 한 오류도 화면에 알림
+                applog.exception("server", f"서버 오류 {log_path(urlparse(self.path).path)}", e)
                 app.db.log(f"서버 오류: {type(e).__name__}: {e}", "error")
                 self.send_json(500, {"error": f"서버 오류: {type(e).__name__}"})
 
@@ -390,6 +407,14 @@ def make_handler(app):
 
 # ---------------------------------------------------------------- API
 ROUTES = []
+# 0.6.13 사용 기록: 화면이 몇 초마다 묻는 요청과 기록 받기 자체는 남기지 않음
+QUIET_PATHS = {"/api/log/client", "/api/ui/bye", "/api/logs"}
+SLOW_GET_MS = 1500
+
+
+def log_path(path):
+    """주소에 한글(이름·낱말)이 들어갈 수 있어 그런 칸은 * 로."""
+    return "/".join(p if re.fullmatch(r"[A-Za-z0-9._-]*", p) else "*" for p in path.split("/"))[:80]
 
 
 def api(method, pattern):
@@ -556,6 +581,38 @@ def neis_fill_cancel(app, q, body, job_id):
 def get_logs(app, q, body):
     after = int(q.get("after") or 0)
     return app.db.query("SELECT * FROM logs WHERE id > ? ORDER BY id DESC LIMIT 100", (after,))[::-1]
+
+
+# ---- 사용 기록 파일 (0.6.13) ----
+CLIENT_KINDS = {"view", "tab", "click", "error", "api", "toast", "slow"}
+
+
+@api("POST", "/api/log/client")
+def post_client_log(app, q, body):
+    """화면에서 모아 보낸 동작 (연 메뉴·누른 단추·오류). 글은 짧게 자르고 이름은 applog 가 가림."""
+    events = body.get("events")
+    need(isinstance(events, list), "events 가 없습니다")
+    for ev in events[:60]:
+        if not isinstance(ev, dict) or ev.get("kind") not in CLIENT_KINDS:
+            continue
+        fields = {k: str(ev[k])[:80] for k in ("view", "status", "where") if ev.get(k) not in (None, "")}
+        if isinstance(ev.get("ms"), (int, float)):
+            fields["ms"] = float(ev["ms"])
+        level = "error" if ev["kind"] == "error" else "warn" if ev["kind"] in ("api", "toast", "slow") else "info"
+        applog.event("web", f"{ev['kind']} {str(ev.get('what') or '')[:80]}", level, **fields)
+    return {"ok": True}
+
+
+@api("GET", "/api/logs/usage")
+def get_usage_log(app, q, body):
+    try:
+        days = max(0, min(int(q.get("days") or 3), 31))
+    except ValueError:
+        days = 3
+    data, _ = applog.export_text(VERSION, days)
+    name = f"teacher-desk-log-{datetime.now():%Y%m%d-%H%M}.txt"
+    return (200, data, "text/plain; charset=utf-8",
+            {"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 # ---- 학생 명단 ----
