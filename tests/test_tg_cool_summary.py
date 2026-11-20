@@ -27,6 +27,15 @@ class CoolFieldsTests(unittest.TestCase):
         f = ai.cool_fields(text, "회의가 있습니다")
         self.assertEqual((f["sender"], f["task"], f["due"], f["files"], f["urgent"]), ("", "회의 안내", "", "", "보통"))
 
+    def test_values_only_five_lines_are_read_in_order(self):
+        """0.6.14 학교 PC Gemma 4 가 칸 이름 없이 값만 다섯 줄로 답함 (선생님 화면 2026-11-20)."""
+        text = "문신혜(문신혜)\n오늘 6, 7교시 동아리 시간, 1, 2학년만 실시함.\n없음\n없음\n보통"
+        f = ai.cool_fields(text, "동아리 안내\n\n(보낸 사람: 문신혜(문신혜))")
+        self.assertEqual(f["sender"], "문신혜")
+        self.assertEqual(f["task"], "오늘 6, 7교시 동아리 시간, 1, 2학년만 실시함.")
+        self.assertEqual((f["due"], f["files"], f["urgent"]), ("", "", "보통"))
+        self.assertIsNone(ai.cool_fields("첫 줄\n둘째 줄\n셋째 줄"))   # 다섯 줄이 아니면 억지로 맞추지 않음
+
     def test_other_shapes_are_not_forced(self):
         self.assertIsNone(ai.cool_fields("한 줄 요약: 협의록 제출\n- 해야 할 일: 협의록 제출"))
 
@@ -110,6 +119,28 @@ class TelegramCoolSummaryTests(unittest.TestCase):
         notice = [t for t in self.texts() if t.startswith("📥")]
         self.assertEqual(len(notice), 1)
         self.assertIn("회의 안내", notice[0])
+
+    def test_original_forwarding_is_joined_to_summary(self):
+        """0.6.14 (선생님 2026-11-20 '여전히 중복'): 원문 전달을 켜도 쪽지 하나에 글 하나 (요약 + 아래 원문)."""
+        self.env.config.values["telegram_cool_text"] = True
+        body = "안녕하세요~ 오늘 6, 7교시는 동아리 시간입니다.\n\n(보낸 사람: 홍길동)"
+        a = self.item(body, title="안녕하세요~ 오늘 6, 7교시는 동아리 시간입니다.")
+        self.notify(a)
+        texts = self.texts()
+        self.assertEqual(len(texts), 1)
+        self.assertTrue(texts[0].startswith("🤖"))
+        self.assertIn("업무 내용:", texts[0])
+        self.assertIn("📨 원문\n" + body, texts[0])
+        self.assertNotIn("o:", str(self.fake.sent[0].get("reply_markup")))   # 원문이 이미 있으니 [원문 보기] 없음
+
+    def test_original_forwarding_head_does_not_repeat_title(self):
+        self.env.config.values["telegram_cool_text"] = True
+        self.env.config.values["telegram_cool_summary"] = False
+        a = self.item("회의 안내입니다.\n3시에 과학실", title="회의 안내입니다.")
+        self.notify(a)
+        orig = [t for t in self.texts() if t.startswith("📨")]
+        self.assertEqual(len(orig), 1)
+        self.assertTrue(orig[0].startswith("📨 쿨메신저 쪽지 원문\n\n회의 안내입니다."))
 
     def test_failure_sends_reason_and_button_only(self):
         a = self.item("회의 자료를 확인해 주세요. 내일까지 회신 바랍니다.")

@@ -46,7 +46,9 @@ UPDATE_PS = (
     "  $got = $false; "
     "  foreach ($url in $urls) { try { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $tmp 'desk.zip'); $got = $true; break } catch { Write-Host (' 받지 못함: ' + $url) } }; "
     "  if (-not $got) { throw '최신 버전을 내려받지 못했습니다' }; "
-    "  Expand-Archive -LiteralPath (Join-Path $tmp 'desk.zip') -DestinationPath $tmp; "
+    # Expand-Archive 대신 .NET 을 바로 씀: 다른 PowerShell(7)에서 불리면 Archive 모듈이 섞여 'ExtractToDirectory' 오류가 남 (0.6.14, CI)
+    "  Add-Type -AssemblyName System.IO.Compression.FileSystem; "
+    "  [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $tmp 'desk.zip'), $tmp); "
     "  $new = Join-Path $tmp 'TeacherDesk'; "
     "  if (-not (Test-Path (Join-Path $new 'teacher-desk\\desk.py'))) { throw '받은 파일이 업무 데스크가 아닙니다' }; "
     "  Write-Host ' 프로그램 파일을 바꾸는 중... (자료와 설정은 그대로 둡니다)'; "

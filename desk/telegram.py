@@ -2920,10 +2920,11 @@ class Bot:
             self.send("📷 " + ", ".join(notes) + ". 업무 데스크 수신함에서 보세요.")
         return sent
 
-    def send_collect_texts(self, stats):
+    def send_collect_texts(self, stats, skip=()):
         """새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 설정 telegram_cool_text 를 켠 경우만, 0.5.61).
-        원문은 가리지 않고 그대로 (원문 규칙). 한 번에 최대 5건, 긴 글은 나눠 보냄."""
-        ids = list(stats.get("new_ids") or [])
+        원문은 가리지 않고 그대로 (원문 규칙). 한 번에 최대 5건, 긴 글은 나눠 보냄.
+        skip: AI 요약 글로 가는 쪽지 (0.6.14). 그 쪽지의 원문은 요약 글 아래에 붙여 한 글로 보냄 (따로 두 번 오지 않게)."""
+        ids = [i for i in (stats.get("new_ids") or []) if i not in skip]
         if not (ids and self.chat_id and self.config["telegram_cool_text"]):
             return 0
         rows = self.db.query(
@@ -2934,7 +2935,7 @@ class Bot:
             body = (r["body"] or "").strip()
             if not body:
                 continue
-            head = f"📨 쿨메신저 쪽지 · {self.mask(r['title'])}"
+            head = self.cool_text_head(r["title"], body)
             buttons = self.cool_reply_buttons({"id": r["id"], "source": "cool", "body": r["body"]})
             for k in range(0, len(body), 3500):
                 chunk = body[k:k + 3500]
@@ -2943,6 +2944,13 @@ class Bot:
         if len(rows) > 5:
             self.send(f"📨 쪽지 {len(rows) - 5}건의 원문은 업무 데스크 수신함에서 보세요.")
         return sent
+
+    def cool_text_head(self, title, body):
+        """원문 전달 글의 머리줄. 제목이 쪽지 첫 줄과 같으면(쿨메신저는 첫 줄이 제목) 다시 쓰지 않음 (0.6.14)."""
+        t = (title or "").strip().rstrip("…").strip()
+        if not t or body.lstrip().startswith(t):
+            return "📨 쿨메신저 쪽지 원문"
+        return f"📨 쿨메신저 쪽지 · {self.mask(title)}"
 
     def send_cool_summaries(self, stats):
         """새 쿨메신저 쪽지를 이 PC 의 AI 로 다섯 칸(보낸 사람·업무 내용·마감 기한·첨부파일·긴급 여부) 요약해 보냄
@@ -3009,22 +3017,29 @@ class Bot:
         it = self.db.one("SELECT id, title, body, ai_summary, ai_summary_hash FROM items WHERE id = ?", (item_id,))
         if not it:
             return 0
-        buttons = [[{"text": "원문 보기", "callback_data": f"o:{item_id}"}]]
+        body = (it["body"] or "").strip()
+        with_text = bool(self.config["telegram_cool_text"] and body)   # 원문 전달을 켰으면 요약 아래에 원문을 붙여 한 글로 (0.6.14)
+        buttons = [[] if with_text else [{"text": "원문 보기", "callback_data": f"o:{item_id}"}]]
         reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": it["body"]})
         if reply:
             buttons[0] += reply[0]   # [원문 보기] [↩ 답장 보내기] 한 줄 (0.6.9)
+        if not buttons[0]:
+            buttons = []
         if self.has_candidates(item_id):   # 알림 목록에서 빠지므로 [📅 일정 등록] 도 여기에 (0.6.12)
             buttons.append([{"text": "📅 일정 등록", "callback_data": f"rg:{item_id}"}])
+        buttons = buttons or None
+        original = f"\n\n📨 원문\n{body}" if with_text else ""   # 원문은 가리지 않고 그대로 (원문 규칙), 긴 글은 send 가 나눔
         n = self.ref_number(item_id)
         head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
         fresh = it["ai_summary"] and it["ai_summary_hash"] == ai.body_hash(it["body"])
         if late or error or not fresh:
             reason = error or "요약을 만들지 못했습니다"
-            self.send(f"{head}\n⚠ AI 요약 없음: {self.mask_always(reason)[:120]}\n원문은 아래 단추로 받을 수 있습니다.", buttons=buttons)
+            self.send(f"{head}\n⚠ AI 요약 없음: {self.mask_always(reason)[:120]}"
+                      + (original or "\n원문은 아래 단추로 받을 수 있습니다."), buttons=buttons)
             return 0
         fields = ai.cool_fields(it["ai_summary"], it["body"])
         if not fields:   # 모델이 다섯 칸 형식을 따르지 않음: 받은 요약을 그대로
-            self.send(f"{head}\n{self.mask(it['ai_summary']).strip()[:900]}", buttons=buttons)
+            self.send(f"{head}\n{self.mask(it['ai_summary']).strip()[:900]}{original}", buttons=buttons)
             return 1
         lines = [head]
         for key, label in COOL_SUMMARY_MARKS:
@@ -3032,20 +3047,23 @@ class Bot:
             if key == "urgent":
                 label = "🚨 긴급 여부" if value == "긴급" else "✅ 긴급 여부"
             lines.append(f"{label}: {cut(self.mask(value), 200)}")
-        self.send("\n".join(lines), buttons=buttons)
+        self.send("\n".join(lines) + original, buttons=buttons)
         return 1
 
     def notify_collect(self, stats, reason):
+        try:
+            skip = self.cool_summary_targets(stats)[:COOL_SUMMARY_LIMIT]   # AI 요약 글로 따로 가는 쪽지 (0.6.12)
+        except Exception:
+            skip = []
         try:
             self.send_collect_photos(stats)
         except Exception:
             pass   # 사진 전달이 실패해도 알림은 보냄
         try:
-            self.send_collect_texts(stats)
+            self.send_collect_texts(stats, skip=skip)
         except Exception:
             pass   # 원문 전달이 실패해도 알림은 보냄
         if reason != "telegram":   # 명령에 대한 답장이면 이미 보냄
-            skip = self.cool_summary_targets(stats)[:COOL_SUMMARY_LIMIT]   # AI 요약 글로 따로 가는 쪽지 (0.6.12)
             msg = self.collect_message(stats, skip=skip)
             if msg and self.chat_id:
                 ids = self.db.get_meta("telegram_refs", []) if stats.get("new_ids") else []
