@@ -212,6 +212,25 @@ CREATE TABLE IF NOT EXISTS class_vote_voters (
     PRIMARY KEY (vote_id, number)
 );
 
+-- 학사일정 고친 것 (0.6.18): 다시 가져와도 유지. orig_key = 가져온 원래 '날짜|끝날짜|내용', new = 고친 값 JSON (NULL: 지움)
+CREATE TABLE IF NOT EXISTS school_edits (
+    orig_key TEXT PRIMARY KEY,
+    cur_key TEXT,
+    new TEXT,
+    updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS school_edits_cur ON school_edits(cur_key);
+
+-- 학사일정 고친 기록 (언제·무엇을·어떻게). 지우지 않고 쌓음
+CREATE TABLE IF NOT EXISTS school_edit_log (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL,
+    action TEXT NOT NULL,            -- edit / delete
+    before TEXT,                     -- JSON {date, end_date, time, category, text}
+    after TEXT,                      -- JSON (지움이면 NULL)
+    note TEXT                        -- 고친 이유 (선택)
+);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY,
     at TEXT NOT NULL,

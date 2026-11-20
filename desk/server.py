@@ -788,99 +788,7 @@ def attendance_month(app, q, body):
     except ValueError:
         raise ApiError(400, "월 형식이 잘못되었습니다 (예: 2026-10)")
     month_end = next_month - timedelta(days=1)
-
-    def new_student(number, name):
-        return {
-            "student_number": number, "student_name": name,
-            "absence_forms": 0, "absence_days": dict.fromkeys(register.TYPES, 0),   # '미정' = 종류를 아직 안 정한 초안
-            "early_count": 0, "out_count": 0, "late_count": 0, "result_count": 0,
-            "details": {key: [] for key in ("absence_forms", "absence_days", "early_count", "out_count",
-                                            "late_count", "result_count")},
-        }
-
-    # 학생 줄은 (번호, 이름) 한 쌍으로 구분. 번호만으로 묶으면 명단이 바뀐 뒤(전학·번호 변경)
-    # 예전 기록이 지금 그 번호인 다른 학생 줄에 붙고, 같은 번호가 둘이면 한 명이 사라졌음.
-    rows = {}
-    for student in app.db.students():
-        rows.setdefault((student["number"], student["name"]), new_student(student["number"], student["name"]))
-
-    def row_for(number, name):
-        if (number, name) in rows:
-            return rows[(number, name)]
-        if number is None:   # 번호 없이 쓴 기록은 이름이 하나뿐일 때만 그 학생 줄로
-            named = [row for row in rows.values() if row["student_name"] == name]
-            if len(named) == 1:
-                return named[0]
-        return rows.setdefault((number, name), new_student(number, name))
-
-    absences = app.db.query(
-        "SELECT student_number, student_name, start_date, end_date, absence_type, reason FROM absences "
-        "WHERE start_date <= ? AND end_date >= ?",
-        (month_end.isoformat(), month_start.isoformat()))
-    for entry in absences:
-        student = row_for(entry["student_number"], entry["student_name"])
-        student["absence_forms"] += 1
-        dates = absence.school_dates(
-            app.db, max(date.fromisoformat(entry["start_date"]), month_start),
-            min(date.fromisoformat(entry["end_date"]), month_end), app.config["grade"])
-        student["absence_days"][entry["absence_type"]] += len(dates)
-        student["details"]["absence_forms"].append({
-            "date": f"{entry['start_date']}~{entry['end_date']}",
-            "kind": entry["absence_type"], "reason": entry["reason"],
-        })
-        student["details"]["absence_days"].extend(
-            {"date": day, "kind": entry["absence_type"], "reason": entry["reason"]} for day in dates)
-
-    passes = app.db.query(
-        "SELECT student_number, student_name, kind, date, time_out, reason FROM passes "
-        "WHERE date >= ? AND date <= ? AND status != 'cancelled'",
-        (month_start.isoformat(), month_end.isoformat()))
-    for issued in passes:
-        student = row_for(issued["student_number"], issued["student_name"])
-        metric = "early_count" if issued["kind"] == "early" else "out_count"
-        student[metric] += 1
-        student["details"][metric].append({
-            "date": issued["date"], "time": issued["time_out"],
-            "kind": "조퇴" if issued["kind"] == "early" else "외출", "reason": issued["reason"] or "",
-        })
-
-    # 출석부의 지각·결과, 증 없이 체크한 조퇴 (증이 있는 날의 조퇴 체크는 증으로 이미 셈)
-    marks = app.db.query("SELECT * FROM attendance_marks WHERE date >= ? AND date <= ?",
-                         (month_start.isoformat(), month_end.isoformat()))
-    for mark in marks:
-        if mark["kind"] == "early" and register.early_pass_on(
-                app.db, mark["student_number"], mark["student_name"], date.fromisoformat(mark["date"])):
-            continue
-        student = row_for(mark["student_number"], mark["student_name"])
-        metric = {"late": "late_count", "early": "early_count", "result": "result_count"}[mark["kind"]]
-        student[metric] += 1
-        label = register.MARK_KINDS[mark["kind"]]
-        student["details"][metric].append({
-            "date": mark["date"], "time": f"{mark['periods']}교시" if mark["periods"] else None,
-            "kind": f"{mark['mark_type']} {label}" + (" (증 없음)" if mark["kind"] == "early" else ""),
-            "reason": mark["note"] or "",
-        })
-
-    result_rows = sorted(rows.values(), key=lambda row: (
-        row["student_number"] is None,
-        row["student_number"] if row["student_number"] is not None else 0,
-        row["student_name"],
-    ))
-    totals = {
-        "absence_forms": sum(row["absence_forms"] for row in result_rows),
-        "absence_days": {
-            kind: sum(row["absence_days"][kind] for row in result_rows)
-            for kind in register.TYPES
-        },
-        "early_count": sum(row["early_count"] for row in result_rows),
-        "out_count": sum(row["out_count"] for row in result_rows),
-        "late_count": sum(row["late_count"] for row in result_rows),
-        "result_count": sum(row["result_count"] for row in result_rows),
-    }
-    for row in result_rows:
-        row["total_absence_days"] = sum(row["absence_days"].values())
-    totals["total_absence_days"] = sum(row["total_absence_days"] for row in result_rows)
-    return {"month": month, "rows": result_rows, "totals": totals}
+    return register.month_report(app.db, month_start, month_end, app.config["grade"])
 
 
 @api("POST", "/api/absences")
@@ -1357,14 +1265,24 @@ def create_event(app, q, body):
 def update_event(app, q, body, eid):
     need(app.db.one("SELECT id FROM events WHERE id = ?", (eid,)), "없는 일정입니다", 404)
     f = event_fields(body, partial=True)
+    note = text_field(body.get("note"), "고친 이유", 200)
+    school = schoolcal.is_school_event(app.db, eid)   # 학사일정이면 고친 것을 기록하고 다시 가져와도 유지
     if f:
         app.db.execute(f"UPDATE events SET {', '.join(k + ' = ?' for k in f)} WHERE id = ?", (*f.values(), eid))
         app.gcal.poke()
-    return app.db.one("SELECT * FROM events WHERE id = ?", (eid,))
+    after = app.db.one("SELECT * FROM events WHERE id = ?", (eid,))
+    if school and any(school[k] != after[k] for k in schoolcal.EDIT_FIELDS):
+        schoolcal.remember_edit(app.db, school, after, note)
+        app.db.log("학사일정 한 줄을 고쳤습니다")
+    return after
 
 
 @api("DELETE", r"/api/events/(\d+)")
 def delete_event(app, q, body, eid):
+    school = schoolcal.is_school_event(app.db, eid)
+    if school:   # 학사일정을 지우면 기록에 남기고, 다시 가져와도 지운 대로
+        schoolcal.remember_edit(app.db, school, None, text_field(q.get("note"), "지운 이유", 200))
+        app.db.log("학사일정 한 줄을 지웠습니다")
     with app.db.lock:   # 일정 삭제·텔레그램 취소 목록 정리·변경 번호 올리기를 한 번에 (텔레그램 [방금 등록 취소] 와 엇갈리지 않게)
         app.db.execute("DELETE FROM events WHERE id = ?", (eid,))
         queries.forget_added_event(app.db, int(eid))
@@ -1434,6 +1352,12 @@ def schoolcal_save(app, q, body):
     res = schoolcal.save(app.db, year, clean, origin, replace=bool(body.get("replace", True)))
     app.db.log(f"{year}학년도 학사일정 {res['count']}건 가져옴" + (" (이전 것 바꿈)" if res["replaced"] else ""))
     return res
+
+
+@api("GET", "/api/schoolcal/edits")
+def schoolcal_edits(app, q, body):
+    """학사일정 고친 기록 (최근 것 먼저)."""
+    return schoolcal.edit_log(app.db)
 
 
 @api("GET", "/api/calendar.ics")

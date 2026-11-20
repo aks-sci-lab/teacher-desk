@@ -312,8 +312,10 @@ def parse(school_year, filename=None, data=None, text=None):
 
 
 def save(db, school_year, events, origin, replace=True):
-    """미리보기에서 고른 일정을 '학사일정' 항목 하나로 저장 (같은 학년도 이전 것은 바꿈)."""
+    """미리보기에서 고른 일정을 '학사일정' 항목 하나로 저장 (같은 학년도 이전 것은 바꿈).
+    선생님이 고친·지운 학사일정(`school_edits`)은 다시 가져와도 고친 대로 넣음 (0.6.18)."""
     title = f"{school_year}학년도 학사일정"
+    events = apply_edits(db, events)
     removed = 0
     if replace:
         for r in db.query("SELECT id FROM items WHERE source = 'school' AND title LIKE ?", (title + "%",)):
@@ -326,3 +328,70 @@ def save(db, school_year, events, origin, replace=True):
                           file_path=origin)
     db.execute("UPDATE items SET status = 'done' WHERE id = ?", (item_id,))  # 수신함 '진행 중'에 쌓이지 않게
     return {"item_id": item_id, "count": len(events), "replaced": removed}
+
+
+# ---- 학사일정 고치기와 기록 (0.6.18, 선생님 요청 2026-11-20 "학사일정도 수정할 수 있게, 수정한 내용은 기록되게") ----
+EDIT_FIELDS = ("date", "end_date", "time", "category", "text")
+
+
+def edit_key(e):
+    """가져온 일정 한 줄을 알아보는 표시: 날짜|끝 날짜|내용 (나이스·파일에서 다시 가져와도 같은 값)."""
+    return f"{e.get('date') or ''}|{e.get('end_date') or ''}|{(e.get('text') or '').strip()}"
+
+
+def _fields(e):
+    return {k: e.get(k) for k in EDIT_FIELDS}
+
+
+def is_school_event(db, eid):
+    """학사일정 항목(items.source='school')에서 온 일정이면 그 일정 줄, 아니면 None."""
+    return db.one("SELECT e.* FROM events e JOIN items i ON i.id = e.item_id WHERE e.id = ? AND i.source = 'school'",
+                  (eid,))
+
+
+def remember_edit(db, before, after, note=""):
+    """학사일정 한 줄을 고치거나(after) 지웠을 때(after=None): 다시 가져와도 유지되게 저장하고 기록에 남김."""
+    import json
+    from .db import now_str
+    cur = edit_key(before)
+    with db.lock:
+        old = db.one("SELECT orig_key FROM school_edits WHERE cur_key = ? ORDER BY updated_at DESC LIMIT 1", (cur,))
+        orig = old["orig_key"] if old else cur
+        new = json.dumps(_fields(after), ensure_ascii=False) if after else None
+        db.execute("INSERT INTO school_edits(orig_key, cur_key, new, updated_at) VALUES(?, ?, ?, ?) "
+                   "ON CONFLICT(orig_key) DO UPDATE SET cur_key = excluded.cur_key, new = excluded.new, "
+                   "updated_at = excluded.updated_at",
+                   (orig, edit_key(after) if after else None, new, now_str()))
+        db.execute("INSERT INTO school_edit_log(at, action, before, after, note) VALUES(?, ?, ?, ?, ?)",
+                   (now_str(), "edit" if after else "delete", json.dumps(_fields(before), ensure_ascii=False),
+                    new, (note or "").strip()[:200] or None))
+
+
+def apply_edits(db, events):
+    """가져온 일정 목록에 선생님이 고친 것을 덮어씀 (지운 것은 뺌)."""
+    import json
+    edits = {r["orig_key"]: r["new"] for r in db.query("SELECT orig_key, new FROM school_edits")}
+    out = []
+    for e in events:
+        k = edit_key(e)
+        if k not in edits:
+            out.append(e)
+        elif edits[k]:
+            new = json.loads(edits[k])
+            out.append({**e, **{f: new.get(f) for f in EDIT_FIELDS if f in new}})
+    return out
+
+
+def edited_keys(db):
+    """지금 고친 상태인 일정 표시 모음 (화면에서 '고침' 표시)."""
+    return {r["cur_key"] for r in db.query("SELECT cur_key FROM school_edits WHERE cur_key IS NOT NULL")}
+
+
+def edit_log(db, limit=300):
+    """고친 기록 (최근 것 먼저)."""
+    import json
+    rows = db.query("SELECT * FROM school_edit_log ORDER BY id DESC LIMIT ?", (limit,))
+    for r in rows:
+        r["before"] = json.loads(r["before"]) if r["before"] else None
+        r["after"] = json.loads(r["after"]) if r["after"] else None
+    return rows

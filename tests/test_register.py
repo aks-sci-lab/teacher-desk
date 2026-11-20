@@ -119,6 +119,25 @@ class RegisterTests(ApiBase):
         self.set("2099-03-10", "absent")
         self.assertEqual(self.stats()["totals"]["absence_days"]["미정"], 1)
 
+    def test_stats_split_and_off_day_pass(self):
+        """0.6.18 '통계도 안맞아': 월별 통계 조퇴 = 조퇴증 + 증 없이 체크, 주말 증은 출석부 위에 따로, 텔레그램도 같은 셈."""
+        self.set("2099-03-04", "early", type="기타")                   # 증 없이 체크
+        self.set("2099-03-03", "late")
+        for day in ("2099-03-05", "2099-03-07"):                       # 목요일, 토요일
+            st, _ = self.req("POST", "/api/passes", {"kind": "early", "student_name": "가짜하나", "student_number": 1,
+                                                     "date": day, "time_out": "12:00"})
+            self.assertEqual(st, 200)
+        t = self.stats()["totals"]
+        self.assertEqual((t["early_count"], t["early_pass"], t["early_mark"], t["off_day_passes"]), (3, 2, 1, 1))
+        st, reg = self.req("GET", "/api/attendance/register?month=2099-03")
+        self.assertEqual([(o["date"], o["kind"]) for o in reg["off_day"]], [("2099-03-07", "early")])
+        from datetime import date
+        from desk.telegram import Bot
+        text = Bot(self.env.db, self.env.config, None).month_stats_text(today=date(2099, 3, 20))
+        self.assertIn("조퇴 3건(증 없이 체크 1건 포함)", text)
+        self.assertIn("지각 1건", text)
+        self.assertNotIn("가짜하나", text)
+
     def test_state_signal_changes(self):
         sig = lambda: self.req("GET", "/api/state")[1]["counts"]["passes"]
         before = sig()

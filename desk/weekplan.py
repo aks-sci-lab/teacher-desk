@@ -4,7 +4,7 @@
 
 from datetime import date, timedelta
 
-from . import queries, timetable
+from . import queries, schoolcal, timetable
 
 
 def _my_grades(db):
@@ -40,17 +40,27 @@ def week_plan(db, start, days):
         st = _day_status(evs, d, grades) if d.weekday() < 5 else None
         if d.weekday() < 5 and not (st and st["off"]):
             cols[key] = {"date": key, "check": st["text"] if st else None, "school": evs.get(key, []),
-                         "events": [], "todos": []}
+                         "school_ev": [], "events": [], "todos": []}
         else:
             hidden[key] = {"date": key, "reason": st["text"] if st else None, "school": evs.get(key, []),
-                           "events": [], "todos": []}
+                           "school_ev": [], "events": [], "todos": []}
 
     def put(key, kind, row):
         (cols.get(key) or hidden[key])[kind].append(row)
 
+    edited = schoolcal.edited_keys(db)
     for e in queries.events_between(db, mon, end):
         if e["item_source"] == "school" or e["category"] == "학사":
-            continue   # 학사일정은 위 school 줄로
+            # 학사일정은 school 줄(글)로도 싣고, 화면에서 눌러 고칠 수 있게 일정 번호와 함께 school_ev 로 (0.6.18)
+            row = {k: e[k] for k in ("id", "date", "end_date", "time", "kind", "category", "text")}
+            row["school"] = e["item_source"] == "school"
+            row["edited"] = row["school"] and schoolcal.edit_key(e) in edited
+            first = max(date.fromisoformat(e["date"]), mon)
+            last = min(date.fromisoformat(e["end_date"] or e["date"]), end)
+            while first <= last:
+                put(first.isoformat(), "school_ev", row)
+                first += timedelta(days=1)
+            continue
         last = date.fromisoformat(e["end_date"] or e["date"])
         if e["kind"] == "deadline":
             span = [min(last, end)] if last >= mon else []   # 마감은 끝나는 날에만 (D-day)

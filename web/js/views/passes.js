@@ -124,7 +124,7 @@ export function renderPassesSide(body, actions) {
     body.append(
         monthNav(sideDate, pick),
         el('p.small.muted', { style: 'padding: 6px 12px 0; margin: 0' },
-            `${Number(monthKey(sideDate).slice(5))}월 · 조퇴 ${early}건 · 외출 ${out}건 (취소 제외)`),
+            `${Number(monthKey(sideDate).slice(5))}월 발급한 증 · 조퇴 ${early}건 · 외출 ${out}건 (취소 제외)`),
         el('div.row', { style: 'padding: 10px 12px' },
             el('button.btn.primary', { onclick: () => openForm({ kind: 'early' }) }, '+ 조퇴증'),
             el('button.btn.primary', { onclick: () => openForm({ kind: 'out' }) }, '+ 외출증')));

@@ -1,6 +1,6 @@
 // 출결 메뉴에서 출석부, 조퇴·외출, 결석계, 월별 통계를 함께 제공
 import { api } from '../api.js';
-import { el, clear, guarded, modal, monthNav, monthKey, toast, todayIso } from '../ui.js';
+import { el, clear, guarded, modal, monthNav, monthKey, toast, todayIso, dayLabel } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on, emit } from '../shell.js';
 import { renderPassesSide, openForm, passesMonth, setPassesMonth } from './passes.js';
 import { renderAbsenceSide, openAbsenceForm, openAbsenceById } from './absence.js';
@@ -109,6 +109,14 @@ function downloadCsv(report) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// 조퇴 숫자가 조퇴·외출 목록의 '조퇴 n건'(발급한 증만)과 다를 수 있어 나눠서 보여 줌 (0.6.18)
+function earlyNote(t) {
+    const parts = [];
+    if (t.early_mark) parts.push(`조퇴 ${t.early_count}건 = 조퇴증 ${t.early_pass}건 + 증 없이 출석부에 체크한 조퇴 ${t.early_mark}건`);
+    if (t.off_day_passes) parts.push(`수업일이 아닌 날(주말·휴업일)에 쓴 증 ${t.off_day_passes}건 포함 — 출석부 표에는 칸이 없습니다`);
+    return parts.length ? el('p.small.muted', parts.join(' · ')) : null;
+}
+
 function renderReportRows(report) {
     const types = Object.keys(report.totals.absence_days);
     // 0 은 흐린 '–', 0 이 아니면 눌러서 날짜·사유를 보는 작은 단추 (숫자는 가운데 정렬)
@@ -186,6 +194,7 @@ function renderMonthlyReport(pane) {
         exportButton.disabled = false;
         clear(reportBox,
             el('p.sub', `${selectedMonth} · 결석은 주말·학사일정 공휴일·휴업일을 제외합니다. 취소된 증은 집계하지 않습니다. 숫자를 누르면 날짜·사유가 나옵니다.`),
+            earlyNote(latestReport.totals),
             latestReport.rows.length ? renderReportRows(latestReport) : el('p.empty', '집계할 출결 기록이 없습니다.'));
     });
     pane.append(
@@ -294,7 +303,11 @@ function renderRegister(pane) {
         if (!data.days.length) return clear(box, el('p.empty', '이 달에는 수업일이 없습니다.'));
         const today = todayIso();
         const keyOf = s => `${s.student_number ?? ''}|${s.student_name}`;
-        clear(box, el('div.att-wrap.reg-wrap', el('table.tbl.reg-table',
+        const offDay = data.off_day || [];
+        clear(box, offDay.length > 0 && el('p.small', { style: 'margin: 0 0 8px; color: var(--danger)' },
+            `수업일이 아닌 날(주말·휴업일)에 쓴 증 ${offDay.length}건은 이 표에 칸이 없어 따로 적습니다 (월별 통계에는 들어갑니다). 날짜를 잘못 썼다면 조퇴·외출에서 고치세요: `,
+            offDay.map(p => `${dayLabel(p.date, false)} ${p.student_number ?? ''}번 ${KIND_NAME[p.kind]}증${p.time ? ' ' + p.time : ''}`).join(', ')),
+        el('div.att-wrap.reg-wrap', el('table.tbl.reg-table',
             el('thead', el('tr',
                 el('th.col-no', '번호'), el('th.col-name', '이름'),
                 data.days.map(day => {
