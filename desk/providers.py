@@ -52,7 +52,7 @@ def _request(url, headers, payload, timeout=90):
                                  method="GET" if payload is None else "POST")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     host = urllib.parse.urlsplit(url).hostname or ""
-    with applog.timed("ai", f"외부 AI {'목록' if payload is None else '질문'}", host=host):   # 0.6.13 주소의 호스트·시간만
+    with applog.timed("ai", f"외부 AI {'목록' if payload is None else '질문'}", host=host):   # 0.6.15 주소의 호스트·시간만
         return _send(opener, req, timeout)
 
 

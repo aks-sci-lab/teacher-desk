@@ -339,7 +339,7 @@ def _note_ttl_refused(base, db):
 def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db=None, images=()):
     """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌.
     images: 함께 보낼 사진 바이트(jpg·png) — 사진을 읽는 모델(예: Gemma 4)만 (0.6.11 텔레그램 참고자료 사진).
-    0.6.13 사용 기록: 모델·글자 수·걸린 시간·부른 곳만 남김 (보낸 글·답은 남기지 않음)."""
+    0.6.15 사용 기록: 모델·글자 수·걸린 시간·부른 곳만 남김 (보낸 글·답은 남기지 않음)."""
     with applog.timed("ai", "LM Studio 요청", model=model, chars_in=len(prompt), images=len(images) or None,
                       timeout=timeout, **{"from": applog.caller({"ask", "_ask_lm", "<lambda>"})}) as extra:
         text = _ask_lm(base, model, prompt, timeout, system, max_tokens, db, images)
@@ -522,8 +522,12 @@ def cool_fields(text, body=""):
         key = names.get(label)
         if key and key not in found:
             found[key] = m.group(2).strip().strip("*").strip()
-    if len(found) < 2:
-        return None
+    if len(found) < 2:   # 0.6.14 칸 이름 없이 값만 다섯 줄로 답한 경우 (학교 PC Gemma 4, 2026-11-20): 순서대로 읽음
+        values = [re.sub(r"^\s*(?:[-*•·]|\d+[.)])\s*", "", l).strip().strip("*").strip() for l in (text or "").splitlines()]
+        values = [v for v in values if v]
+        if len(values) != len(COOL_KEYS) or not re.search(r"긴급|보통|급", values[-1]):
+            return None
+        found = {key: v for (key, _), v in zip(COOL_KEYS, values)}
     out = {}
     for key, _ in COOL_KEYS:
         v = found.get(key, "")

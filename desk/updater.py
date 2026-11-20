@@ -138,7 +138,8 @@ try {{
   $got = $false
   foreach ($url in @({urls})) {{ try {{ Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile (Join-Path $tmp 'desk.zip'); $got = $true; break }} catch {{ Log ('받지 못함: ' + $url) }} }}
   if (-not $got) {{ throw '새 버전을 내려받지 못했습니다' }}
-  Expand-Archive -LiteralPath (Join-Path $tmp 'desk.zip') -DestinationPath $tmp
+  Add-Type -AssemblyName System.IO.Compression.FileSystem   # Expand-Archive 는 PowerShell 7 모듈이 섞이면 실패 (0.6.14)
+  [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $tmp 'desk.zip'), $tmp)
   $new = Join-Path $tmp 'TeacherDesk'
   if (-not (Test-Path (Join-Path $new 'teacher-desk\\desk.py'))) {{ throw '받은 파일이 업무 데스크가 아닙니다' }}
   robocopy (Join-Path $new 'teacher-desk') $dir /E /XD data /XF config.json /NFL /NDL /NJH /NJS /NP | Out-Null

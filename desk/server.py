@@ -300,7 +300,7 @@ def make_handler(app):
             start, self.sent_status = time.monotonic(), None
             try:
                 self._dispatch(method)
-            finally:   # 0.6.13 사용 기록: 바꾸는 요청은 모두, 읽기(GET)는 실패·느린 것만 (화면이 자주 묻는 것은 빼고)
+            finally:   # 0.6.15 사용 기록: 바꾸는 요청은 모두, 읽기(GET)는 실패·느린 것만 (화면이 자주 묻는 것은 빼고)
                 path = urlparse(self.path).path
                 if path.startswith("/api/") and path not in QUIET_PATHS:
                     ms = (time.monotonic() - start) * 1000
@@ -407,7 +407,7 @@ def make_handler(app):
 
 # ---------------------------------------------------------------- API
 ROUTES = []
-# 0.6.13 사용 기록: 화면이 몇 초마다 묻는 요청과 기록 받기 자체는 남기지 않음
+# 0.6.15 사용 기록: 화면이 몇 초마다 묻는 요청과 기록 받기 자체는 남기지 않음
 QUIET_PATHS = {"/api/log/client", "/api/ui/bye", "/api/logs"}
 SLOW_GET_MS = 1500
 
@@ -583,7 +583,7 @@ def get_logs(app, q, body):
     return app.db.query("SELECT * FROM logs WHERE id > ? ORDER BY id DESC LIMIT 100", (after,))[::-1]
 
 
-# ---- 사용 기록 파일 (0.6.13) ----
+# ---- 사용 기록 파일 (0.6.15) ----
 CLIENT_KINDS = {"view", "tab", "click", "error", "api", "toast", "slow"}
 
 

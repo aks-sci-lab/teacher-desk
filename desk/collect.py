@@ -436,7 +436,7 @@ class Collector:
             if reason == "watch":
                 errors = [e for e in errors if e not in self.last_watch_errors]
                 self.last_watch_errors = set(stats["errors"])
-            from . import applog   # 0.6.13 사용 기록: 수집마다 걸린 시간·건수 (실시간 감시는 새 자료·오류가 있을 때만)
+            from . import applog   # 0.6.15 사용 기록: 수집마다 걸린 시간·건수 (실시간 감시는 새 자료·오류가 있을 때만)
             if reason != "watch" or stats["items"] or stats["errors"]:
                 applog.event("collect", f"수집({label})", "warn" if stats["errors"] else "info",
                              ms=(time.monotonic() - started) * 1000, items=stats["items"], events=stats["events"],

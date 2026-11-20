@@ -67,7 +67,7 @@ DEFAULTS = {
     "telegram_mask_names": False,   # 텔레그램 글의 학생 이름을 김○○ 로 가림 (0.5.93 선생님 결정: 본인 채팅이라 기본 끔)
     "telegram_cool_send": True,   # 텔레그램에서 쿨메신저 쪽지·답장 보내기 (0.6.5, [보내기]를 누른 것만, desk/coolsend.py)
     "telegram_docwrite": True,   # 텔레그램에서 문서 작성(/문서): 관련 파일 이름·만든 문서를 선생님 채팅으로 (0.6.3, 달라고 할 때만)
-    # 사용 기록 파일 (0.6.13): 동작만(기능 이름·걸린 시간·오류) data/logs 에 남김, 내용·학생 이름은 남기지 않음 (desk/applog.py)
+    # 사용 기록 파일 (0.6.15): 동작만(기능 이름·걸린 시간·오류) data/logs 에 남김, 내용·학생 이름은 남기지 않음 (desk/applog.py)
     "usage_log": True,
     # 선생님 본인 구글 캘린더와 일정 공유 (0.5.91, 기본 끔, desk/gcal.py)
     "gcal_import": False,          # 구글 → 업무 데스크 (비공개 iCal 주소를 읽어 달력에 '구글' 표시)
