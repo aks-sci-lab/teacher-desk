@@ -25,7 +25,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import VERSION, absence, ai, applog, calllog, assist, coolsend, docs, folderdoc, formfill, holidays, passlink, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, applog, calllog, assist, coolsend, docs, folderdoc, formfill, holidays, passlink, preview, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -39,6 +39,7 @@ HELP = (
     "답장 2 내용 — 2번 쿨메신저 쪽지에 답장 · 쪽지 김철수 내용 — 새 쪽지 (확인 뒤 [보내기])\n"
     "쿨메신저 쪽지 원문·요약 아래 [↩ 답장 보내기] 를 눌러도 답장 (내용을 보내면 확인 뒤 [보내기])\n"
     "첨부 2 — 2번 쿨메신저 쪽지의 첨부 파일을 이 PC 의 쿨메신저로 받아 보냄\n"
+    "PDF 2 — 2번 자료(쪽지면 첨부)를 이 PC 의 한글·엑셀로 PDF 로 바꿔 보냄 (자료 아래 [📄 PDF] 단추도 됨)\n"
     "\n📅 달력\n"
     "오늘 — 오늘 일정·오늘 마감·외출 인원 · 마감 — 7일 안의 마감\n"
     "일정 추가 (일정 등록·새 일정도 됨) — 달력에서 날짜를 누르고 내용을 보내면 등록 (등록 직후 취소 가능)\n"
@@ -98,6 +99,7 @@ ARG_COMMANDS = {
     "원문": "text", "/text": "text",
     "파일": "file", "/file": "file",
     "첨부": "attach", "/attach": "attach", "첨부파일": "attach",
+    "pdf": "pdf", "/pdf": "pdf", "피디에프": "pdf",
     "조퇴": "early", "/early": "early", "조퇴증": "early",
     "외출": "out", "/out": "out", "외출증": "out",
     "결석계": "absence", "결석": "absence", "/absence": "absence",
@@ -136,6 +138,7 @@ BOT_MENU = [
     {"command": "unread", "description": "안 읽은 자료"},
     {"command": "reply", "description": "쪽지 답장: /reply 번호 내용"},
     {"command": "attach", "description": "쪽지 첨부 받기: /attach 번호"},
+    {"command": "pdf", "description": "📄 자료·쪽지 첨부를 PDF 로 보기: /pdf 번호"},
     {"command": "refresh", "description": "지금 수집"},
     {"command": "index", "description": "문서 작성용 폴더 색인 만들기"},
     {"command": "status", "description": "준비 상태"},
@@ -183,7 +186,7 @@ SUBMENUS = {
                        [("🧾 사용 기록 받기", "log")], [("❓ 도움말", "help"), ("✖ 취소", "cancel")]]),
 }
 GROUP_HINT = {
-    "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2' · 쿨메신저 쪽지는 '답장 2 내용'·'첨부 2'",
+    "inbox": "낱말만 보내면 자료 검색 · '원문 2'·'파일 2'·'PDF 2' · 쿨메신저 쪽지는 '답장 2 내용'·'첨부 2'",
     "calendar": "",
     "timetable": "학급은 '2-3 시간표'·'2-3 지금', 같이 비는 시간은 '빈 시간 이름'",
     "attendance": "글로도: 조퇴 7 13:30 · 외출 7 13:30 14:30",
@@ -385,6 +388,7 @@ class Bot:
         self.direct_cache = {}
         self.cool_ui = None     # 시험: 쿨메신저 창 조작을 가짜로 (None 이면 실제 윈도우)
         self.cool_attach_ui = None
+        self.to_pdf = preview.pdf_bytes   # 시험: PDF 바꾸기를 가짜로 (실제는 이 PC 의 한글·엑셀)
         self.item_ai = None     # desk.py 가 연결: 화면과 같은 항목별 AI 요약 대기열 (ai.ItemJob, 0.6.8 쪽지 요약)
         self.cool_summary_wait = COOL_SUMMARY_WAIT
 
@@ -1420,6 +1424,8 @@ class Bot:
             fp = self.db.one("SELECT file_path FROM items WHERE id = ?", (iid,))
             if fp and item_file(self.config, fp["file_path"]):
                 row.append({"text": f"{n} 원본 파일 받기", "callback_data": f"f:{iid}"})
+            if self.pdf_ready(iid):
+                row.append({"text": f"📄 {n} PDF", "callback_data": f"pdf:{iid}"})
             if self.has_candidates(iid):
                 row.append({"text": f"📅 {n} 일정 등록", "callback_data": f"rg:{iid}"})
             rows.append(row)
@@ -1459,9 +1465,10 @@ class Bot:
             return self.reply(cid, self.lessons_text(" ".join(args)))
         if cmd == "attach" and not args:
             return self.send_cool_list(cid)   # '첨부' 만: 최근 쪽지 목록에서 번호를 고르게 (0.6.10)
-        if cmd in ("text", "file", "attach"):
+        if cmd in ("text", "file", "attach", "pdf"):
             if not args or not args[0].isdigit():
-                return self.reply(cid, f"번호를 함께 보내세요. 예) {'원문' if cmd == 'text' else '파일' if cmd == 'file' else '첨부'} 2")
+                word = {"text": "원문", "file": "파일", "attach": "첨부", "pdf": "PDF"}[cmd]
+                return self.reply(cid, f"번호를 함께 보내세요. 예) {word} 2")
             item_id = self.ref_item(int(args[0]))
             if not item_id:
                 return self.reply(cid, f"{args[0]}번 자료가 없습니다. 브리핑이나 검색을 먼저 보내세요.")
@@ -1469,6 +1476,8 @@ class Bot:
                 return self.send_original(cid, item_id)
             if cmd == "attach":
                 return self.begin_cool_attach(cid, item_id)
+            if cmd == "pdf":
+                return self.send_item_pdf(cid, item_id)
             return self.send_item_file(cid, item_id)
         return self.start_pass(cid, cmd, args)
 
@@ -1873,6 +1882,8 @@ class Bot:
             return self.ask_cool_reply(cid, int(rest))
         if kind == "f" and rest.isdigit():
             return self.send_item_file(cid, int(rest))
+        if kind == "pdf" and rest.isdigit():
+            return self.send_item_pdf(cid, int(rest))
         if kind == "dk":
             pid, _, _ = rest.partition(":")
             pending = self.db.get_meta("telegram_pending") or {}
@@ -2170,11 +2181,14 @@ class Bot:
         head = f"📄 [{SOURCE_NAMES.get(it['source'], it['source'])}] {it['title']}\n{it['received_at'][:16]}\n\n"
         body = it["body"] or ""
         buttons = self.cool_reply_buttons(it)
+        if self.pdf_ready(item_id):   # 글만으로 보기 힘든 hwp·pdf 는 PDF 로도 (0.6.17)
+            buttons = (buttons or []) + [[{"text": "📄 PDF 로 보기", "callback_data": f"pdf:{item_id}"}]]
         if len(body) > TEXT_AS_FILE:   # 아주 길면 글 파일로
             name = re.sub(r'[\\/:*?"<>|]', "_", it["title"])[:60] + ".txt"
             self.send_file(cid, name, body.encode("utf-8"), caption=head.strip())
             if buttons:   # 파일에는 단추를 달 수 없어 짧은 글로
-                self.send("이 쪽지에 답장하려면 아래 단추를 누르세요.", cid, buttons)
+                self.send("아래 단추로 답장하거나 PDF 로 볼 수 있습니다." if self.pdf_ready(item_id)
+                          else "이 쪽지에 답장하려면 아래 단추를 누르세요.", cid, buttons)
             return head + f"(원문 {len(body):,}자 — 글 파일로 보냄)"
         parts = chunks(head + body)
         for i, part in enumerate(parts):
@@ -2193,6 +2207,54 @@ class Bot:
             return self.reply(cid, "파일이 너무 커서 텔레그램으로 보낼 수 없습니다 (50MB).")
         self.send_file(cid, p.name, p.read_bytes(), caption=it["title"][:200])
         return f"📎 {p.name}"
+
+    def pdf_ready(self, item_id):
+        """[📄 PDF] 단추를 달 자료인지: PDF·hwp·hwpx·xlsx 원본 파일이 있는 자료 (쿨메신저 쪽지는 cool_buttons 가 따로)."""
+        fp = self.db.one("SELECT file_path FROM items WHERE id = ?", (item_id,))
+        p = fp and item_file(self.config, fp["file_path"])
+        return bool(p) and p.suffix.lower() in (".pdf",) + preview.EXTENSIONS
+
+    def send_item_pdf(self, cid, item_id):
+        """자료를 PDF 로 보냄 (선생님 요청 2026-11-20 "첨부파일에서 추출한 글자만 나와서 보기 힘들어 … pdf로 볼 수 있게").
+        원본 파일 받기와 같이 누를 때만 보냄. PDF 는 그대로, hwp·hwpx·xlsx 는 이 PC 의 한글·엑셀로 바꿈(preview, 원본은 그대로).
+        쿨메신저 쪽지는 첨부를 쿨메신저로 받아 바꿈 ('첨부 n' 과 같은 길)."""
+        it = self.db.one("SELECT id, title, source, file_path FROM items WHERE id = ?", (item_id,))
+        if not it:
+            return self.reply(cid, "없는 자료입니다.")
+        if it["source"] == "cool" and not item_file(self.config, it["file_path"]):
+            return self.begin_cool_attach(cid, item_id, pdf=True)
+        p = item_file(self.config, it["file_path"])
+        if not p:
+            return self.reply(cid, "원본 파일이 없어 PDF 로 볼 수 없습니다. '원문' 으로 글을 받으세요.")
+        ext = p.suffix.lower()
+        if ext not in (".pdf",) + preview.EXTENSIONS:
+            return self.reply(cid, f"{ext or '이'} 파일은 PDF 로 바꿀 수 없습니다 (hwp·hwpx·xlsx·pdf 만). "
+                                   f"'파일 {self.ref_number(item_id)}' 로 원본을 받으세요.")
+        if p.stat().st_size > FILE_LIMIT:
+            return self.reply(cid, "파일이 너무 커서 텔레그램으로 보낼 수 없습니다 (50MB).")
+        if ext == ".pdf":
+            self.send_file(cid, p.name, p.read_bytes(), caption=it["title"][:200])
+            return f"📄 {p.name}"
+        self.reply(cid, "⏳ 이 PC 의 한글·엑셀로 PDF 로 바꾸는 중… (1분쯤 걸릴 수 있습니다)")
+        if self.sync:
+            return self._send_pdf(cid, p, it["title"])
+        threading.Thread(target=self._send_pdf, args=(cid, p, it["title"]), name="telegram-pdf", daemon=True).start()
+        return "바꾸는 중"
+
+    def _send_pdf(self, cid, p, title):
+        try:
+            data = self.to_pdf(p)
+        except preview.PreviewError as e:
+            return self.reply(cid, f"⚠ PDF 로 바꾸지 못했습니다: {e}\n'파일 n' 으로 원본을 받을 수 있습니다.")
+        except Exception as e:
+            applog.exception("telegram", "PDF 바꾸기", e)
+            return self.reply(cid, "⚠ PDF 로 바꾸는 중 오류가 났습니다. '파일 n' 으로 원본을 받을 수 있습니다.")
+        try:
+            self.send_file(cid, Path(p.name).stem + ".pdf", data, caption=(title or "")[:200])
+        except Exception as e:
+            self.note_error(e, "PDF 보내기")
+            return self.reply(cid, "⚠ PDF 를 텔레그램으로 보내지 못했습니다.")
+        return f"📄 {Path(p.name).stem}.pdf"
 
     def reply(self, cid, text):
         self.send(text, cid)
@@ -2739,23 +2801,25 @@ class Bot:
         self.send(text, cid, keyboard=True)
         return text
 
-    def begin_cool_attach(self, cid, item_id):
+    def begin_cool_attach(self, cid, item_id, pdf=False):
         """쿨메신저 쪽지의 첨부를 이 PC 의 쿨메신저가 받게 하고(메시지관리함 → 모든파일 저장) 받은 파일을 보냄.
-        선생님이 '첨부 n'·'파일 n' 으로 달라고 할 때만 (원본 파일은 달라고 할 때만, 0.6.5)."""
+        선생님이 '첨부 n'·'파일 n' 으로 달라고 할 때만 (원본 파일은 달라고 할 때만, 0.6.5).
+        pdf: [📄 첨부 PDF] 단추·'PDF n' — 받은 hwp·hwpx·xlsx 는 이 PC 의 한글·엑셀로 PDF 로 바꿔 보냄 (0.6.17)."""
         if not self.config["telegram_cool_send"]:
             return self.reply(cid, "쿨메신저 창 조작이 꺼져 있습니다. 업무 데스크 ⚙ 설정 → 텔레그램에서 켤 수 있습니다.")
         it = self.db.one("SELECT id, source, title, body, received_at FROM items WHERE id = ?", (item_id,))
         if not it or it["source"] != "cool":
             return self.reply(cid, "쿨메신저로 받은 쪽지만 첨부를 받을 수 있습니다.")
         m = P_COOL_SENDER.search(it["body"] or "")
-        self.reply(cid, "⏳ 쿨메신저에서 첨부 파일을 받는 중… (PC 의 쿨메신저 창이 잠깐 앞으로 나옵니다)")
-        args = (cid, it, m.group(1) if m else "")
+        self.reply(cid, "⏳ 쿨메신저에서 첨부 파일을 받는 중" + (" (받은 뒤 PDF 로 바꿉니다)" if pdf else "")
+                   + "… (PC 의 쿨메신저 창이 잠깐 앞으로 나옵니다)")
+        args = (cid, it, m.group(1) if m else "", pdf)
         if self.sync:
             return self._cool_attach(*args)
         threading.Thread(target=self._cool_attach, args=args, name="telegram-coolattach", daemon=True).start()
         return "받는 중"
 
-    def _cool_attach(self, cid, it, sender):
+    def _cool_attach(self, cid, it, sender, pdf=False):
         try:
             files = coolsend.fetch_attachments(it["title"], it["received_at"], sender, ui=self.cool_attach_ui,
                                                log=self.db.log)
@@ -2765,17 +2829,26 @@ class Bot:
             applog.exception("telegram", "쿨메신저 첨부 받기", e)
             self.db.log(f"쿨메신저 첨부 받기 오류: {type(e).__name__}", "warn")
             return self.reply(cid, "⚠ 첨부를 받는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요.")
-        sent, big = [], []
+        sent, big, notes = [], [], []
         for p in files:
             try:
                 if p.stat().st_size > FILE_LIMIT:
                     big.append(p.name)
                     continue
+                if pdf and p.suffix.lower() in preview.EXTENSIONS:
+                    try:
+                        self.send_file(cid, Path(p.name).stem + ".pdf", self.to_pdf(p), caption=it["title"][:200])
+                        sent.append(p.name)
+                        continue
+                    except preview.PreviewError as e:   # 바꾸지 못하면 원본이라도
+                        notes.append(f"{p.suffix.lower()} 파일은 PDF 로 바꾸지 못해 원본으로 보냈습니다 ({e})")
                 self.send_file(cid, p.name, p.read_bytes(), caption=it["title"][:200])
                 sent.append(p.name)
             except OSError:
                 big.append(p.name)
         text = f"📎 첨부 {len(sent)}개를 보냈습니다." + (f" {len(big)}개는 너무 크거나 읽지 못해 PC 의 쿨메신저 저장 폴더에만 있습니다." if big else "")
+        if notes:
+            text += "\n" + "\n".join(dict.fromkeys(notes))
         return self.reply(cid, text)
 
     def cool_view(self, dialog):
