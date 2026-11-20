@@ -259,6 +259,7 @@ POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
 COOL_SUMMARY_LIMIT = 3    # 0.6.8 한 번 수집에서 AI 로 요약해 보내는 쿨메신저 쪽지 최대 (작은 PC 의 LM Studio 가 오래 바쁘지 않게)
+COOL_SHORT_MEMO = 100     # 0.6.16 이보다 짧은 쪽지는 요약해도 원문과 같아(선생님 "요약 조건에 내용 중복 검토") 원문 전달을 켰으면 요약 없이 원문 한 글로
 COOL_SUMMARY_WAIT = 180   # 요약을 기다리는 최대 시간(초). 넘으면 [원문] 단추만 보내고, 요약은 뒤에서 마저 만들어 수신함에 남음
 COOL_SUMMARY_MARKS = (("sender", "👤 보낸 사람"), ("task", "📝 업무 내용"), ("due", "⏰ 마감 기한"),
                       ("files", "📎 첨부파일"), ("urgent", "긴급 여부"))
@@ -2705,12 +2706,10 @@ class Bot:
                                 "없는 자료입니다 (지워졌을 수 있음).")
         if it["source"] != "cool":
             return None, None, f"{label or '이 자료'}은 쿨메신저로 받은 쪽지가 아니라 답장할 수 없습니다."
-        m = P_COOL_SENDER.search(it["body"] or "")
-        if not m:
+        sender = self.memo_text(it["body"])[1]   # '민은영(민은영)' → '민은영'
+        if not sender:
             return None, None, f"{label + ' ' if label else '이 '}쪽지의 보낸 사람을 알 수 없습니다. '쪽지 이름 내용' 으로 보내 주세요."
-        sender = m.group(1).strip()
-        same = re.fullmatch(r"(.+?)\s*\(\s*\1\s*\)", sender)   # '민은영(민은영)' → '민은영'
-        return it, (same.group(1) if same else sender), None
+        return it, sender, None
 
     def begin_cool_reply_item(self, cid, item_id, body, label=None):
         it, sender, error = self.cool_reply_target(item_id, label)
@@ -3033,13 +3032,18 @@ class Bot:
     def _cool_summaries_run(self, ids):
         more = len(ids) - COOL_SUMMARY_LIMIT
         ids = ids[:COOL_SUMMARY_LIMIT]
+        sent = 0
+        if self.config["telegram_cool_text"]:   # 짧은 쪽지는 AI 를 부르지 않고 원문 한 글로 (원문 전달을 켠 경우만: 원문 규칙)
+            for iid in [i for i in ids if self.short_memo(i)]:
+                ids.remove(iid)
+                sent += self._send_cool_short(iid)
         for iid in reversed(ids):   # 대기열 맨 앞에 하나씩 세우므로 거꾸로 넣어야 최신 쪽지가 먼저
             try:
                 self.item_ai.start(iid)
             except ai.AIError:
                 pass
         deadline = time.monotonic() + self.cool_summary_wait
-        waiting, sent = list(ids), 0
+        waiting = list(ids)
         while waiting:
             for iid in list(waiting):
                 st = self.item_ai.status(iid)
@@ -3055,6 +3059,43 @@ class Bot:
             self.send(f"🤖 쪽지 {more}건은 한 번에 {COOL_SUMMARY_LIMIT}건까지라 요약해 보내지 않았습니다. 업무 데스크 수신함에서 보세요.")
         return sent
 
+    @staticmethod
+    def memo_text(body):
+        """쪽지 글에서 끝의 '(보낸 사람: …)' 줄을 뺀 것과 보낸 사람 ('이름(이름)' 은 이름만)."""
+        body = (body or "").strip()
+        m = P_COOL_SENDER.search(body)
+        if not m:
+            return body, ""
+        name = m.group(1).strip()
+        same = re.fullmatch(r"(.+?)\s*\(\s*\1\s*\)", name)
+        return body[:m.start()].strip(), (same.group(1) if same else name)
+
+    def short_memo(self, item_id):
+        it = self.db.one("SELECT body FROM items WHERE id = ?", (item_id,))
+        return bool(it) and len(self.memo_text(it["body"])[0]) <= COOL_SHORT_MEMO
+
+    def cool_buttons(self, item_id, body, original=True):
+        """쪽지 글 아래 단추: [원문 보기] [↩ 답장 보내기] / [📅 일정 등록]."""
+        row = [{"text": "원문 보기", "callback_data": f"o:{item_id}"}] if original else []
+        reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": body})
+        if reply:
+            row += reply[0]   # (0.6.9)
+        buttons = [row] if row else []
+        if self.has_candidates(item_id):   # 알림 목록에서 빠지므로 [📅 일정 등록] 도 여기에 (0.6.12)
+            buttons.append([{"text": "📅 일정 등록", "callback_data": f"rg:{item_id}"}])
+        return buttons or None
+
+    def _send_cool_short(self, item_id):
+        """짧은 쪽지: 요약 대신 원문 한 글 (보낸 사람은 머리줄에 한 번만)."""
+        it = self.db.one("SELECT id, body FROM items WHERE id = ?", (item_id,))
+        if not it:
+            return 0
+        text, sender = self.memo_text(it["body"])
+        n = self.ref_number(item_id)
+        head = f"📨 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''}" + (f" · 👤 {sender}" if sender else "")
+        self.send(f"{head}\n{text}", buttons=self.cool_buttons(item_id, it["body"], original=False))
+        return 1
+
     def _send_cool_summary(self, item_id, error=None, late=False):
         it = self.db.one("SELECT id, title, body, ai_summary, ai_summary_hash FROM items WHERE id = ?", (item_id,))
         if not it:
@@ -3065,15 +3106,7 @@ class Bot:
         # 요약이 가면 요약만 (원문은 [원문 보기] 단추로, 선생님 2026-11-20 "여전히 요약과 원문이 같이 와", 0.6.16).
         # 원문 전달(telegram_cool_text)을 켰어도 요약이 없을 때만 원문을 붙임
         with_text = bool(self.config["telegram_cool_text"] and body and failed)
-        buttons = [[] if with_text else [{"text": "원문 보기", "callback_data": f"o:{item_id}"}]]
-        reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": it["body"]})
-        if reply:
-            buttons[0] += reply[0]   # [원문 보기] [↩ 답장 보내기] 한 줄 (0.6.9)
-        if not buttons[0]:
-            buttons = []
-        if self.has_candidates(item_id):   # 알림 목록에서 빠지므로 [📅 일정 등록] 도 여기에 (0.6.12)
-            buttons.append([{"text": "📅 일정 등록", "callback_data": f"rg:{item_id}"}])
-        buttons = buttons or None
+        buttons = self.cool_buttons(item_id, it["body"], original=not with_text)
         original = f"\n\n📨 원문\n{body}" if with_text else ""   # 원문은 가리지 않고 그대로 (원문 규칙), 긴 글은 send 가 나눔
         n = self.ref_number(item_id)
         head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
@@ -3086,7 +3119,8 @@ class Bot:
         if not fields:   # 모델이 다섯 칸 형식을 따르지 않음: 받은 요약을 그대로
             self.send(f"{head}\n{self.mask(it['ai_summary']).strip()[:900]}{original}", buttons=buttons)
             return 1
-        lines = [head]
+        # 다섯 칸이 읽히면 머리줄에 제목(=쪽지 첫 줄)을 다시 쓰지 않음: 업무 내용과 겹침 (0.6.16)
+        lines = [f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''}"]
         for key, label in COOL_SUMMARY_MARKS:
             value = fields[key] or ("모름" if key == "sender" else "없음")
             if key == "urgent":

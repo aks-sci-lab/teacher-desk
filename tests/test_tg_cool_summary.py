@@ -123,7 +123,7 @@ class TelegramCoolSummaryTests(unittest.TestCase):
     def test_summary_only_even_with_original_forwarding(self):
         """0.6.16 (선생님 2026-11-20 '여전히 요약과 원문이 같이 와'): 요약이 가면 요약만, 원문은 [원문 보기] 로."""
         self.env.config.values["telegram_cool_text"] = True
-        body = "1교무실에 핫도그가 배달되어 왔습니다~~~\n\n45분까지 오세요\n\n(보낸 사람: 민은영(민은영))"
+        body = "1교무실에 핫도그가 배달되어 왔습니다~~~\n\n45분까지 오세요" + " 자세한 안내입니다." * 10 + "\n\n(보낸 사람: 민은영(민은영))"
         a = self.item(body, title="1교무실에 핫도그가 배달되어 왔습니다~~~")
         self.notify(a)
         texts = self.texts()
@@ -138,7 +138,7 @@ class TelegramCoolSummaryTests(unittest.TestCase):
 
     def test_original_attached_when_summary_fails(self):
         self.env.config.values["telegram_cool_text"] = True
-        body = "회의 자료를 확인해 주세요.\n\n(보낸 사람: 홍길동)"
+        body = "회의 자료를 확인해 주세요." + " 안건은 붙임과 같습니다." * 8 + "\n\n(보낸 사람: 홍길동)"
         a = self.item(body, title="회의 자료를 확인해 주세요.")
         self.lm.close()
         self.notify(a)
@@ -146,6 +146,24 @@ class TelegramCoolSummaryTests(unittest.TestCase):
         self.assertEqual(len(texts), 1)
         self.assertIn("AI 요약 없음", texts[0])
         self.assertIn("📨 원문\n" + body, texts[0])
+
+    def test_short_memo_goes_as_one_original_without_ai(self):
+        """0.6.16 (선생님 '요약 조건에 내용 중복 검토'): 짧은 쪽지는 요약해도 원문과 같으니 원문 한 글 (원문 전달을 켠 경우만)."""
+        self.env.config.values["telegram_cool_text"] = True
+        a = self.item("핫도그가 1교무실에 왔습니다~\n\n(보낸 사람: 민은영(민은영))", title="핫도그가 1교무실에 왔습니다~")
+        self.notify(a)
+        texts = self.texts()
+        self.assertEqual(texts, ["📨 쿨메신저 쪽지 1번 · 👤 민은영\n핫도그가 1교무실에 왔습니다~"])
+        self.assertEqual(self.lm.requests, [])                                    # AI 를 부르지 않음
+        self.assertIn(f"rp:{a}", str(self.fake.sent[0].get("reply_markup")))
+
+    def test_short_memo_still_summarized_when_original_forwarding_off(self):
+        a = self.item("핫도그가 1교무실에 왔습니다~\n\n(보낸 사람: 민은영)", title="핫도그")
+        self.notify(a)
+        texts = self.texts()
+        self.assertEqual(len(texts), 1)
+        self.assertTrue(texts[0].startswith("🤖 쿨메신저 쪽지 1번\n👤"))          # 머리줄에 제목을 되풀이하지 않음
+        self.assertNotIn("핫도그가 1교무실", texts[0])                              # 원문은 보내지 않음 (원문 규칙)
 
     def test_reply_target_reads_name_with_parentheses(self):
         a = self.item("확인 부탁드립니다.\n\n(보낸 사람: 민은영(민은영))", title="확인")
