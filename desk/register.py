@@ -202,8 +202,13 @@ def month_register(db, month_start, month_end, grade=""):
                 "src": "absence", "kind": "absent", "id": row["id"], "type": row["absence_type"],
                 "serial": row["serial"], "draft": not is_locked(row),
                 "status": "printed" if row.get("printed_at") else (row.get("status") or "done")})
+    off_day = []   # 수업일이 아닌 날(주말·휴업일)에 쓴 증: 표에 칸이 없어 따로 보여 줌 (통계에는 들어감, 0.6.18)
     for row in db.query("SELECT * FROM passes WHERE date >= ? AND date <= ? AND status != 'cancelled'",
                         (month_start.isoformat(), month_end.isoformat())):
+        if row["date"] not in days:
+            off_day.append({"date": row["date"], "student_number": row["student_number"], "student_name": row["student_name"],
+                            "kind": row["kind"], "serial": row["serial"], "time": row["time_out"]})
+            continue
         add(row["student_number"], row["student_name"], row["date"], {
             "src": "pass", "kind": row["kind"], "id": row["id"], "time": row["time_out"], "serial": row["serial"]})
     for row in db.query("SELECT * FROM attendance_marks WHERE date >= ? AND date <= ?",
@@ -216,4 +221,111 @@ def month_register(db, month_start, month_end, grade=""):
         add(row["student_number"], row["student_name"], row["date"], entry)
     rows = sorted(students.values(), key=lambda r: (r["student_number"] is None, r["student_number"] or 0,
                                                     r["student_name"]))
-    return {"days": days, "students": rows, "cells": cells, "types": list(TYPES), "kinds": MARK_KINDS}
+    return {"days": days, "students": rows, "cells": cells, "types": list(TYPES), "kinds": MARK_KINDS, "off_day": off_day}
+
+
+def month_report(db, month_start, month_end, grade=""):
+    """월별 출결 통계 (화면 '월별 통계'·CSV·텔레그램 '출결 통계'가 같이 씀 — 셈이 어긋나지 않게, 0.6.18).
+    조퇴 = 발급한 조퇴증 + 증 없이 출석부에 체크한 조퇴. 수업일이 아닌 날(주말·휴업일)의 증도 세되 따로 표시."""
+    month = month_start.strftime("%Y-%m")
+    school_days = set(absence.school_dates(db, month_start, month_end, grade))
+    split = {"early_pass": 0, "early_mark": 0, "off_day_passes": 0}
+
+    def new_student(number, name):
+        return {
+            "student_number": number, "student_name": name,
+            "absence_forms": 0, "absence_days": dict.fromkeys(TYPES, 0),   # '미정' = 종류를 아직 안 정한 초안
+            "early_count": 0, "out_count": 0, "late_count": 0, "result_count": 0,
+            "details": {key: [] for key in ("absence_forms", "absence_days", "early_count", "out_count",
+                                            "late_count", "result_count")},
+        }
+
+    # 학생 줄은 (번호, 이름) 한 쌍으로 구분. 번호만으로 묶으면 명단이 바뀐 뒤(전학·번호 변경)
+    # 예전 기록이 지금 그 번호인 다른 학생 줄에 붙고, 같은 번호가 둘이면 한 명이 사라졌음.
+    rows = {}
+    for student in db.students():
+        rows.setdefault((student["number"], student["name"]), new_student(student["number"], student["name"]))
+
+    def row_for(number, name):
+        if (number, name) in rows:
+            return rows[(number, name)]
+        if number is None:   # 번호 없이 쓴 기록은 이름이 하나뿐일 때만 그 학생 줄로
+            named = [row for row in rows.values() if row["student_name"] == name]
+            if len(named) == 1:
+                return named[0]
+        return rows.setdefault((number, name), new_student(number, name))
+
+    absences = db.query(
+        "SELECT student_number, student_name, start_date, end_date, absence_type, reason FROM absences "
+        "WHERE start_date <= ? AND end_date >= ?",
+        (month_end.isoformat(), month_start.isoformat()))
+    for entry in absences:
+        student = row_for(entry["student_number"], entry["student_name"])
+        student["absence_forms"] += 1
+        dates = absence.school_dates(
+            db, max(date.fromisoformat(entry["start_date"]), month_start),
+            min(date.fromisoformat(entry["end_date"]), month_end), grade)
+        student["absence_days"][entry["absence_type"]] += len(dates)
+        student["details"]["absence_forms"].append({
+            "date": f"{entry['start_date']}~{entry['end_date']}",
+            "kind": entry["absence_type"], "reason": entry["reason"],
+        })
+        student["details"]["absence_days"].extend(
+            {"date": day, "kind": entry["absence_type"], "reason": entry["reason"]} for day in dates)
+
+    passes = db.query(
+        "SELECT student_number, student_name, kind, date, time_out, reason FROM passes "
+        "WHERE date >= ? AND date <= ? AND status != 'cancelled'",
+        (month_start.isoformat(), month_end.isoformat()))
+    for issued in passes:
+        student = row_for(issued["student_number"], issued["student_name"])
+        metric = "early_count" if issued["kind"] == "early" else "out_count"
+        student[metric] += 1
+        off_day = issued["date"] not in school_days   # 주말·휴업일에 쓴 증: 출석부 칸에는 없으므로 따로 알림
+        split["early_pass"] += issued["kind"] == "early"
+        split["off_day_passes"] += off_day
+        student["details"][metric].append({
+            "date": issued["date"], "time": issued["time_out"],
+            "kind": ("조퇴" if issued["kind"] == "early" else "외출") + ("증 (수업일 아님)" if off_day else "증"),
+            "reason": issued["reason"] or "",
+        })
+
+    # 출석부의 지각·결과, 증 없이 체크한 조퇴 (증이 있는 날의 조퇴 체크는 증으로 이미 셈)
+    marks = db.query("SELECT * FROM attendance_marks WHERE date >= ? AND date <= ?",
+                         (month_start.isoformat(), month_end.isoformat()))
+    for mark in marks:
+        if mark["kind"] == "early" and early_pass_on(
+                db, mark["student_number"], mark["student_name"], date.fromisoformat(mark["date"])):
+            continue
+        student = row_for(mark["student_number"], mark["student_name"])
+        metric = {"late": "late_count", "early": "early_count", "result": "result_count"}[mark["kind"]]
+        student[metric] += 1
+        split["early_mark"] += mark["kind"] == "early"
+        label = MARK_KINDS[mark["kind"]]
+        student["details"][metric].append({
+            "date": mark["date"], "time": f"{mark['periods']}교시" if mark["periods"] else None,
+            "kind": f"{mark['mark_type']} {label}" + (" (증 없음)" if mark["kind"] == "early" else ""),
+            "reason": mark["note"] or "",
+        })
+
+    result_rows = sorted(rows.values(), key=lambda row: (
+        row["student_number"] is None,
+        row["student_number"] if row["student_number"] is not None else 0,
+        row["student_name"],
+    ))
+    totals = {
+        "absence_forms": sum(row["absence_forms"] for row in result_rows),
+        "absence_days": {
+            kind: sum(row["absence_days"][kind] for row in result_rows)
+            for kind in TYPES
+        },
+        "early_count": sum(row["early_count"] for row in result_rows),
+        "out_count": sum(row["out_count"] for row in result_rows),
+        "late_count": sum(row["late_count"] for row in result_rows),
+        "result_count": sum(row["result_count"] for row in result_rows),
+    }
+    for row in result_rows:
+        row["total_absence_days"] = sum(row["absence_days"].values())
+    totals["total_absence_days"] = sum(row["total_absence_days"] for row in result_rows)
+    totals.update(split)
+    return {"month": month, "rows": result_rows, "totals": totals}
