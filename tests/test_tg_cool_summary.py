@@ -92,6 +92,16 @@ class TelegramCoolSummaryTests(unittest.TestCase):
         row = self.env.db.one("SELECT ai_summary FROM items WHERE id = ?", (a,))
         self.assertIn("업무 내용", row["ai_summary"])                               # 수신함에도 같은 요약이 남음
 
+    def test_real_attachments_fill_files_and_add_pdf_button(self):
+        """0.6.17 AI 가 '첨부파일: 없음' 이라 해도 쿨메신저 첨부 목록 줄로 채우고 [📄 첨부 PDF] 단추를 붙임."""
+        self.env.config.values.update(telegram_cool_send=True)
+        a = self.item("체험학습 보고서를 11월 20일 16시까지 내 주세요. 급합니다. 양식은 첨부와 같습니다 아래를 봐 주세요.\n\n"
+                      "(첨부 파일: 보고서 양식.hwp, 현장.jpg)\n\n(보낸 사람: 홍길동(홍길동))")
+        self.notify(a)
+        last = [m for m in self.fake.sent if m.get("text", "").startswith("🤖")][-1]
+        self.assertIn("첨부파일: 보고서 양식.hwp, 현장.jpg", last["text"])
+        self.assertIn(f"pdf:{a}", str(last.get("reply_markup")))
+
     def test_notice_lists_only_other_items_and_numbers_continue(self):
         """0.6.12 (선생님 2026-11-20 '비슷한 내용이 중복 전달'): 공문은 알림에, 쪽지는 요약 글에만 한 번씩."""
         e = self.item("공문 내용입니다. 11월 25일까지 제출 바랍니다.", title="연수 공문", source="edufine")

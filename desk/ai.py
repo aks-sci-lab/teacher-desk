@@ -17,7 +17,7 @@ import hashlib
 import urllib.request
 from datetime import date, datetime, timedelta
 
-from . import applog, extract, visits
+from . import applog, coolmsg, extract, visits
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 DAYS = 7
@@ -509,7 +509,8 @@ def cool_fields(text, body=""):
     """쪽지 AI 요약 → {'sender','task','due','files','urgent'} (다섯 칸 중 둘 이상 읽혔을 때만, 아니면 None).
 
     - 보낸 사람은 쪽지 끝의 '(보낸 사람: …)' 가 있으면 그것을 씀 (AI 가 틀리게 옮기지 않게).
-    - 첨부파일은 AI 가 '없음' 이라 했어도 본문에 파일 이름(…hwp, …pdf 등)이 보이면 그 이름.
+    - 첨부파일은 쪽지 글에 '(첨부 파일: …)' 줄(쿨메신저의 실제 첨부 목록)이 있으면 그것.
+      없으면 AI 가 '없음' 이라 했어도 본문에 파일 이름(…hwp, …pdf 등)이 보이면 그 이름.
     - 긴급 여부는 '긴급' 또는 '보통' 두 가지로만.
     """
     found = {}
@@ -537,6 +538,9 @@ def cool_fields(text, body=""):
         name = m.group(1).strip()
         same = re.fullmatch(r"(.+?)\s*\(\s*\1\s*\)", name)
         out["sender"] = (same.group(1) if same else name)[:30]
+    real = coolmsg.files_in_text(body)
+    if real:   # 쿨메신저가 실제로 붙인 첨부 (0.6.17): AI 가 '없음' 이라 해도, 다르게 옮겨 써도 이것으로
+        out["files"] = ", ".join(real[:6]) + (f" 외 {len(real) - 6}개" if len(real) > 6 else "")
     if not out["files"]:
         files = []
         for f in P_FILE_NAME.findall(body or ""):
