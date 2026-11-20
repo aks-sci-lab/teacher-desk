@@ -66,13 +66,13 @@ class TelegramCoolSummaryTests(unittest.TestCase):
     def texts(self):
         return [m.get("text", "") for m in self.fake.sent]
 
-    def test_new_memo_summary_is_sent_after_notice_with_original_button(self):
+    def test_new_memo_summary_is_sent_once_with_original_button(self):
         a = self.item("최별빛 학생 체험학습 보고서를 11월 20일 16시까지 내 주세요. 급합니다.\n\n(보낸 사람: 홍길동)")
         self.notify(a)
         texts = self.texts()
         summary = [t for t in texts if t.startswith("🤖")]
         self.assertEqual(len(summary), 1)
-        self.assertLess(texts.index(next(t for t in texts if t.startswith("📥"))), texts.index(summary[0]))  # 알림이 먼저
+        self.assertFalse([t for t in texts if t.startswith("📥")])   # 0.6.12 같은 쪽지를 알림 목록에 또 싣지 않음
         s = summary[0]
         for label in ("보낸 사람: 홍길동", "업무 내용:", "마감 기한: 11월 20일(금) 16시", "첨부파일: 없음", "🚨 긴급 여부: 긴급"):
             self.assertIn(label, s)
@@ -82,6 +82,34 @@ class TelegramCoolSummaryTests(unittest.TestCase):
         self.assertIn("o:", str(last.get("reply_markup")))                         # [원문 보기] 단추
         row = self.env.db.one("SELECT ai_summary FROM items WHERE id = ?", (a,))
         self.assertIn("업무 내용", row["ai_summary"])                               # 수신함에도 같은 요약이 남음
+
+    def test_notice_lists_only_other_items_and_numbers_continue(self):
+        """0.6.12 (선생님 2026-11-20 '비슷한 내용이 중복 전달'): 공문은 알림에, 쪽지는 요약 글에만 한 번씩."""
+        e = self.item("공문 내용입니다. 11월 25일까지 제출 바랍니다.", title="연수 공문", source="edufine")
+        c = self.item("회의 자료를 11월 21일까지 확인해 주세요.\n\n(보낸 사람: 홍길동)", title="회의 안내")
+        self.notify(e, c)
+        texts = self.texts()
+        notice = [t for t in texts if t.startswith("📥")]
+        self.assertEqual(len(notice), 1)
+        self.assertIn("새 자료 1건", notice[0])
+        self.assertIn("연수 공문", notice[0])
+        self.assertNotIn("회의 안내", notice[0])
+        self.assertIn("AI 요약으로 따로", notice[0])
+        summary = [t for t in texts if t.startswith("🤖")]
+        self.assertEqual(len(summary), 1)
+        self.assertIn("쪽지 2번", summary[0])                                      # 알림의 1번 다음 번호
+        self.assertEqual(self.bot.ref_item(2), c)
+        marks = [str(m.get("reply_markup")) for m in self.fake.sent]
+        self.assertNotIn(f"o:{c}", marks[texts.index(notice[0])])                  # 쪽지 단추는 요약 글에만
+        self.assertIn(f"rg:{c}", marks[texts.index(summary[0])])                   # 일정 등록 단추도 요약 글에
+
+    def test_notice_keeps_memos_when_summary_off(self):
+        a = self.item("회의 자료를 확인해 주세요.", title="회의 안내")
+        self.env.config.values["telegram_cool_summary"] = False
+        self.notify(a)
+        notice = [t for t in self.texts() if t.startswith("📥")]
+        self.assertEqual(len(notice), 1)
+        self.assertIn("회의 안내", notice[0])
 
     def test_failure_sends_reason_and_button_only(self):
         a = self.item("회의 자료를 확인해 주세요. 내일까지 회신 바랍니다.")
