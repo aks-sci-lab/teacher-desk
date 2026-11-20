@@ -280,6 +280,29 @@ def cool_text(m):
             + (f"\n\n(보낸 사람: {m['sender']})" if m["sender"] else ""))
 
 
+def cool_sent_text(m):
+    """보낸 쪽지 글: 본문 + 첨부 파일 이름 줄 + 끝의 받는 사람 줄 (보낸 사람 줄은 없음: 텔레그램 답장 단추가 붙지 않게)."""
+    files = m.get("files") or []
+    return (m["body"] + (f"\n\n{coolmsg.FILES_LABEL} {', '.join(files)})" if files else "")
+            + (f"\n\n(받는 사람: {m['receiver']})" if m.get("receiver") else ""))
+
+
+def scan_cool_sent(db, path, stats):
+    """쿨메신저 '보낸 쪽지' 표(tbl_send)에서 새로 보낸 쪽지를 '쿨메신저 보냄' 으로 (0.6.19).
+    받은 쪽지 표만 읽어서 보낸 쪽지가 수신함에 하나도 안 나오던 것 (선생님 "보낸 메세지는 조회가 안되는데")."""
+    key = f"cool_sent_rowid:{path}"
+    try:
+        memos, top = coolmsg.read_new_sent(path, db.get_meta(key))
+    except coolmsg.CoolError as e:
+        stats["errors"].append(f"쿨메신저(보낸 쪽지): {e}")
+        return
+    for m in memos:
+        received = (m["when"] or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+        add_text_item(db, "cool_sent", cool_sent_text(m), title=cool_title(m["title"], m["body"]), received_at=received,
+                      file_path=f"{path}#sent:{m['rowid']}", images=m.get("images") or [])
+    if top is not None:
+        db.set_meta(key, top)
+
 
 EVENT_RULES = 2   # 일정 찾기 규칙이 바뀌면 올림 (0.5.21: 시각이 끼인 기간 하나로, 이름표 줄은 행사명으로 / 0.5.39: '…일자' 기준일은 일정 아님)
 
@@ -389,6 +412,10 @@ def scan_cool_memo(db, name, stats, path=""):
             stats["deadlines"] += res["deadlines"]
             stats["new_ids"].append(res["id"])
     db.set_meta(key, top)
+    try:
+        scan_cool_sent(db, path, stats)
+    except Exception as e:   # 보낸 쪽지를 못 읽어도 받은 쪽지는 그대로 (다음 수집 때 다시 시도)
+        stats["errors"].append(f"쿨메신저: 보낸 쪽지 읽기 실패 ({type(e).__name__}: {e})")
 
 
 class Collector:

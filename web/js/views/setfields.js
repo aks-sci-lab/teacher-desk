@@ -183,7 +183,9 @@ export function coolConnect() {
             d ? el('div',
                 el('p.set-good', `연결됨 — 쪽지 ${d.rows.toLocaleString()}개`),
                 el('p.small.muted', `읽는 곳: 표 ${d.table} · 내용 ${d.body}${d.title ? ' · 제목 ' + d.title : ''}${d.date ? ' · 날짜 ' + d.date : ' · 날짜 열 없음'}${d.sender ? ' · 보낸 사람 ' + d.sender : ''}`),
-                r.sender_check && el('p.small', r.sender_check.me
+                r.sent
+                    ? el('p.small', `내가 보낸 쪽지: 표 ${r.sent.table} 에서 ${r.sent.rows.toLocaleString()}개를 찾았습니다 (받는 사람 ${r.sent.receiver}${r.sent.date ? ' · 날짜 ' + r.sent.date : ''}). 수신함의 '쿨메신저 보냄' 에 모읍니다.`)
+                    : r.sender_check && el('p.small', r.sender_check.me
                     ? (r.sender_check.mine
                         ? `내가 보낸 쪽지: 최근 ${r.sender_check.checked}개 중 ${r.sender_check.mine}개 (보낸 사람 열 ${r.sender_check.column} 에서 내 이름과 같은 것). 앞으로 이런 쪽지는 '쿨메신저 보냄' 으로 따로 모읍니다.`
                         : `보낸 사람 열(${r.sender_check.column})에서 내 이름과 같은 쪽지를 찾지 못했습니다 (서로 다른 보낸 사람 ${r.sender_check.kinds}명). 이 열에 이름이 아닌 번호가 들어 있을 수 있으니 아래 '파일 구조' 를 개발 담당에게 보내 주세요.`)
