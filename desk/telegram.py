@@ -260,6 +260,7 @@ P_TOKEN_LIKE = re.compile(r"\d{5,}:[A-Za-z0-9_-]{10,}")   # 토큰 모양 (번�
 SEND_WRAPPERS = {"api", "_api", "send", "reply", "show", "send_file", "<lambda>", "<genexpr>", "<listcomp>"}   # 0.6.15 기록의 from=
 POLL_BACKOFF = 5     # 오류 뒤 다시 시도하기까지 처음 기다리는 초 (실패가 이어지면 두 배씩, 최대 300초)
 PHOTO_LIMIT = 10     # 한 번 수집에서 텔레그램으로 보내는 쿨메신저 사진 최대
+COOL_PHOTO_LIMIT = 3   # 0.6.17 그림 첨부를 쿨메신저 창으로 받는 쪽지 최대 (한 번 수집에서)
 BATCH_LIMIT = 10   # 새 자료가 이보다 많으면 알림에 목록을 싣지 않고 요약만
 COOL_SUMMARY_LIMIT = 3    # 0.6.8 한 번 수집에서 AI 로 요약해 보내는 쿨메신저 쪽지 최대 (작은 PC 의 LM Studio 가 오래 바쁘지 않게)
 COOL_SHORT_MEMO = 100     # 0.6.16 이보다 짧은 쪽지는 요약해도 원문과 같아(선생님 "요약 조건에 내용 중복 검토") 원문 전달을 켰으면 요약 없이 원문 한 글로
@@ -3036,6 +3037,96 @@ class Bot:
             self.send("📷 " + ", ".join(notes) + ". 업무 데스크 수신함에서 보세요.")
         return sent
 
+    def cool_photo_targets(self, stats):
+        """그림 파일(jpg 등)이 첨부된 새 쿨메신저 쪽지 id (켜져 있지 않으면 [])."""
+        ids = list(stats.get("new_ids") or [])
+        if not (ids and self.chat_id and self.config["telegram_photos"] and self.config["telegram_cool_send"]
+                and self.config["telegram_cool_photo_fetch"]):
+            return []
+        rows = self.db.query(f"SELECT id, body FROM items WHERE source = 'cool' AND id IN ({','.join('?' * len(ids))}) "
+                             "ORDER BY received_at, id", ids)
+        return [r["id"] for r in rows
+                if any(Path(f).suffix.lower() in coolmsg.IMAGE_EXTS for f in coolmsg.files_in_text(r["body"]))]
+
+    def send_cool_attached_photos(self, stats):
+        """새 쪽지에 그림이 파일로 붙어 오면 이 PC 의 쿨메신저로 받아(메시지관리함 → 모든파일 저장) 그림만 보냄
+        (선생님 2026-11-20 "여전히 그림이 전송이 안돼": 학교 쿨메신저는 그림을 쪽지 글이 아니라 첨부(FilePath)로 보냄.
+        첨부는 이 PC 에 없고 쿨메신저로 받아야 생김). 사진 자동 전송(telegram_photos)의 연장이라 그림만 자동,
+        hwp 등 다른 첨부는 받은 파일 폴더에만 두고 텔레그램에는 달라고 할 때만 (원본 규칙). 한 번에 쪽지 COOL_PHOTO_LIMIT 건."""
+        picked = self.cool_photo_targets(stats)
+        if not picked:
+            return 0
+        if self.sync:
+            return self._cool_photos(picked)
+        threading.Thread(target=self._cool_photos, args=(picked,), name="telegram-coolphotos", daemon=True).start()
+        return len(picked[:COOL_PHOTO_LIMIT])
+
+    def _cool_photos(self, ids):
+        sent = 0
+        for iid in ids[:COOL_PHOTO_LIMIT]:
+            try:
+                sent += self._cool_photo_one(iid)
+            except Exception as e:   # 하나가 실패해도 다음 쪽지는
+                self.note_error(e, "쪽지 그림 첨부")
+        if len(ids) > COOL_PHOTO_LIMIT:
+            self.send(f"📷 그림이 붙은 쪽지 {len(ids) - COOL_PHOTO_LIMIT}건은 한 번에 {COOL_PHOTO_LIMIT}건까지라 받지 않았습니다. "
+                      "'쪽지' 목록에서 '첨부 n' 으로 받을 수 있습니다.")
+        return sent
+
+    def _cool_photo_one(self, item_id):
+        it = self.db.one("SELECT id, title, body, received_at FROM items WHERE id = ?", (item_id,))
+        if not it:
+            return 0
+        m = P_COOL_SENDER.search(it["body"] or "")
+        n = self.ref_number(item_id)
+        label = f"{n}번 쪽지" if isinstance(n, int) else f"쪽지 '{cut(self.mask(it['title']), 30)}'"
+        retry = [[{"text": "📎 첨부 받기", "callback_data": f"ca:{item_id}"}]]
+        files = None
+        for attempt in range(4):   # 다른 쿨메신저 창 조작(답장·첨부 받기)이 끝날 때까지 조금 기다림
+            try:
+                files = coolsend.fetch_attachments(it["title"], it["received_at"], m.group(1) if m else "",
+                                                   ui=self.cool_attach_ui, log=self.db.log)
+                break
+            except coolsend.SendError as e:
+                if "다른 일로 쓰는 중" in str(e) and attempt < 3 and not self.stop_event.wait(0.1 if self.sync else 15):
+                    continue
+                self.send(f"📷 {label}의 그림 첨부를 받지 못했습니다: {e}", buttons=retry)
+                return 0
+        if files is None:
+            return 0
+        pics = [p for p in files if p.suffix.lower() in coolmsg.IMAGE_EXTS]
+        others = len(files) - len(pics)
+        sent = 0
+        for i, p in enumerate(pics[:PHOTO_LIMIT], 1):
+            try:
+                data = p.read_bytes()
+            except OSError:
+                continue
+            caption = f"📷 {cut(self.mask(it['title']), 50)}" + (f" ({i}/{len(pics)})" if len(pics) > 1 else "")
+            ext = p.suffix.lower()
+            try:
+                if ext in (".jpg", ".jpeg", ".png", ".webp") and len(data) <= 10 * 1024 * 1024:
+                    try:
+                        self.send_file(self.chat_id, p.name, data, caption=caption, photo=True)
+                    except (urllib.error.HTTPError, RuntimeError):   # 사진으로 못 받는 그림은 파일로
+                        self.send_file(self.chat_id, p.name, data, caption=caption)
+                elif len(data) <= FILE_LIMIT:
+                    self.send_file(self.chat_id, p.name, data, caption=caption)
+                else:
+                    continue
+                sent += 1
+            except (urllib.error.URLError, OSError, RuntimeError) as e:
+                self.note_error(e, "쪽지 그림 보내기")
+        notes = []
+        if sent < len(pics):
+            notes.append(f"그림 {len(pics) - sent}장은 보내지 못했습니다")
+        if others:
+            notes.append(f"다른 첨부 {others}개는 PC 의 받은 파일 폴더에 받아 두었습니다")
+        if notes:
+            self.send(f"📷 {label}: " + ", ".join(notes) + ".", buttons=[[{"text": "📄 첨부 PDF 로 보기", "callback_data": f"pdf:{item_id}"},
+                                {"text": "📎 첨부 받기", "callback_data": f"ca:{item_id}"}]] if others else None)
+        return sent
+
     def send_collect_texts(self, stats, skip=()):
         """새 쿨메신저 쪽지의 원문을 텔레그램으로도 보냄 (선생님이 설정 telegram_cool_text 를 켠 경우만, 0.5.61).
         원문은 가리지 않고 그대로 (원문 규칙). 한 번에 최대 5건, 긴 글은 나눠 보냄.
@@ -3233,6 +3324,10 @@ class Bot:
             self.send_cool_summaries(stats)   # 알림 뒤에 뒤에서 (요약이 늦어도 알림은 먼저)
         except Exception as e:
             self.note_error(e, "쪽지 AI 요약")
+        try:
+            self.send_cool_attached_photos(stats)   # 그림 파일이 붙은 쪽지: 쿨메신저로 받아 그림만 (0.6.17, 뒤에서)
+        except Exception as e:
+            self.note_error(e, "쪽지 그림 첨부")
 
     def _refresh_text(self):
         stats = self.collector.run("telegram")

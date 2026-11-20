@@ -98,5 +98,53 @@ class TelegramPdfTests(unittest.TestCase):
         self.assertIn("첨부 2개를 보냈습니다", self.fake.sent[-1]["text"])
 
 
+class CoolAttachedPhotoTests(unittest.TestCase):
+    """그림 파일이 첨부된 새 쪽지 → 쿨메신저로 받아 그림만 자동으로 (0.6.17, 선생님 "여전히 그림이 전송이 안돼")."""
+
+    def setUp(self):
+        self.env = Env()
+        self.fake = FakeTelegram()
+        self.tmp = tempfile.TemporaryDirectory()
+        coolsend.SETTLE = 0.5
+        self.env.config.values.update(telegram_token="TEST:TOKEN", telegram_api_base=self.fake.base, telegram_cool_send=True)
+        self.bot = Bot(self.env.db, self.env.config, self.env.collector)
+        self.bot.sync = True
+        self.bot.cool_attach_ui = HwpAttachUI(self.tmp.name, test_coolsend.CoolAttachTests.ROWS)
+        self.env.db.set_meta("telegram_chat_id", CHAT)
+
+    def tearDown(self):
+        self.fake.close()
+        self.tmp.cleanup()
+        self.env.close()
+
+    def memo(self, files):
+        line = f"\n\n(첨부 파일: {files})" if files else ""
+        return add_text_item(self.env.db, "cool", f"자료 첨부합니다{line}\n\n(보낸 사람: 이영희(이영희))",
+                             title="협의회 안내 자료입니다", received_at="2026-11-17 13:45:00")["id"]
+
+    def test_fetches_and_sends_only_pictures(self):
+        iid = self.memo("안내문.hwp, 사진.jpg")
+        self.assertEqual(self.bot.send_cool_attached_photos({"new_ids": [iid]}), 1)
+        self.assertEqual(self.fake.calls.count("sendPhoto"), 1)
+        self.assertEqual(self.fake.calls.count("sendDocument"), 0)   # hwp 는 달라고 할 때만
+        self.assertIn("다른 첨부 1개", self.fake.sent[-1]["text"])
+        self.assertIn(f"pdf:{iid}", str(self.fake.sent[-1].get("reply_markup")))
+
+    def test_skips_without_picture_or_when_off(self):
+        self.assertEqual(self.bot.cool_photo_targets({"new_ids": [self.memo("안내문.hwp")]}), [])
+        iid = self.memo("사진.jpg")
+        self.env.config.values.update(telegram_cool_photo_fetch=False)
+        self.assertEqual(self.bot.cool_photo_targets({"new_ids": [iid]}), [])
+        self.env.config.values.update(telegram_cool_photo_fetch=True, telegram_cool_send=False)
+        self.assertEqual(self.bot.cool_photo_targets({"new_ids": [iid]}), [])
+
+    def test_failure_tells_reason_with_button(self):
+        self.bot.cool_attach_ui.list = [["(박민수)", "다른 쪽지", "2026/11/17 09:00:00 (화)", ""]]
+        iid = self.memo("사진.jpg")
+        self.bot.send_cool_attached_photos({"new_ids": [iid]})
+        self.assertIn("그림 첨부를 받지 못했습니다", self.fake.sent[-1]["text"])
+        self.assertIn(f"ca:{iid}", str(self.fake.sent[-1].get("reply_markup")))
+
+
 if __name__ == "__main__":
     unittest.main()
