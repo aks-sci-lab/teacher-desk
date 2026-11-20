@@ -1387,12 +1387,16 @@ class Bot:
             fp = self.db.one("SELECT file_path FROM items WHERE id = ?", (iid,))
             if fp and item_file(self.config, fp["file_path"]):
                 row.append({"text": f"{n} 원본 파일 받기", "callback_data": f"f:{iid}"})
-            st = self.db.one("SELECT registered, (SELECT COUNT(*) FROM events e WHERE e.item_id = items.id AND e.done = 0) AS n "
-                             "FROM items WHERE id = ?", (iid,))
-            if st and not st["registered"] and st["n"]:   # 일정 후보가 있고 아직 달력에 안 넣은 것
+            if self.has_candidates(iid):
                 row.append({"text": f"📅 {n} 일정 등록", "callback_data": f"rg:{iid}"})
             rows.append(row)
         return rows or None
+
+    def has_candidates(self, iid):
+        """일정 후보가 있고 아직 달력에 안 넣은 자료인지."""
+        st = self.db.one("SELECT registered, (SELECT COUNT(*) FROM events e WHERE e.item_id = items.id AND e.done = 0) AS n "
+                         "FROM items WHERE id = ?", (iid,))
+        return bool(st and not st["registered"] and st["n"])
 
     def register_item(self, cid, item_id):
         """수신함에서 체크하는 것과 같음: 이 자료의 일정을 달력·브리핑에 넣음."""
@@ -2798,19 +2802,31 @@ class Bot:
         """증 발급 답장의 학생 이름 (설정을 켜면 '김○○')."""
         return masked(name) if self.config["telegram_mask_names"] else (name or "").strip()
 
-    def collect_message(self, stats, today=None):
+    def collect_message(self, stats, today=None, skip=()):
         """수집 결과 알림 (0.5.39). 새 자료가 없으면 None.
         적을 때는 마감이 있는 것·에듀파인 공문을 위에 두고 보낸 사람·무엇을 언제까지인지를 함께,
-        많을 때(처음 연결 등)는 한 줄 요약과 가까운 마감만."""
+        많을 때(처음 연결 등)는 한 줄 요약과 가까운 마감만.
+
+        skip: 뒤이어 AI 요약 글(🤖)로 따로 가는 쿨메신저 쪽지 (0.6.12). 같은 쪽지가 알림과 요약에 두 번 나와
+        '비슷한 글이 두 번 온다'(선생님 2026-11-20)가 되지 않게 알림 목록에서 뺌. 다 빠지면 None.
+        번호는 알림 목록 다음부터 이어 붙여 요약 글의 'n번'·'원문 n'·'답장 n' 이 그대로 통함."""
         if not stats.get("items"):
             return None
         today = today or date.today()
         detail = self.config["telegram_detail"]
-        n_all = stats["items"]
         ids = list(stats.get("new_ids") or [])
+        skip = [i for i in skip if i in ids]
+        ids = [i for i in ids if i not in skip]
+        n_all = stats["items"] - len(skip)
+        if n_all <= 0 or (skip and not ids):
+            self.set_refs(skip)
+            return None
         head = f"📥 새 자료 {n_all}건"
+        tail = f"\n🤖 쿨메신저 쪽지 {len(skip)}건은 아래 AI 요약으로 따로 보냅니다." if skip else ""
         if detail == "counts" or not ids:
-            return head + (f" · ⏰ 마감 후보 {stats['deadlines']}건" if stats.get("deadlines") else "")
+            if skip:
+                self.set_refs(skip)
+            return head + (f" · ⏰ 마감 후보 {stats['deadlines']}건" if stats.get("deadlines") and not skip else "") + tail
         marks = ",".join("?" * len(ids))
         rows = self.db.query(f"SELECT id, source, title, body, received_at, summary FROM items WHERE id IN ({marks})", ids)
         by_src = {}
@@ -2853,8 +2869,8 @@ class Bot:
                     lines.append("   " + cut(self.mask(summary[0]), 60))
         if len(rows) > len(shown) and not big:
             lines.append(f"그 외 {len(rows) - len(shown)}건")
-        self.set_refs([r["id"] for r in shown])
-        return "\n".join(lines)
+        self.set_refs([r["id"] for r in shown] + skip)
+        return "\n".join(lines) + tail
 
     def send_collect_photos(self, stats):
         """새 쿨메신저 쪽지에 든 사진을 텔레그램으로도 보냄 (사용자 요청 2026-11-02, 설정 telegram_photos).
@@ -2939,19 +2955,23 @@ class Bot:
         - 요약이 COOL_SUMMARY_WAIT 안에 안 끝나거나 실패하면 그 쪽지는 이유 한 줄과 [원문] 단추만 보냄.
           수집 알림·사진·원문 전달은 이것과 따로 먼저 나가므로 요약이 늦어도 막히지 않음.
         """
-        ids = list(stats.get("new_ids") or [])
-        if not (ids and self.chat_id and self.item_ai and self.config["telegram_cool_summary"] and self.config["ai_enabled"]):
-            return 0
-        rows = self.db.query(
-            f"SELECT id FROM items WHERE source = 'cool' AND TRIM(body) != '' AND id IN ({','.join('?' * len(ids))}) "
-            "ORDER BY received_at DESC, id DESC", ids)
-        picked = [r["id"] for r in rows]
+        picked = self.cool_summary_targets(stats)
         if not picked:
             return 0
         if self.sync:
             return self._cool_summaries(picked)
         threading.Thread(target=self._cool_summaries, args=(picked,), name="telegram-coolsummary", daemon=True).start()
         return len(picked[:COOL_SUMMARY_LIMIT])
+
+    def cool_summary_targets(self, stats):
+        """AI 요약 글로 보낼 새 쿨메신저 쪽지 (최신 것부터). 켜져 있지 않으면 []."""
+        ids = list(stats.get("new_ids") or [])
+        if not (ids and self.chat_id and self.item_ai and self.config["telegram_cool_summary"] and self.config["ai_enabled"]):
+            return []
+        rows = self.db.query(
+            f"SELECT id FROM items WHERE source = 'cool' AND TRIM(body) != '' AND id IN ({','.join('?' * len(ids))}) "
+            "ORDER BY received_at DESC, id DESC", ids)
+        return [r["id"] for r in rows]
 
     def _cool_summaries(self, ids):
         try:
@@ -2993,6 +3013,8 @@ class Bot:
         reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": it["body"]})
         if reply:
             buttons[0] += reply[0]   # [원문 보기] [↩ 답장 보내기] 한 줄 (0.6.9)
+        if self.has_candidates(item_id):   # 알림 목록에서 빠지므로 [📅 일정 등록] 도 여기에 (0.6.12)
+            buttons.append([{"text": "📅 일정 등록", "callback_data": f"rg:{item_id}"}])
         n = self.ref_number(item_id)
         head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
         fresh = it["ai_summary"] and it["ai_summary_hash"] == ai.body_hash(it["body"])
@@ -3023,10 +3045,12 @@ class Bot:
         except Exception:
             pass   # 원문 전달이 실패해도 알림은 보냄
         if reason != "telegram":   # 명령에 대한 답장이면 이미 보냄
-            msg = self.collect_message(stats)
+            skip = self.cool_summary_targets(stats)[:COOL_SUMMARY_LIMIT]   # AI 요약 글로 따로 가는 쪽지 (0.6.12)
+            msg = self.collect_message(stats, skip=skip)
             if msg and self.chat_id:
                 ids = self.db.get_meta("telegram_refs", []) if stats.get("new_ids") else []
-                buttons = self.item_buttons(ids, ids) if self.config["telegram_detail"] != "counts" else None
+                shown = [i for i in ids if i not in skip]   # 요약 글에 단추가 따로 붙음
+                buttons = self.item_buttons(shown, ids) if self.config["telegram_detail"] != "counts" else None
                 self.send(msg, buttons=buttons)
         try:
             self.send_cool_summaries(stats)   # 알림 뒤에 뒤에서 (요약이 늦어도 알림은 먼저)
@@ -3037,7 +3061,10 @@ class Bot:
         stats = self.collector.run("telegram")
         if stats.get("busy"):
             return "이미 수집 중입니다. 잠시 뒤 다시 보내 주세요."
-        return self.collect_message(stats) or "새로 들어온 자료가 없습니다."
+        skip = self.cool_summary_targets(stats)[:COOL_SUMMARY_LIMIT]
+        return (self.collect_message(stats, skip=skip)
+                or (f"🤖 새 쿨메신저 쪽지 {len(skip)}건은 AI 요약으로 곧 보냅니다." if skip and stats.get("items") else "")
+                or "새로 들어온 자료가 없습니다.")
 
     def _refresh(self, cid):
         try:
