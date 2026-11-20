@@ -36,6 +36,8 @@ DATE_HINTS = ("date", "time", "reg", "send", "recv", "write", "created", "dt", "
 SENDER_HINTS = ("sender", "from", "send_name", "sendname", "username", "user_name", "writer", "name", "보낸")
 # 받는 사람 열 (cclist·referencelist 는 참조 목록이라 제외). 열 이름은 실제 파일로 확인되기 전까지 추측
 RECEIVER_HINTS = ("receiver", "recipient", "recver", "target", "to_", "받는")
+# 첨부 파일 목록 열 (학교 PC 쿨메신저 tbl_recv.FilePath, 선생님이 보낸 파일 구조로 확인 2026-11-20). FileHost 는 서버 주소라 뺌
+FILES_HINTS = ("filepath", "filelist", "filename", "attachfile", "attachment", "attach")
 SKIP_TABLE_HINTS = ("sqlite_", "config", "setting", "option", "version", "meta", "attach", "file", "group", "buddy")
 
 
@@ -176,6 +178,38 @@ def clean_body(v):
     return tidy(s)
 
 
+# ---------------------------------------------------------------- 첨부 파일 목록
+FILE_TOKEN_RE = re.compile(r"[^\\/|;\t\r\n*?<>:\"]+?\.[A-Za-z][A-Za-z0-9]{1,4}(?=$|[|;\t\r\n*?<>:,\"])")
+MAX_FILES = 20
+
+
+def file_names(v):
+    """첨부 열 값 → 파일 이름 목록 (경로는 떼고 이름만). 실제 값 모양은 아직 모르므로 확장자가 붙은 조각을 모두 찾음."""
+    s = raw_body(v) if isinstance(v, bytes) else (str(v) if v is not None else "")
+    out = []
+    for m in FILE_TOKEN_RE.finditer(s or ""):
+        name = tidy(m.group(0)).strip(" ,")
+        if name and name not in out and not re.fullmatch(r"[\d.]+", name):
+            out.append(name[:120])
+    return out[:MAX_FILES]
+
+
+FILES_LABEL = "(첨부 파일:"   # 수신함 쪽지 글에 넣는 첨부 이름 줄 (collect.cool_text)
+P_FILES_LINE = re.compile(r"^\(첨부 파일:\s*(.+?)\)\s*$", re.M)
+
+
+def files_in_text(body):
+    """수신함 쪽지 글의 '(첨부 파일: …)' 줄에 적힌 이름들 (쿨메신저가 실제로 붙인 파일, 0.6.17). 없으면 []."""
+    m = P_FILES_LINE.search(body or "")
+    return [f.strip() for f in m.group(1).split(", ") if f.strip()] if m else []
+
+
+def file_paths(v):
+    """첨부 열 값에 이 PC 의 파일 경로(C:\\…)가 적혀 있으면 그 경로들."""
+    s = v.decode("utf-8", "replace") if isinstance(v, bytes) else (str(v) if v is not None else "")
+    return [p.strip() for p in re.split(r"[|;\t\r\n*?<>\"]+", s) if re.match(r"^\s*[A-Za-z]:[\\/]", p)][:MAX_FILES]
+
+
 # ---------------------------------------------------------------- 사진
 IMG_RE = re.compile(r"""<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
 RTF_PICT_RE = re.compile(r"\\(pngblip|jpegblip)(?:\\[a-z]+-?\d* ?)*\s*([0-9a-fA-F\s]{40,}?)\s*\}")
@@ -308,9 +342,11 @@ def detect(conn):
         sender = min(sender_cols, key=lambda c: (not c.lower().endswith("name"), cols.index(c)), default=None)
         receiver = next((c for c in cols if c not in (body, date, title, sender) and _hint(c, RECEIVER_HINTS)
                          and not _hint(c, ("cc", "reference")) and text_len[c] > 0), None)
+        files = next((c for c in cols if c not in (body, date, title, sender) and _hint(c, FILES_HINTS)
+                      and not _hint(c, ("host", "session", "size", "count", "cnt"))), None)
         score = text_len[body] * (2 if _hint(t, BODY_HINTS) else 1) + (50 if date else 0) + min(rows, 1000) / 100
-        cand = {"table": t, "body": body, "title": title, "date": date, "sender": sender, "receiver": receiver, "rows": rows,
-                "score": score}
+        cand = {"table": t, "body": body, "title": title, "date": date, "sender": sender, "receiver": receiver, "files": files,
+                "rows": rows, "score": score}
         if best is None or cand["score"] > best["score"]:
             best = cand
     return best
@@ -371,7 +407,7 @@ def is_mine(sender, me):
 
 def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN, me=""):
     q = _q(info["table"])
-    cols = [c for c in (info["body"], info["title"], info["date"], info["sender"]) if c]
+    cols = [c for c in (info["body"], info["title"], info["date"], info["sender"], info.get("files")) if c]
     sel = ", ".join(["rowid"] + [_q(c) for c in cols])
     out = []
     for r in conn.execute(f"SELECT {sel} FROM {q} {where} ORDER BY rowid {order} LIMIT ?", (*args, limit)):
@@ -384,6 +420,8 @@ def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN, me
             "sender": clean_body(rec[info["sender"]]) if info["sender"] else "",
             "mine": is_mine(clean_body(rec[info["sender"]]), me) if info["sender"] else False,
             "when": parse_when(rec[info["date"]]) if info["date"] else None,
+            "files": file_names(rec[info["files"]]) if info.get("files") else [],
+            "file_paths": file_paths(rec[info["files"]]) if info.get("files") else [],
         })
     return out
 
@@ -460,7 +498,7 @@ def check(path, me=""):
         info = detect(conn)
         out = {"path": str(path), "tables": tables, "detected": None, "recent": []}
         if info:
-            out["detected"] = {k: info.get(k) for k in ("table", "body", "title", "date", "sender", "receiver", "rows")}
+            out["detected"] = {k: info.get(k) for k in ("table", "body", "title", "date", "sender", "receiver", "files", "rows")}
             if info["sender"]:   # 보낸 사람이 '나'인 쪽지가 있는지 (이름 칸에 내 이름이 있어야 구분됨)
                 names = [clean_body(v) for (v,) in conn.execute(
                     f"SELECT {_q(info['sender'])} FROM {_q(info['table'])} ORDER BY rowid DESC LIMIT 500")]

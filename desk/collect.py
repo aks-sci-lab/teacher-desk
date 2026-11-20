@@ -273,7 +273,12 @@ CLEAN_VERSION = 2   # 0.5.10: 글자 꾸밈 태그 사이 빈칸 없애기·관�
 
 
 def cool_text(m):
-    return m["body"] + (f"\n\n(보낸 사람: {m['sender']})" if m["sender"] else "")
+    """수신함에 넣을 쪽지 글: 본문 + 첨부 파일 이름 줄(0.6.17, 쿨메신저 첨부 목록 열) + 끝의 보낸 사람 줄.
+    보낸 사람 줄은 늘 맨 끝 (텔레그램 답장·AI 요약이 끝에서 찾음)."""
+    files = m.get("files") or []
+    return (m["body"] + (f"\n\n{coolmsg.FILES_LABEL} {', '.join(files)})" if files else "")
+            + (f"\n\n(보낸 사람: {m['sender']})" if m["sender"] else ""))
+
 
 
 EVENT_RULES = 2   # 일정 찾기 규칙이 바뀌면 올림 (0.5.21: 시각이 끼인 기간 하나로, 이름표 줄은 행사명으로 / 0.5.39: '…일자' 기준일은 일정 아님)

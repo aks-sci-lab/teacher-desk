@@ -25,7 +25,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import VERSION, absence, ai, applog, calllog, assist, coolsend, docs, folderdoc, formfill, holidays, passlink, preview, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, applog, calllog, assist, coolmsg, coolsend, docs, folderdoc, formfill, holidays, passlink, preview, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -1884,6 +1884,8 @@ class Bot:
             return self.send_item_file(cid, int(rest))
         if kind == "pdf" and rest.isdigit():
             return self.send_item_pdf(cid, int(rest))
+        if kind == "ca" and rest.isdigit():
+            return self.begin_cool_attach(cid, int(rest))
         if kind == "dk":
             pid, _, _ = rest.partition(":")
             pending = self.db.get_meta("telegram_pending") or {}
@@ -3147,13 +3149,16 @@ class Bot:
         it = self.db.one("SELECT body FROM items WHERE id = ?", (item_id,))
         return bool(it) and len(self.memo_text(it["body"])[0]) <= COOL_SHORT_MEMO
 
-    def cool_buttons(self, item_id, body, original=True):
-        """쪽지 글 아래 단추: [원문 보기] [↩ 답장 보내기] / [📅 일정 등록]."""
+    def cool_buttons(self, item_id, body, original=True, files=False):
+        """쪽지 글 아래 단추: [원문 보기] [↩ 답장 보내기] / [📄 첨부 PDF 로 보기] / [📅 일정 등록]."""
         row = [{"text": "원문 보기", "callback_data": f"o:{item_id}"}] if original else []
         reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": body})
         if reply:
             row += reply[0]   # (0.6.9)
         buttons = [row] if row else []
+        if files and self.config["telegram_cool_send"]:   # 첨부를 쿨메신저로 받아 PDF 로 (0.6.17)
+            buttons.append([{"text": "📄 첨부 PDF 로 보기", "callback_data": f"pdf:{item_id}"},
+                            {"text": "📎 첨부 받기", "callback_data": f"ca:{item_id}"}])
         if self.has_candidates(item_id):   # 알림 목록에서 빠지므로 [📅 일정 등록] 도 여기에 (0.6.12)
             buttons.append([{"text": "📅 일정 등록", "callback_data": f"rg:{item_id}"}])
         return buttons or None
@@ -3166,7 +3171,8 @@ class Bot:
         text, sender = self.memo_text(it["body"])
         n = self.ref_number(item_id)
         head = f"📨 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''}" + (f" · 👤 {sender}" if sender else "")
-        self.send(f"{head}\n{text}", buttons=self.cool_buttons(item_id, it["body"], original=False))
+        self.send(f"{head}\n{text}", buttons=self.cool_buttons(item_id, it["body"], original=False,
+                                                              files=bool(coolmsg.files_in_text(it["body"]))))
         return 1
 
     def _send_cool_summary(self, item_id, error=None, late=False):
@@ -3179,7 +3185,9 @@ class Bot:
         # 요약이 가면 요약만 (원문은 [원문 보기] 단추로, 선생님 2026-11-20 "여전히 요약과 원문이 같이 와", 0.6.16).
         # 원문 전달(telegram_cool_text)을 켰어도 요약이 없을 때만 원문을 붙임
         with_text = bool(self.config["telegram_cool_text"] and body and failed)
-        buttons = self.cool_buttons(item_id, it["body"], original=not with_text)
+        fields = None if failed else ai.cool_fields(it["ai_summary"], it["body"])
+        has_files = bool(coolmsg.files_in_text(it["body"]) or (fields and fields["files"]))
+        buttons = self.cool_buttons(item_id, it["body"], original=not with_text, files=has_files)
         original = f"\n\n📨 원문\n{body}" if with_text else ""   # 원문은 가리지 않고 그대로 (원문 규칙), 긴 글은 send 가 나눔
         n = self.ref_number(item_id)
         head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
@@ -3188,7 +3196,6 @@ class Bot:
             self.send(f"{head}\n⚠ AI 요약 없음: {self.mask_always(reason)[:120]}"
                       + (original or "\n원문은 아래 단추로 받을 수 있습니다."), buttons=buttons)
             return 0
-        fields = ai.cool_fields(it["ai_summary"], it["body"])
         if not fields:   # 모델이 다섯 칸 형식을 따르지 않음: 받은 요약을 그대로
             self.send(f"{head}\n{self.mask(it['ai_summary']).strip()[:900]}{original}", buttons=buttons)
             return 1
