@@ -240,7 +240,8 @@ P_AI_SEARCH = re.compile(r"^(?:/aisearch(?:@\S+)?|ai\s*검색)\s*[:：]?(?:\s+(\
 P_LOG = re.compile(r"^(?:/log(?:@\S+)?|/로그|로그(?:\s*파일)?|사용\s*기록(?:\s*파일)?)(?:\s+(\d{1,2}|전체|오늘)\s*일?)?"
                    r"(?:\s*(?:보내\s*줘|보내\s*주세요|줘|주세요))?$")
 LOG_DAYS = 3
-P_COOL_SENDER = re.compile(r"\(보낸 사람:\s*([^)\n]+)\)\s*$")
+# 0.6.16: 쿨메신저 이름은 '민은영(민은영)' 처럼 괄호가 붙어 와서 예전 식([^)]+)으로는 못 읽어 [↩ 답장] 단추가 안 나왔음
+P_COOL_SENDER = re.compile(r"\(보낸 사람:\s*([^\n]+?)\)\s*$")
 COOL_PREVIEW = 600
 EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
 
@@ -2707,7 +2708,9 @@ class Bot:
         m = P_COOL_SENDER.search(it["body"] or "")
         if not m:
             return None, None, f"{label + ' ' if label else '이 '}쪽지의 보낸 사람을 알 수 없습니다. '쪽지 이름 내용' 으로 보내 주세요."
-        return it, m.group(1), None
+        sender = m.group(1).strip()
+        same = re.fullmatch(r"(.+?)\s*\(\s*\1\s*\)", sender)   # '민은영(민은영)' → '민은영'
+        return it, (same.group(1) if same else sender), None
 
     def begin_cool_reply_item(self, cid, item_id, body, label=None):
         it, sender, error = self.cool_reply_target(item_id, label)
@@ -3057,7 +3060,11 @@ class Bot:
         if not it:
             return 0
         body = (it["body"] or "").strip()
-        with_text = bool(self.config["telegram_cool_text"] and body)   # 원문 전달을 켰으면 요약 아래에 원문을 붙여 한 글로 (0.6.14)
+        fresh = it["ai_summary"] and it["ai_summary_hash"] == ai.body_hash(it["body"])
+        failed = bool(late or error or not fresh)
+        # 요약이 가면 요약만 (원문은 [원문 보기] 단추로, 선생님 2026-11-20 "여전히 요약과 원문이 같이 와", 0.6.16).
+        # 원문 전달(telegram_cool_text)을 켰어도 요약이 없을 때만 원문을 붙임
+        with_text = bool(self.config["telegram_cool_text"] and body and failed)
         buttons = [[] if with_text else [{"text": "원문 보기", "callback_data": f"o:{item_id}"}]]
         reply = self.cool_reply_buttons({"id": item_id, "source": "cool", "body": it["body"]})
         if reply:
@@ -3070,8 +3077,7 @@ class Bot:
         original = f"\n\n📨 원문\n{body}" if with_text else ""   # 원문은 가리지 않고 그대로 (원문 규칙), 긴 글은 send 가 나눔
         n = self.ref_number(item_id)
         head = f"🤖 쿨메신저 쪽지{' ' + str(n) + '번' if isinstance(n, int) else ''} · {cut(self.mask(it['title']), 40)}"
-        fresh = it["ai_summary"] and it["ai_summary_hash"] == ai.body_hash(it["body"])
-        if late or error or not fresh:
+        if failed:
             reason = error or "요약을 만들지 못했습니다"
             self.send(f"{head}\n⚠ AI 요약 없음: {self.mask_always(reason)[:120]}"
                       + (original or "\n원문은 아래 단추로 받을 수 있습니다."), buttons=buttons)

@@ -120,18 +120,38 @@ class TelegramCoolSummaryTests(unittest.TestCase):
         self.assertEqual(len(notice), 1)
         self.assertIn("회의 안내", notice[0])
 
-    def test_original_forwarding_is_joined_to_summary(self):
-        """0.6.14 (선생님 2026-11-20 '여전히 중복'): 원문 전달을 켜도 쪽지 하나에 글 하나 (요약 + 아래 원문)."""
+    def test_summary_only_even_with_original_forwarding(self):
+        """0.6.16 (선생님 2026-11-20 '여전히 요약과 원문이 같이 와'): 요약이 가면 요약만, 원문은 [원문 보기] 로."""
         self.env.config.values["telegram_cool_text"] = True
-        body = "안녕하세요~ 오늘 6, 7교시는 동아리 시간입니다.\n\n(보낸 사람: 홍길동)"
-        a = self.item(body, title="안녕하세요~ 오늘 6, 7교시는 동아리 시간입니다.")
+        body = "1교무실에 핫도그가 배달되어 왔습니다~~~\n\n45분까지 오세요\n\n(보낸 사람: 민은영(민은영))"
+        a = self.item(body, title="1교무실에 핫도그가 배달되어 왔습니다~~~")
         self.notify(a)
         texts = self.texts()
         self.assertEqual(len(texts), 1)
         self.assertTrue(texts[0].startswith("🤖"))
         self.assertIn("업무 내용:", texts[0])
+        self.assertNotIn("📨", texts[0])
+        self.assertNotIn("45분까지 오세요", texts[0])
+        marks = str(self.fake.sent[0].get("reply_markup"))
+        self.assertIn(f"o:{a}", marks)                                            # [원문 보기]
+        self.assertIn(f"rp:{a}", marks)                                           # [↩ 답장 보내기]: '이름(이름)' 도 읽음
+
+    def test_original_attached_when_summary_fails(self):
+        self.env.config.values["telegram_cool_text"] = True
+        body = "회의 자료를 확인해 주세요.\n\n(보낸 사람: 홍길동)"
+        a = self.item(body, title="회의 자료를 확인해 주세요.")
+        self.lm.close()
+        self.notify(a)
+        texts = self.texts()
+        self.assertEqual(len(texts), 1)
+        self.assertIn("AI 요약 없음", texts[0])
         self.assertIn("📨 원문\n" + body, texts[0])
-        self.assertNotIn("o:", str(self.fake.sent[0].get("reply_markup")))   # 원문이 이미 있으니 [원문 보기] 없음
+
+    def test_reply_target_reads_name_with_parentheses(self):
+        a = self.item("확인 부탁드립니다.\n\n(보낸 사람: 민은영(민은영))", title="확인")
+        it, sender, err = self.bot.cool_reply_target(a)
+        self.assertIsNone(err)
+        self.assertEqual(sender, "민은영")
 
     def test_original_forwarding_head_does_not_repeat_title(self):
         self.env.config.values["telegram_cool_text"] = True
