@@ -17,6 +17,8 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(os.environ.get("DESK_ROOT") or Path(__file__).resolve().parent.parent)
+if not (ROOT / "desk").is_dir() and (ROOT / "teacher-desk" / "desk").is_dir():
+    ROOT = ROOT / "teacher-desk"   # 'TeacherDesk 베타테스트' 처럼 윗폴더를 넣은 경우
 sys.path.insert(0, str(ROOT))
 
 from desk import coolmsg  # noqa: E402
@@ -133,6 +135,33 @@ def main():
                         if shown < 5 and not src.startswith("data:"):
                             print("  찾은 사진 주소 모양:", shape(src[:120]))
                             shown += 1
+
+            if info:   # 첨부 열(FilePath)에 적힌 파일이 이 PC 에 있는지 (개수만)
+                cols = [r[1] for r in conn.execute(f"PRAGMA table_info({coolmsg._q(info['table'])})")]
+                fcol = next((c for c in cols if c.lower() == "filepath"), None)
+                if fcol:
+                    total = exist = rows_with = 0
+                    seps = Counter()
+                    for (v,) in conn.execute(f"SELECT {coolmsg._q(fcol)} FROM {coolmsg._q(info['table'])} "
+                                             f"WHERE {coolmsg._q(fcol)} IS NOT NULL AND {coolmsg._q(fcol)} != '' "
+                                             "ORDER BY rowid DESC LIMIT 200"):
+                        rows_with += 1
+                        v = v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+                        seps.update(ch for ch in v if ch in "|;,*?<>\t\n\r/\\:")
+                        for part in re.split(r"[|;\t\r\n*?<>]+", v):
+                            part = part.strip()
+                            if EXT_RE.search(part):
+                                total += 1
+                                try:
+                                    exist += Path(part).is_file()
+                                except (OSError, ValueError):
+                                    pass
+                    print(f"\n== {fcol}: 값 있는 쪽지 {rows_with}개(최근 200개 중), 파일처럼 보이는 조각 {total}개, "
+                          f"그중 이 PC 에 있는 파일 {exist}개, 나오는 구분 글자 {dict(seps)}")
+                    for (v,) in conn.execute(f"SELECT {coolmsg._q(fcol)} FROM {coolmsg._q(info['table'])} "
+                                             f"WHERE {coolmsg._q(fcol)} IS NOT NULL AND {coolmsg._q(fcol)} != '' "
+                                             "ORDER BY rowid DESC LIMIT 8"):
+                        print("  모양:", shape(v))
 
     base = Path(os.environ.get("LOCALAPPDATA", "")) / "CoolMessenger"
     print("\n== 쿨메신저 자료 폴더 (확장자별 파일 수, 2단계까지)")
