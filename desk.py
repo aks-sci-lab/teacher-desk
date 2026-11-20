@@ -15,7 +15,7 @@ import sys
 import types
 from contextlib import nullcontext
 
-from desk import VERSION, background, updater, visits
+from desk import VERSION, applog, background, updater, visits
 from desk.collect import SOURCES, Collector, diagnose
 from desk.config import APP_DIR, Config
 from desk.db import DB
@@ -65,6 +65,7 @@ def main(argv=None):
                 return 0
             return run(args, config, db)
     finally:
+        applog.shutdown()   # 사용 기록 파일을 닫음 (업데이트로 일찍 끝날 때도 — 윈도우는 열린 파일을 못 지움)
         db.close()  # 업데이트 창이 프로그램 파일을 바꾸기 전에 자료 파일을 닫아 둠
 
 
@@ -81,6 +82,12 @@ def run(args, config, db):
         print(f"진단 결과를 저장했습니다: {out}")
         print("이 파일에는 메시지 내용이 없고 파일 이름·형식만 있습니다. 개발 담당에게 전달하세요.")
         return 0
+
+    if not args.collect:   # 0.6.13 사용 기록 파일 (data/logs, 내용·이름 없이 동작만)
+        applog.setup(config.data_dir / "logs", names=lambda: [s["name"] for s in db.students()],
+                     enabled=lambda: config["usage_log"])
+        applog.install_hooks()
+        applog.start_line(VERSION, config)
 
     # 켤 때 새 버전 확인 (윈도우용 ZIP 설치본만, 몇 초 안에 답이 없으면 그냥 켬)
     plain_start = not (args.collect or args.no_update_check)

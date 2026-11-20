@@ -3,9 +3,10 @@
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
-from . import ai
+from . import ai, applog
 
 PROVIDERS = {"local": "로컬", "browser": "브라우저 내장", "openai": "OpenAI",
              "anthropic": "Claude", "gemini": "Gemini"}
@@ -50,6 +51,12 @@ def _request(url, headers, payload, timeout=90):
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers},
                                  method="GET" if payload is None else "POST")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    host = urllib.parse.urlsplit(url).hostname or ""
+    with applog.timed("ai", f"외부 AI {'목록' if payload is None else '질문'}", host=host):   # 0.6.15 주소의 호스트·시간만
+        return _send(opener, req, timeout)
+
+
+def _send(opener, req, timeout):
     try:
         with opener.open(req, timeout=timeout) as response:
             data = response.read(MAX_RESPONSE + 1)

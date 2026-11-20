@@ -1,4 +1,5 @@
 // 로컬 서버와 주고받기. 서버가 화면에 심어 준 토큰을 함께 보냅니다.
+import { logUse } from './uselog.js';
 const TOKEN = document.querySelector('meta[name="desk-token"]').content;
 
 // 이 화면의 번호: 서버가 '열려 있는 화면'과 '쓰는 화면'을 알 수 있게 모든 요청에 실어 보냄 (자동 인쇄 창은 제외)
@@ -37,11 +38,18 @@ async function request(method, path, body) {
         opts.body = JSON.stringify(body);
     }
     let res;
+    const started = performance.now();
+    // 사용 기록: 주소만 (? 뒤 검색어는 빼고, 번호는 #, 한글 등이 든 칸은 *)
+    const where = `${method} ${path.split('?')[0].split('/').map(p => /^\d+$/.test(p) ? '#' : /^[A-Za-z0-9._-]*$/.test(p) ? p : '*').join('/')}`;
     try {
         res = await fetch(path, opts);
     } catch (e) {
+        logUse('api', where, { status: 'offline' });
         throw new ApiError(0, '업무 데스크 프로그램이 꺼져 있습니다. start-desk.bat 을 다시 실행하세요.');
     }
+    const ms = performance.now() - started;
+    if (!res.ok) logUse('api', where, { status: String(res.status), ms });
+    else if (ms > 3000) logUse('slow', where, { ms });
     const type = res.headers.get('Content-Type') || '';
     if (!type.includes('application/json')) {
         if (!res.ok) throw new ApiError(res.status, `요청 실패 (${res.status})`);

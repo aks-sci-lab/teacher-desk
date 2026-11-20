@@ -5,6 +5,8 @@ import sqlite3
 import threading
 from datetime import datetime
 
+from . import applog
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
@@ -315,6 +317,7 @@ class DB:
                 (now_str(), level, message),
             )
             self.conn.execute("DELETE FROM logs WHERE id <= (SELECT MAX(id) - 500 FROM logs)")
+        applog.event("기록", message, level)   # 0.6.13 사용 기록 파일에도 (이름은 가림)
 
     # ---- 학생 명단 ----
     def students(self):

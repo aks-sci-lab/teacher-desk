@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { el, clear, toast, guarded, modal } from './ui.js';
 import { icon } from './icons.js';
+import { logUse, setUseView } from './uselog.js';
 
 const $ = id => document.getElementById(id);
 const app = $('app');
@@ -146,6 +147,7 @@ export function showView(id, fromClick = false) {
     }
     app.classList.remove('side-hidden');
     app.classList.toggle('no-side', !!view.noSide);   // 목록이 필요 없는 화면은 빈 목록 패널을 숨김
+    if (currentView !== id) setUseView(id);   // 사용 기록 (0.6.13)
     currentView = id;
     for (const v of views.values()) v.button.classList.toggle('on', v.id === id);
     $('side-title').textContent = menuLabel(view);
@@ -182,6 +184,7 @@ export function openTab(spec) {
     const id = spec.menu ? MENU_TAB_ID : spec.id;
     let tab = tabs.get(id);
     if (!tab) {
+        logUse('tab', String(id).replace(/\d+/g, '#'));   // 사용 기록: 탭 종류만 (제목은 남기지 않음)
         const pane = el('div.pane', { role: 'tabpanel' });
         if (spec.wide) pane.classList.add('wide');
         const label = el('span.t', plainTitle(spec.title));

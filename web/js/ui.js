@@ -1,4 +1,5 @@
 // 화면 부품 도우미 (요소 만들기, 알림, 날짜 표시)
+import { logUse } from './uselog.js';
 
 // el('div.card#id', {onclick, title}, 자식...) — 글자는 textContent 로만 넣어 안전하게
 export function el(spec, attrs, ...children) {
@@ -39,7 +40,10 @@ export function clear(node, ...children) {
 
 export function toast(message, type = 'info', ms = 3500) {
     const t = el('div.toast', message);
-    if (type === 'error') t.classList.add('error');
+    if (type === 'error') {
+        t.classList.add('error');
+        logUse('toast', message);   // 사용 기록: 화면에 뜬 오류 알림 (이름은 서버가 가림)
+    }
     document.getElementById('toasts').append(t);
     setTimeout(() => t.remove(), ms);
 }

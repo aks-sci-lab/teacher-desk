@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 
-from . import ai, docs, docwrite, formfill
+from . import ai, applog, docs, docwrite, formfill
 
 SUPPORTED = tuple(docs.SUPPORTED) + (".docx",)
 SKIP_PREFIX = ("~$", ".")          # 오피스 임시 잠금 파일, 숨은 파일
@@ -496,6 +496,7 @@ class Job:
                 try:
                     on_done(result, error)
                 except Exception as e:   # 답을 보내지 못해도 결과 파일은 그대로
+                    applog.exception("folderdoc", "문서 작성 결과 알림", e)
                     self.db.log(f"문서 작성 결과 알림 오류: {type(e).__name__}", "error")
 
         self.thread = threading.Thread(target=run, name=f"folderdoc-{kind}", daemon=True)
