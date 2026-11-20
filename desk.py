@@ -65,6 +65,7 @@ def main(argv=None):
                 return 0
             return run(args, config, db)
     finally:
+        applog.shutdown()   # 사용 기록 파일을 닫음 (업데이트로 일찍 끝날 때도 — 윈도우는 열린 파일을 못 지움)
         db.close()  # 업데이트 창이 프로그램 파일을 바꾸기 전에 자료 파일을 닫아 둠
 
 
@@ -162,7 +163,6 @@ def run(args, config, db):
         app.update_checker.stop()
         httpd.server_close()
         db.log("업무 데스크 종료")
-        applog.shutdown()
         cloud.shutdown()   # 마지막 기록까지 올리고 잠금을 풂 (켠 경우만, 못 올리면 다음에 켤 때 올림)
     return 0
 
