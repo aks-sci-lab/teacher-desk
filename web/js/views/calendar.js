@@ -10,7 +10,8 @@ let month = todayIso().slice(0, 7);  // 'YYYY-MM'
 let upcoming = [];
 
 function openEvent(e) {
-    if (e.item_id) openItem(e.item_id);
+    if (e.item_source === 'school') openEventForm({ ...e, school: true });   // 학사일정은 묶음 항목 대신 그 줄을 고치기 (0.6.18)
+    else if (e.item_id) openItem(e.item_id);
     else openEventForm(e);
 }
 
@@ -20,10 +21,12 @@ export const exportIcs = guarded(async () => {
     toast('달력 파일을 내려받았습니다. 구글 캘린더 → 설정 → 가져오기에서 올리세요.', 'info', 6000);
 });
 
+// e.school: 학사일정(나이스·파일에서 가져온 것) — 고치면 기록에 남고 다시 가져와도 고친 대로 (0.6.18)
 export function openEventForm(e = {}) {
     const ev = { date: todayIso(), time: '', kind: 'event', category: '참고', text: '', ...e };
+    const head = e.school ? '학사일정 고치기' : e.id ? '일정 고치기' : '새 일정';
     openPopup({
-        id: e.id ? `event-${e.id}` : 'event-new', refresh: true, title: e.id ? '일정 고치기' : '새 일정',
+        id: e.id ? `event-${e.id}` : 'event-new', refresh: true, title: head,
         render(pane, tab) {
             const f = {
                 date: el('input', { type: 'date', value: ev.date }),
@@ -33,9 +36,12 @@ export function openEventForm(e = {}) {
                     el('option', { value: 'deadline', selected: ev.kind === 'deadline' }, '마감')),
                 cat: el('select', CATEGORIES.map(c => el('option', { value: c, selected: c === ev.category }, c))),
                 text: el('input', { type: 'text', value: ev.text, placeholder: '예: 학년 협의회' }),
+                note: el('input', { type: 'text', maxLength: 200, placeholder: '예: 학교 안내로 날짜 바뀜 (적지 않아도 됩니다)' }),
             };
+            const note = () => (e.school ? `?note=${encodeURIComponent(f.note.value.trim())}` : '');
             pane.append(
-                el('h1', e.id ? '일정 고치기' : '새 일정'),
+                el('h1', head),
+                e.school && el('p.small.muted', '나이스·파일에서 가져온 학사일정입니다. 고치거나 지우면 언제·무엇을 바꿨는지 기록에 남고, 학사일정을 다시 가져와도 고친 대로 유지됩니다.'),
                 el('div.grid2',
                     el('label.field', el('span', '날짜'), f.date),
                     el('label.field', el('span', '끝 날짜 (기간일 때)'), f.end),
@@ -43,10 +49,12 @@ export function openEventForm(e = {}) {
                     el('label.field', el('span', '종류'), f.kind),
                     el('label.field', el('span', '분류'), f.cat)),
                 el('label.field', el('span', '내용'), f.text),
+                e.school && el('label.field', el('span', '고친 이유 (선택, 기록에 남음)'), f.note),
                 el('div.row',
                     el('button.btn.primary', { onclick: guarded(async () => {
                         const body = { date: f.date.value, end_date: f.end.value || null, time: f.time.value || null,
                             kind: f.kind.value, category: f.cat.value, text: f.text.value };
+                        if (e.school) body.note = f.note.value;
                         if (e.id) await api.patch(`/api/events/${e.id}`, body);
                         else await api.post('/api/events', body);
                         toast('저장했습니다');
@@ -54,8 +62,8 @@ export function openEventForm(e = {}) {
                         emit('data-changed');
                     }) }, '저장'),
                     e.id && el('button.btn.danger', { onclick: guarded(async () => {
-                        if (!confirm('이 일정을 지울까요?')) return;
-                        await api.del(`/api/events/${e.id}`);
+                        if (!confirm(e.school ? '이 학사일정을 지울까요? 지운 것도 기록에 남습니다.' : '이 일정을 지울까요?')) return;
+                        await api.del(`/api/events/${e.id}${note()}`);
                         tab.close();
                         emit('data-changed');
                     }) }, '삭제')));

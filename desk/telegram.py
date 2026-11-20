@@ -25,7 +25,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from . import VERSION, absence, ai, applog, calllog, assist, coolmsg, coolsend, docs, folderdoc, formfill, holidays, passlink, preview, printing, providers, queries, timetable, weekplan
+from . import VERSION, absence, ai, register, applog, calllog, assist, coolmsg, coolsend, docs, folderdoc, formfill, holidays, passlink, preview, printing, providers, queries, timetable, weekplan
 from .collect import SOURCE_NAMES, item_file
 
 HELP = (
@@ -919,20 +919,13 @@ class Bot:
         today = today or date.today()
         first = today.replace(day=1)
         last = (first + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-        passes = self.db.query("SELECT kind, COUNT(*) AS n FROM passes WHERE date >= ? AND date <= ? AND status != 'cancelled' "
-                               "GROUP BY kind", (first.isoformat(), last.isoformat()))
-        count = {r["kind"]: r["n"] for r in passes}
-        rows = self.db.query("SELECT start_date, end_date, absence_type FROM absences WHERE start_date <= ? AND end_date >= ?",
-                             (last.isoformat(), first.isoformat()))
-        days = dict.fromkeys(absence.TYPES, 0)
-        for r in rows:
-            got = absence.school_dates(self.db, max(date.fromisoformat(r["start_date"]), first),
-                                       min(date.fromisoformat(r["end_date"]), last), self.config["grade"])
-            days[r["absence_type"]] = days.get(r["absence_type"], 0) + len(got)
-        kinds = " · ".join(f"{k} {v}" for k, v in days.items() if v)
+        # 웹 '월별 통계'와 같은 셈 (조퇴 = 조퇴증 + 증 없이 출석부에 체크한 조퇴, 0.6.18). 학급 합계만 보냄
+        t = register.month_report(self.db, first, last, self.config["grade"])["totals"]
+        kinds = " · ".join(f"{k} {v}" for k, v in t["absence_days"].items() if v)
+        early = f"🏃 조퇴 {t['early_count']}건" + (f"(증 없이 체크 {t['early_mark']}건 포함)" if t["early_mark"] else "")
         return (f"📊 {today.month}월 출결 (학급 합계, {today.month}/{today.day} 까지 기록)\n"
-                f"🏃 조퇴 {count.get('early', 0)}건 · 🚶 외출 {count.get('out', 0)}건\n"
-                f"📝 결석계 {len(rows)}건 · 결석 {sum(days.values())}일" + (f" ({kinds})" if kinds else "")
+                f"{early} · 🚶 외출 {t['out_count']}건 · 지각 {t['late_count']}건 · 결과 {t['result_count']}건\n"
+                f"📝 결석계 {t['absence_forms']}건 · 결석 {t['total_absence_days']}일" + (f" ({kinds})" if kinds else "")
                 + "\n학생별 통계는 업무 데스크 → 출결 → 월별 통계에서 봅니다.")
 
     def begin_dialog(self, cid, kind, **extra):
