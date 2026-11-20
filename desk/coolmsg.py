@@ -38,6 +38,8 @@ SENDER_HINTS = ("sender", "from", "send_name", "sendname", "username", "user_nam
 RECEIVER_HINTS = ("receiver", "recipient", "recver", "target", "to_", "받는")
 # 첨부 파일 목록 열 (학교 PC 쿨메신저 tbl_recv.FilePath, 선생님이 보낸 파일 구조로 확인 2026-11-20). FileHost 는 서버 주소라 뺌
 FILES_HINTS = ("filepath", "filelist", "filename", "attachfile", "attachment", "attach")
+# 내가 보낸 쪽지 표 (학교 PC 쿨메신저 tbl_send: Receiver·SendDate, 받은 쪽지 표 tbl_recv 와 따로, 2026-11-20 확인)
+SENT_TABLE_HINTS = ("send", "sent", "outbox", "보낸")
 SKIP_TABLE_HINTS = ("sqlite_", "config", "setting", "option", "version", "meta", "attach", "file", "group", "buddy")
 
 
@@ -311,43 +313,73 @@ def _hint(name, hints):
     return any(h in n for h in hints)
 
 
+def _table_info(conn, t):
+    """표 하나에서 쪽지 내용·날짜·제목·보낸/받는 사람·첨부 열을 찾음. 쪽지 표가 아니면 None."""
+    q = _q(t)
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({q})")]
+    rows = conn.execute(f"SELECT COUNT(*) FROM {q}").fetchone()[0]
+    if not rows or not cols:
+        return None
+    sample = conn.execute(f"SELECT * FROM {q} ORDER BY rowid DESC LIMIT 50").fetchall()
+    text_len, date_ok = {}, {}
+    for ci, c in enumerate(cols):
+        vals = [r[ci] for r in sample]
+        texts = [clean_body(v) for v in vals if isinstance(v, (str, bytes))]
+        text_len[c] = sum(len(x) for x in texts) / max(len(vals), 1)
+        date_ok[c] = sum(1 for v in vals if parse_when(v)) / max(len(vals), 1)
+    # 내용 열: 이름이 맞으면 우선, 아니면 가장 긴 글
+    body = max(cols, key=lambda c: (text_len[c] > 0 and _hint(c, BODY_HINTS), text_len[c]))
+    if text_len[body] < 2:
+        return None
+    date_cands = [c for c in cols if c != body and date_ok[c] >= 0.8]
+    date = max(date_cands, key=lambda c: (_hint(c, DATE_HINTS), date_ok[c]), default=None)
+    title = next((c for c in cols if c not in (body, date) and _hint(c, TITLE_HINTS)), None)
+    sender_cols = [c for c in cols if c not in (body, date, title) and _hint(c, SENDER_HINTS) and text_len[c] > 0]
+    # 사람 이름이 든 열(…name)을 번호·식별값(…key·…id)보다 먼저 (내가 보낸 쪽지를 이름으로 알아보려고)
+    sender = min(sender_cols, key=lambda c: (not c.lower().endswith("name"), cols.index(c)), default=None)
+    # 받는 사람: 이름 열을 번호·식별값(…key·…id) 열보다 먼저
+    recv_cols = [c for c in cols if c not in (body, date, title, sender) and _hint(c, RECEIVER_HINTS)
+                 and not _hint(c, ("cc", "reference")) and text_len[c] > 0]
+    receiver = min(recv_cols, key=lambda c: (c.lower().endswith(("key", "id")), cols.index(c)), default=None)
+    files = next((c for c in cols if c not in (body, date, title, sender) and _hint(c, FILES_HINTS)
+                  and not _hint(c, ("host", "session", "size", "count", "cnt"))), None)
+    score = text_len[body] * (2 if _hint(t, BODY_HINTS) else 1) + (50 if date else 0) + min(rows, 1000) / 100
+    return {"table": t, "body": body, "title": title, "date": date, "sender": sender, "receiver": receiver, "files": files,
+            "rows": rows, "score": score}
+
+
+def _is_sent_table(t):
+    return _hint(t, SENT_TABLE_HINTS)
+
+
 def detect(conn):
-    """쪽지가 들어 있는 표와 열을 찾음. {'table', 'body', 'title', 'date', 'sender', 'rows'} 또는 None."""
-    best = None
+    """(받은) 쪽지가 들어 있는 표와 열을 찾음. {'table', 'body', 'title', 'date', 'sender', 'rows'} 또는 None.
+    보낸 쪽지 표(tbl_send 등)는 다른 쪽지 표가 없을 때만 (보낸 쪽지는 detect_sent 로 따로 읽음)."""
+    best = best_sent = None
     tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
     for t in tables:
         if _hint(t, SKIP_TABLE_HINTS):
             continue
-        q = _q(t)
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({q})")]
-        rows = conn.execute(f"SELECT COUNT(*) FROM {q}").fetchone()[0]
-        if not rows or not cols:
+        cand = _table_info(conn, t)
+        if not cand:
             continue
-        sample = conn.execute(f"SELECT * FROM {q} ORDER BY rowid DESC LIMIT 50").fetchall()
-        text_len, date_ok = {}, {}
-        for ci, c in enumerate(cols):
-            vals = [r[ci] for r in sample]
-            texts = [clean_body(v) for v in vals if isinstance(v, (str, bytes))]
-            text_len[c] = sum(len(x) for x in texts) / max(len(vals), 1)
-            date_ok[c] = sum(1 for v in vals if parse_when(v)) / max(len(vals), 1)
-        # 내용 열: 이름이 맞으면 우선, 아니면 가장 긴 글
-        body = max(cols, key=lambda c: (text_len[c] > 0 and _hint(c, BODY_HINTS), text_len[c]))
-        if text_len[body] < 2:
+        if _is_sent_table(t):
+            if best_sent is None or cand["score"] > best_sent["score"]:
+                best_sent = cand
+        elif best is None or cand["score"] > best["score"]:
+            best = cand
+    return best or best_sent
+
+
+def detect_sent(conn, main=None):
+    """내가 보낸 쪽지 표 (받은 쪽지 표와 다른 표, 이름에 send·sent 가 있고 받는 사람 열이 있는 것). 없으면 None."""
+    main = main if main is not None else detect(conn)
+    best = None
+    for (t,) in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'"):
+        if (main and t == main["table"]) or not _is_sent_table(t) or _hint(t, SKIP_TABLE_HINTS):
             continue
-        date_cands = [c for c in cols if c != body and date_ok[c] >= 0.8]
-        date = max(date_cands, key=lambda c: (_hint(c, DATE_HINTS), date_ok[c]), default=None)
-        title = next((c for c in cols if c not in (body, date) and _hint(c, TITLE_HINTS)), None)
-        sender_cols = [c for c in cols if c not in (body, date, title) and _hint(c, SENDER_HINTS) and text_len[c] > 0]
-        # 사람 이름이 든 열(…name)을 번호·식별값(…key·…id)보다 먼저 (내가 보낸 쪽지를 이름으로 알아보려고)
-        sender = min(sender_cols, key=lambda c: (not c.lower().endswith("name"), cols.index(c)), default=None)
-        receiver = next((c for c in cols if c not in (body, date, title, sender) and _hint(c, RECEIVER_HINTS)
-                         and not _hint(c, ("cc", "reference")) and text_len[c] > 0), None)
-        files = next((c for c in cols if c not in (body, date, title, sender) and _hint(c, FILES_HINTS)
-                      and not _hint(c, ("host", "session", "size", "count", "cnt"))), None)
-        score = text_len[body] * (2 if _hint(t, BODY_HINTS) else 1) + (50 if date else 0) + min(rows, 1000) / 100
-        cand = {"table": t, "body": body, "title": title, "date": date, "sender": sender, "receiver": receiver, "files": files,
-                "rows": rows, "score": score}
-        if best is None or cand["score"] > best["score"]:
+        cand = _table_info(conn, t)
+        if cand and cand["receiver"] and (best is None or cand["score"] > best["score"]):
             best = cand
     return best
 
@@ -405,9 +437,22 @@ def is_mine(sender, me):
     return _same(sender, me)
 
 
+RECEIVER_SPLIT = re.compile(r"[,;|\n\x00\x01\x02]+")
+MAX_RECEIVER_NAMES = 5
+
+
+def receivers(v):
+    """받는 사람 칸 → '이름, 이름 외 3명' (많이 보낸 쪽지도 한 줄로). 실제 값 모양은 아직 몰라 쉼표·세미콜론·| 로 나눔."""
+    names = [n.strip() for n in RECEIVER_SPLIT.split(clean_body(v)) if n.strip()]
+    if len(names) > MAX_RECEIVER_NAMES:
+        return ", ".join(names[:MAX_RECEIVER_NAMES]) + f" 외 {len(names) - MAX_RECEIVER_NAMES}명"
+    return ", ".join(names)
+
+
 def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN, me=""):
     q = _q(info["table"])
-    cols = [c for c in (info["body"], info["title"], info["date"], info["sender"], info.get("files")) if c]
+    cols = list(dict.fromkeys(c for c in (info["body"], info["title"], info["date"], info["sender"],
+                                          info.get("receiver"), info.get("files")) if c))
     sel = ", ".join(["rowid"] + [_q(c) for c in cols])
     out = []
     for r in conn.execute(f"SELECT {sel} FROM {q} {where} ORDER BY rowid {order} LIMIT ?", (*args, limit)):
@@ -419,6 +464,7 @@ def _rows(conn, info, where="", args=(), order="ASC", limit=MAX_ROWS_PER_RUN, me
             "title": clean_body(rec[info["title"]]) if info["title"] else "",
             "sender": clean_body(rec[info["sender"]]) if info["sender"] else "",
             "mine": is_mine(clean_body(rec[info["sender"]]), me) if info["sender"] else False,
+            "receiver": receivers(rec[info["receiver"]]) if info.get("receiver") else "",
             "when": parse_when(rec[info["date"]]) if info["date"] else None,
             "files": file_names(rec[info["files"]]) if info.get("files") else [],
             "file_paths": file_paths(rec[info["files"]]) if info.get("files") else [],
@@ -457,6 +503,33 @@ def read_new(path, last_rowid=None, now=None, me=""):
             memos = _rows(conn, info, "WHERE rowid > ?", (last_rowid,), me=me)
             top = max([last_rowid] + [m["rowid"] for m in memos])
         return info, [m for m in memos if m["body"]], top
+
+
+def read_new_sent(path, last_rowid=None, now=None):
+    """내가 보낸 쪽지 표(tbl_send 등)에서 새로 보낸 쪽지들과 새 마지막 rowid. 보낸 쪽지 표가 없으면 ([], None).
+    처음에는 read_new 와 같이 최근 FIRST_IMPORT_DAYS 일만."""
+    now = now or datetime.now()
+    with Snapshot(path) as conn:
+        info = detect_sent(conn)
+        if not info:
+            return [], None
+        top_now = conn.execute(f"SELECT MAX(rowid) FROM {_q(info['table'])}").fetchone()[0] or 0
+        if last_rowid is not None and last_rowid > top_now:
+            last_rowid = None
+        if last_rowid is None:
+            memos = _rows(conn, info, order="DESC")[::-1]
+            if info["date"]:
+                since = now - timedelta(days=FIRST_IMPORT_DAYS)
+                memos = [m for m in memos if m["when"] and m["when"] >= since]
+            else:
+                memos = memos[-FIRST_IMPORT_ROWS:]
+            top = top_now
+        else:
+            memos = _rows(conn, info, "WHERE rowid > ?", (last_rowid,))
+            top = max([last_rowid] + [m["rowid"] for m in memos])
+        for m in memos:
+            m["mine"] = True
+        return [m for m in memos if m["body"]], top
 
 
 def memos_for_rowids(path, rowids):
@@ -515,6 +588,9 @@ def check(path, me=""):
                     if k == "인터넷":
                         hosts.add(src.split("/")[2][:60])
             out["images"] = {"kinds": kinds, "hosts": sorted(hosts)[:10]}
+            sent = detect_sent(conn, info)   # 보낸 쪽지 표 (있으면 '쿨메신저 보냄' 은 여기서 읽음)
+            if sent:
+                out["sent"] = {k: sent.get(k) for k in ("table", "body", "title", "date", "receiver", "files", "rows")}
             for m in _rows(conn, info, order="DESC", limit=3):
                 first = m["title"] or m["body"].split("\n", 1)[0]
                 out["recent"].append({"title": first[:60], "sender": m["sender"][:20],
