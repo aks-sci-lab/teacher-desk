@@ -1,4 +1,4 @@
-"""쿨메신저 보낸 쪽지 표(tbl_send) 읽기 (0.6.18, 선생님 "쿨메신저 보낸 메세지는 조회가 안되는데").
+"""쿨메신저 보낸 쪽지 표(tbl_send) 읽기 (0.6.19, 선생님 "쿨메신저 보낸 메세지는 조회가 안되는데").
 학교 PC .udb 는 받은 쪽지(tbl_recv: Sender·ReceiveDate)와 보낸 쪽지(tbl_send: Receiver·SendDate)가 다른 표 (2026-11-20 확인)."""
 
 import os

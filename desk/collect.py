@@ -288,7 +288,7 @@ def cool_sent_text(m):
 
 
 def scan_cool_sent(db, path, stats):
-    """쿨메신저 '보낸 쪽지' 표(tbl_send)에서 새로 보낸 쪽지를 '쿨메신저 보냄' 으로 (0.6.18).
+    """쿨메신저 '보낸 쪽지' 표(tbl_send)에서 새로 보낸 쪽지를 '쿨메신저 보냄' 으로 (0.6.19).
     받은 쪽지 표만 읽어서 보낸 쪽지가 수신함에 하나도 안 나오던 것 (선생님 "보낸 메세지는 조회가 안되는데")."""
     key = f"cool_sent_rowid:{path}"
     try:
