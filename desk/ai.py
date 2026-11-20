@@ -512,8 +512,12 @@ def cool_fields(text, body=""):
         key = names.get(label)
         if key and key not in found:
             found[key] = m.group(2).strip().strip("*").strip()
-    if len(found) < 2:
-        return None
+    if len(found) < 2:   # 0.6.14 칸 이름 없이 값만 다섯 줄로 답한 경우 (학교 PC Gemma 4, 2026-11-20): 순서대로 읽음
+        values = [re.sub(r"^\s*(?:[-*•·]|\d+[.)])\s*", "", l).strip().strip("*").strip() for l in (text or "").splitlines()]
+        values = [v for v in values if v]
+        if len(values) != len(COOL_KEYS) or not re.search(r"긴급|보통|급", values[-1]):
+            return None
+        found = {key: v for (key, _), v in zip(COOL_KEYS, values)}
     out = {}
     for key, _ in COOL_KEYS:
         v = found.get(key, "")
