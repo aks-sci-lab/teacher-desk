@@ -1,14 +1,14 @@
 // 시간표: 학교 시간표 엑셀 → 내 시간표(주마다, 교체 반영) · 내 수업 교체 후보 · 교체 부탁 글 · 교체 기록(달력)
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { el, clear, toast, guarded, todayIso, addDays, parseIso, modal } from '../ui.js';
+import { el, clear, toast, guarded, todayIso, planDay, thisWeekLabel, addDays, parseIso, modal } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, emit, on } from '../shell.js';
 import { store } from '../store.js';
 
 // 시간표 담당용 전체 교체 도구 (사용자가 준 파일, GitHub Pages)
 const WEB_TOOL = 'https://aks-sci-lab.github.io/teacher-desk/timetable/';
 let info = null;          // GET /api/timetable
-let week = todayIso();    // 보고 있는 주 (그 주의 아무 날)
+let week = planDay();    // 보고 있는 주 (그 주의 아무 날)
 let viewTid = null;       // 보고 있는 선생님 (기본: 나)
 let picked = null;        // { key, date, cands }
 let viewMode = 'teacher';
@@ -150,7 +150,7 @@ function weekNav(mon, tab) {
         el('button.btn.small', { onclick: move(-7), title: '지난주' }, '◀'),
         el('b.tt-week', `${md(mon)} ~ ${md(addDays(mon, 4))}`),
         el('button.btn.small', { onclick: move(7), title: '다음 주' }, '▶'),
-        el('button.btn.small', { onclick: () => { week = todayIso(); picked = null; tab.rerender(); } }, '이번 주'));
+        el('button.btn.small', { onclick: () => { week = planDay(); picked = null; tab.rerender(); } }, thisWeekLabel()));
 }
 
 const periodTime = p => {
@@ -370,9 +370,8 @@ function renderWeek(pane, tab) {
                     el('button.btn.small', { onclick: move(-7), title: '지난주' }, '◀'),
                     el('b.tt-week', `${md(mon)} ~ ${md(addDays(mon, info.days.length - 1))}`),
                     el('button.btn.small', { onclick: move(7), title: '다음 주' }, '▶'),
-                    el('button.btn.small', { onclick: () => { week = todayIso(); picked = null; tab.rerender(); } }, '이번 주')),
+                    el('button.btn.small', { onclick: () => { week = planDay(); picked = null; tab.rerender(); } }, thisWeekLabel())),
                 el('span.spacer'),
-                teacherSearch(id => { viewTeacher(id); tab.rerender(); }),
                 viewSwitch(tab), el('label.tt-view', '선생님 ', teacherSel),
                 !mine && !teacherReadOnly && el('button.btn.small.primary', { onclick: () => setMe(tid), title: '브리핑의 오늘 내 수업·텔레그램·교체 후보를 이 선생님 기준으로' }, `이 선생님을 '나'로`)),
             info.me == null && el('div.tt-me',

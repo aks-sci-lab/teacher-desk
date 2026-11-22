@@ -27,16 +27,13 @@ function openAttendance() {
             pane.append(el('h1', selected.label));
             if (section === 'passes') {
                 pane.append(
-                    el('p.sub', '왼쪽 목록에서 발급 기록을 열고, 새 조퇴증·외출증을 작성할 수 있습니다.'),
-                    el('div.row',
-                        el('button.btn.primary', { onclick: () => openForm({ kind: 'early' }) }, '+ 조퇴증'),
-                        el('button.btn.primary', { onclick: () => openForm({ kind: 'out' }) }, '+ 외출증')));
+                    // 새로 쓰는 단추는 왼쪽 목록 위에만 (같은 단추가 두 번 보이지 않게, 0.6.20)
+                    el('p.sub', '왼쪽 목록에서 발급 기록을 누르면 열립니다. 새로 쓰려면 왼쪽 위 [+ 조퇴증]·[+ 외출증]을 누르세요.'));
                 return;
             }
             if (section === 'absences') {
                 pane.append(
-                    el('p.sub', '왼쪽 목록에서 결석계를 확인하고, 새 결석계를 작성할 수 있습니다.'),
-                    el('div.row', el('button.btn.primary', { onclick: () => openAbsenceForm() }, '+ 결석계')));
+                    el('p.sub', '왼쪽 목록에서 결석계를 누르면 열립니다. 새로 쓰려면 왼쪽 위 [+ 결석계]를 누르세요.'));
                 return;
             }
             if (section === 'register') return renderRegister(pane);

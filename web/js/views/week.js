@@ -1,14 +1,14 @@
 // 🗓 주간 계획: 월~금 다섯 칸에 일정·마감·꼭 할 일·학사일정, 날짜 없는 꼭 할 일은 '이번 주 안에'
 // 학사일정 줄을 누르면 고칠 수 있고, 고친 것은 기록에 남음 (0.6.18)
 import { api } from '../api.js';
-import { el, clear, guarded, todayIso, addDays, parseIso, dayLabel, ddayInfo, catBadge, CAT_VARS } from '../ui.js';
+import { el, clear, guarded, todayIso, planDay, thisWeekLabel, addDays, parseIso, dayLabel, ddayInfo, catBadge, CAT_VARS } from '../ui.js';
 import { registerView, openTab, findTab, on, openPopup } from '../shell.js';
 import { openItem } from './inbox.js';
 import { openEventForm } from './calendar.js';
 
 const KEY = 'desk.week.days';
 const monday = iso => addDays(iso, -((parseIso(iso).getDay() + 6) % 7));
-let start = monday(todayIso());
+let start = monday(planDay());
 let days = (() => { try { return localStorage.getItem(KEY) === '14' ? 14 : 7; } catch { return 7; } })();   // 기본 1주, 마지막 선택 기억
 
 const openEv = e => (e.item_id ? openItem(e.item_id) : openEventForm(e));
@@ -92,7 +92,7 @@ function render(pane, tab) {
         el('div.cal-head',
             el('h1', `${dayLabel(start, false)} ~ ${dayLabel(last, false)}`),
             el('button.btn.small', { onclick: move(-1) }, '◀ 이전 주'),
-            el('button.btn.small', { onclick: () => { start = monday(todayIso()); tab.rerender(); } }, '이번 주'),
+            el('button.btn.small', { onclick: () => { start = monday(planDay()); tab.rerender(); } }, thisWeekLabel()),
             el('button.btn.small', { onclick: move(1) }, '다음 주 ▶'),
             el('span.spacer'),
             el('button.btn.small', { onclick: openSchoolEdits, title: '학사일정을 언제·어떻게 고쳤는지 보기' }, '학사일정 고친 기록'),

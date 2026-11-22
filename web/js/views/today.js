@@ -186,7 +186,7 @@ function todoBox(aiNodes = [], more = null) {
     };
     const li = t => {
         const dd = t.date && ddayInfo(t.date);
-        const node = el('li', { className: `todo${t.done ? ' done' : ''}`, dataset: { todo: t.id } },
+        const node = el('li', { className: `todo${t.done ? ' done' : ''}${t.date ? '' : ' nodate'}`, dataset: { todo: t.id } },
             !t.done && el('span.todo-grip', { title: '끌어서 순서 바꾸기' }, '⠿'),
             el('input', { type: 'checkbox', checked: !!t.done, title: '업무 완료로 표시', 'aria-label': '업무 완료', onchange: e => patch(t, { done: e.target.checked }) }),
             t.date ? el('span.ai-when', dayLabel(t.date, false) + (t.time ? ` ${t.time}` : ''),
@@ -400,7 +400,7 @@ function sinceList(sv) {
             : el('p.muted.small', '새로 받은 쪽지·공문이 없습니다.'));
 }
 
-function aiCard(todoCard, sv) {
+function aiCard(todoCard, sv, newCard) {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
     // 꼭 할 일: AI 요약이 보이면 요약의 '꼭 할 일' 칸 안에, 아니면 따로 카드로
     const standalone = on => { todoCard.hidden = !on; };
@@ -469,8 +469,15 @@ function aiCard(todoCard, sv) {
         const st = await api.get('/api/ai/weekly');
         if (!st.enabled) {
             standalone(true);
-            clear(body, sinceList(sv),
-                el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 이 자료들을 AI 가 요약해 드립니다.'));
+            const note = el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 이 자료들을 AI 가 요약해 드립니다.');
+            // AI 가 꺼져 있으면 이 칸은 받은 자료 목록뿐이라 '새로 받은 자료'와 거의 같음
+            // → 이 자리에 '새로 받은 자료' 칸을 옮겨 와 한 번만 보이고, 안내는 그 아래에 (0.6.20)
+            if (newCard) {
+                newCard.append(note);
+                box.replaceWith(newCard);
+                return;
+            }
+            clear(body, sinceList(sv), note);
             return;
         }
         if (st.running) return poll();
@@ -505,7 +512,8 @@ function aiCard(todoCard, sv) {
         }
     };
     setTimeout(() => run('auto').catch(e => { show({}, e.message); standalone(true); }), 0);  // 카드가 화면에 붙은 뒤 시작
-    return card(sv?.first ? '지난 1주일 요약' : `마지막 로그아웃(업무 데스크를 닫은) 이후 요약 (${atLabel(sv?.prev_end)}부터)`, null, body, { cls: 'ai-card' });
+    const box = card(sv?.first ? '지난 1주일 요약' : `마지막 로그아웃(업무 데스크를 닫은) 이후 요약 (${atLabel(sv?.prev_end)}부터)`, null, body, { cls: 'ai-card' });
+    return box;
 }
 
 // 비어 있는 카드는 머리 아래 작은 한 줄로 모음 ('오늘 일정 없음 · 7일 안 마감 없음'), 내용 있는 카드만 칸을 차지
@@ -540,7 +548,7 @@ function statusChip(s, st) {
             el('ul.small', problem.slice(0, 8).map(t => el('li', String(t))))) : null) });
     return el(`button.btn.small.status-chip${warn ? '.warn' : ''}`,
         { title: warn ? '문제가 있습니다. 눌러서 자세히 보기' : '자동 수집 상태 자세히 보기', onclick: detail },
-        `${last} 수집 · 다음 ${st?.next_collect || '-'}`);
+        `${s.last_run ? `${last} 수집` : '아직 수집 안 함'} · 다음 수집 ${st?.next_collect || '-'}`);
 }
 
 // 학급: 오늘 당번·이번 주 주번·이번 기간 청소 (설정한 것만, 작게. 0.5.80)
@@ -603,7 +611,7 @@ function renderToday(pane) {
                 const left = [todoCard,
                     s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                     s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
-                    aiCard(todoCard, s.since_visit)].filter(Boolean);
+                    aiCard(todoCard, s.since_visit, newCard)].filter(Boolean);
                 const right = [
                     s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
                         ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },

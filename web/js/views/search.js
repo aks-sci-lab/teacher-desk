@@ -1,7 +1,7 @@
 // 🔍 전체 검색: 수신 항목(제목·본문·요약·문서번호) · 일정 · 조퇴/외출 기록 · 학생 명단
 import { api } from '../api.js';
 import { el, clear, guarded, debounce, dayLabel, catBadge, srcBadge, eventLine } from '../ui.js';
-import { registerView } from '../shell.js';
+import { registerView, openTab } from '../shell.js';
 import { openItem } from './inbox.js';
 import { openPass, openRoster } from './passes.js';
 import { openCalendar } from './calendar.js';
@@ -38,4 +38,10 @@ registerView({
         run();
         setTimeout(() => input.focus(), 0);
     },
+    // 검색 메뉴를 누르면 오른쪽에도 검색 안내 (예전 화면이 남아 헷갈리지 않게, 0.6.20)
+    open: () => openTab({ id: 'search-home', menu: true, title: '검색', render(pane) {
+        pane.append(el('h1', '검색'),
+            el('p.sub', '왼쪽 칸에 낱말을 쓰면 받은 쪽지·공문, 일정, 조퇴·외출 기록, 학생 명단에서 찾습니다. 결과를 누르면 여기에 열립니다.'),
+            el('p.sub', '띄어 쓰면 모든 낱말이 들어간 것만 보여 줍니다. 어느 화면에서나 Ctrl+K 를 누르면 검색으로 옵니다.'));
+    } }),
 });

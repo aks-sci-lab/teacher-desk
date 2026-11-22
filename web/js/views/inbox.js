@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import { el, clear, toast, guarded, dayLabel, debounce, catBadge, srcBadge, todayIso, parseIso, ddayInfo, markDates, modal, WD, CATEGORIES, SOURCE_NAMES } from '../ui.js';
 import { icon } from '../icons.js';
-import { registerView, openTab, pinTab, refreshSide, findTab, setBadge, emit, on, openPopup } from '../shell.js';
+import { registerView, openTab, pinTab, refreshSide, findTab, setBadge, emit, on, openPopup, showTabWhere } from '../shell.js';
 import { loadState, store } from '../store.js';
 
 let filter = { status: 'active', source: '' };
@@ -495,9 +495,23 @@ function imageGrid(it) {
     return grid;
 }
 
+// 수신함 메뉴를 누르면 오른쪽에도 수신함 것을: 열어 둔 자료가 있으면 그것, 없으면 안내 (예전 화면이 남아 헷갈리지 않게, 0.6.20)
+function openInboxHome() {
+    if (showTabWhere(t => String(t.id).startsWith('item-'))) return;
+    openTab({ id: 'inbox-home', menu: true, title: '수신함', render(pane) {
+        const n = store.state?.counts?.new_items || 0;
+        pane.append(el('h1', '수신함'),
+            el('p.sub', n ? `새로 받은 자료 ${n}건이 있습니다. 왼쪽 목록에서 자료를 누르면 여기에 열립니다.` : '왼쪽 목록에서 자료를 누르면 여기에 열립니다.'),
+            el('div.row',
+                el('button.btn', { onclick: () => openPaste() }, icon('plus'), '메시지·공문 붙여넣기'),
+                el('button.btn', { onclick: () => collectNow() }, icon('refresh'), '지금 수집')));
+    } });
+}
+
 registerView({
     id: 'inbox', icon: '📥', label: '수신함',
     renderSide,
+    open: openInboxHome,
 });
 
 async function refresh() {

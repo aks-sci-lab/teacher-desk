@@ -39,7 +39,9 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 CATEGORIES = set(extract.CATEGORIES)
 MAX_BODY = 20 * 1024 * 1024  # 학사일정 파일 올리기(base64) 때문에 넉넉히
 
-CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
+CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+       # 글꼴 Pretendard 는 jsdelivr 에서 (못 받으면 맑은 고딕으로 그대로 보임, 0.6.20)
+       "font-src 'self' https://cdn.jsdelivr.net; "
        # 쿨메신저 사진·스티커가 인터넷 주소일 수 있어 http(s) 그림은 허용 (스크립트·연결은 이 PC 만)
        "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
