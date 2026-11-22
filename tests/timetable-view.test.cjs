@@ -22,7 +22,7 @@ function setup(response) {
     const context = vm.createContext({
         el, clear: (node, ...children) => { node.children = children.filter(Boolean); },
         api: { get: async () => response },
-        todayIso: () => '2026-11-03',
+        todayIso: () => '2026-11-03', planDay: () => '2026-11-03', thisWeekLabel: () => '이번 주',
         parseIso: iso => new Date(iso + 'T00:00:00'),
         addDays: (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); },
         Date: class extends Date { constructor(...args) { super(...(args.length ? args : ['2026-11-03T10:00:00'])); } },
@@ -83,7 +83,7 @@ test('공동 빈 시간: 휴업·확인 필요·수업 있는 사람·지난 교
     });
     await vm.runInContext('renderCommonFree(pane, tab, () => true)', context);
     const cells = nodes(pane).filter(n => n.spec === 'td');
-    assert.ok(cells.some(n => /tt-past/.test(n.attrs.className) && /1\/2 빔/.test(text(n))));
+    assert.ok(cells.some(n => /tt-past/.test(n.attrs.className) && /1명 빔 · 1명 수업/.test(text(n))));
     assert.ok(cells.some(n => /수업 있음: 이교사/.test(n.attrs.title)));
     assert.match(text(pane), /수업 없는 날/);
     assert.match(text(pane), /확인 필요/);
