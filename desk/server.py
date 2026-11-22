@@ -10,6 +10,7 @@ import mimetypes
 import os
 import re
 import secrets
+import threading
 import time
 from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,7 +40,9 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 CATEGORIES = set(extract.CATEGORIES)
 MAX_BODY = 20 * 1024 * 1024  # 학사일정 파일 올리기(base64) 때문에 넉넉히
 
-CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
+CSP = ("default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+       # 글꼴 Pretendard 는 jsdelivr 에서 (못 받으면 맑은 고딕으로 그대로 보임, 0.6.20)
+       "font-src 'self' https://cdn.jsdelivr.net; "
        # 쿨메신저 사진·스티커가 인터넷 주소일 수 있어 http(s) 그림은 허용 (스크립트·연결은 이 PC 만)
        "img-src 'self' data: blob: http: https:; connect-src 'self'; frame-src blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 
@@ -1915,6 +1918,30 @@ def ai_question(app, q, body):
     except ai.AIError as e:
         raise ApiError(400, str(e)) from e
     return {"text": text, "provider": provider}
+
+
+_AI_SEARCH_LOCK = threading.Lock()
+
+
+@api("POST", "/api/ai/search")
+def ai_search(app, q, body):
+    """화면의 'AI 로 찾기' (0.6.20): 텔레그램 AI 검색과 같은 길(assist.answer, 이 PC 의 LM Studio 만, 학생 이름 가림)."""
+    from . import assist
+    question = text_field(body.get("q"), "찾을 내용", 300, True)
+    need(app.config["ai_enabled"], "AI 가 꺼져 있습니다. 설정 → AI 에서 LM Studio 를 켜면 쓸 수 있습니다.")
+    need(_AI_SEARCH_LOCK.acquire(blocking=False), "앞의 AI 찾기가 아직 끝나지 않았습니다. 끝나면 다시 눌러 주세요.", 409)
+    try:
+        text, ids, _cited = assist.answer(app.db, app.config, question)
+    except ai.AIError as e:
+        raise ApiError(400, f"AI 답을 만들지 못했습니다: {e}") from e
+    finally:
+        _AI_SEARCH_LOCK.release()
+    items = []
+    for n, iid in enumerate(ids, 1):
+        row = app.db.one("SELECT id, title, source FROM items WHERE id = ?", (iid,))
+        if row:
+            items.append({"n": n, "id": row["id"], "title": row["title"], "source": row["source"]})
+    return {"text": text, "items": items}
 
 
 @api("POST", "/api/ai/setup/spec")

@@ -79,6 +79,13 @@ export function todayIso() {
     return isoDate(new Date());
 }
 
+// 주 단위 화면(주간 계획·시간표)이 처음 보여 줄 날: 토·일이면 이미 끝난 주 대신 다가오는 월요일 (0.6.20)
+export function planDay() {
+    const t = todayIso(), wd = parseIso(t).getDay();
+    return wd === 6 ? addDays(t, 2) : wd === 0 ? addDays(t, 1) : t;
+}
+export const thisWeekLabel = () => (planDay() === todayIso() ? '이번 주' : '다가오는 주');
+
 export function addDays(iso, n) {
     const d = parseIso(iso);
     d.setDate(d.getDate() + n);

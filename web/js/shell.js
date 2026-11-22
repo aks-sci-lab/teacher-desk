@@ -301,6 +301,13 @@ export function closeTab(id) {
     }
 }
 
+// 이미 열린 탭 가운데 조건에 맞는 것을 앞으로 (메뉴를 바꿀 때 그 메뉴의 탭을 보여 주려고, 0.6.20)
+export function showTabWhere(test) {
+    const tab = [...tabs.values()].reverse().find(t => test(t));
+    if (tab) activate(tab.id);
+    return !!tab;
+}
+
 export function findTab(id) {
     const tab = tabs.get(id);
     if (tab) return tab;
@@ -410,6 +417,11 @@ export function setLayout(change) {
 }
 
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyLayout(layout, false));
+// 왼쪽 메뉴가 높이 안에 다 들어가면 아래 흐림(더 있음 표시)을 끔 (0.6.20)
+const menuFits = () => { const t = $('activity-top'); if (t) t.classList.toggle('fits', t.scrollHeight <= t.clientHeight + 1); };
+window.addEventListener('resize', menuFits);
+setTimeout(menuFits, 0);
+new MutationObserver(menuFits).observe($('activity-top'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
 
 // 끌어서 크기 조절
 function dragSplitter(splitter, onMove) {

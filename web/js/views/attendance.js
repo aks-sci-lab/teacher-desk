@@ -2,7 +2,7 @@
 import { api } from '../api.js';
 import { el, clear, guarded, modal, monthNav, monthKey, toast, todayIso, dayLabel } from '../ui.js';
 import { registerView, openTab, refreshSide, findTab, on, emit } from '../shell.js';
-import { renderPassesSide, openForm, passesMonth, setPassesMonth } from './passes.js';
+import { renderPassesSide, openForm, openPass, passesMonth, setPassesMonth } from './passes.js';
 import { renderAbsenceSide, openAbsenceForm, openAbsenceById } from './absence.js';
 
 const SECTIONS = [
@@ -16,6 +16,25 @@ let section = 'passes';
 let latestReport = null;
 let reportRequest = 0;
 
+// 조퇴·외출 첫 화면: 오늘 나간 학생과 아직 안 돌아온 외출 (빈 화면 대신, 0.6.20)
+function todayPasses() {
+    const box = el('section.card.pass-today', el('h3', el('span', '오늘 조퇴·외출')), el('p.muted.small', '불러오는 중…'));
+    guarded(async () => {
+        const list = (await api.get(`/api/passes?date=${todayIso()}`)).filter(p => p.status !== 'cancelled');
+        const away = list.filter(p => p.kind === 'out' && p.status !== 'returned');
+        clear(box, el('h3', el('span', '오늘 조퇴·외출'), el('span.count', list.length)),
+            away.length > 0 && el('p.pass-away', `아직 안 돌아온 외출 ${away.length}명: `, away.map(p => p.student_name).join(', ')),
+            list.length
+                ? el('ul.list', list.map(p => el('li', { onclick: () => openPass(p) },
+                    el('span.ttl', `${p.student_number != null ? p.student_number + '번 ' : ''}${p.student_name}`),
+                    el('span.meta', el('span', { className: `badge cat ${p.kind === 'out' ? 'cat-수업·평가' : 'cat-행사'}` }, p.kind === 'out' ? '외출' : '조퇴'),
+                        el('span', (p.time_out || '') + (p.time_return ? `~${p.time_return}` : '')),
+                        p.kind === 'out' && el('span', p.status === 'returned' ? '복귀함' : '복귀 전')))))
+                : el('p.muted.small', '오늘 발급한 조퇴증·외출증이 없습니다.'));
+    })();
+    return box;
+}
+
 function openAttendance() {
     const selected = SECTIONS.find(item => item.id === section);
     openTab({
@@ -27,16 +46,14 @@ function openAttendance() {
             pane.append(el('h1', selected.label));
             if (section === 'passes') {
                 pane.append(
-                    el('p.sub', '왼쪽 목록에서 발급 기록을 열고, 새 조퇴증·외출증을 작성할 수 있습니다.'),
-                    el('div.row',
-                        el('button.btn.primary', { onclick: () => openForm({ kind: 'early' }) }, '+ 조퇴증'),
-                        el('button.btn.primary', { onclick: () => openForm({ kind: 'out' }) }, '+ 외출증')));
+                    // 새로 쓰는 단추는 왼쪽 목록 위에만 (같은 단추가 두 번 보이지 않게, 0.6.20)
+                    el('p.sub', '왼쪽 목록에서 발급 기록을 누르면 열립니다. 새로 쓰려면 왼쪽 위 [+ 조퇴증]·[+ 외출증]을 누르세요.'));
+                pane.append(todayPasses());
                 return;
             }
             if (section === 'absences') {
                 pane.append(
-                    el('p.sub', '왼쪽 목록에서 결석계를 확인하고, 새 결석계를 작성할 수 있습니다.'),
-                    el('div.row', el('button.btn.primary', { onclick: () => openAbsenceForm() }, '+ 결석계')));
+                    el('p.sub', '왼쪽 목록에서 결석계를 누르면 열립니다. 새로 쓰려면 왼쪽 위 [+ 결석계]를 누르세요.'));
                 return;
             }
             if (section === 'register') return renderRegister(pane);
@@ -63,8 +80,7 @@ function renderSide(body, actions) {
     else if (section === 'absences') renderAbsenceSide(body, actions);
     else {
         if (section === 'register') body.append(el('p.small.muted.reg-legend',
-            '칸을 눌러 결석·지각·조퇴·결과를 체크합니다. 결석은 결석계 초안이 함께 생깁니다(점선 = 작성 필요). ',
-            '글자: 결 결석 · 지 지각 · 조 조퇴 · 과 결과 · 외 외출, 작은 글자는 종류(질 질병 · 인 인정 · 기 기타 · 미 미인정 · ? 미정).'));
+            '칸을 눌러 결석·지각·조퇴·결과를 체크합니다. 결석은 결석계 초안이 함께 생깁니다. 표기 설명은 오른쪽 표 위에 있습니다.'));
         body.append(monthNav(`${passesMonth()}-01`, guarded(async iso => {
             await setPassesMonth(monthKey(iso));
             latestReport = null;
@@ -293,7 +309,13 @@ function openCell(student, day, entries) {
 
 function renderRegister(pane) {
     const box = el('div', el('p.muted', '출석부를 불러오는 중…'));
-    pane.append(el('p.sub', '수업일만 보입니다 (주말·학사일정 공휴일·휴업일 제외). 칸을 눌러 체크하고, 결석은 결석계와, 조퇴는 조퇴증과 이어집니다.'), box);
+    // 표 바로 위에 표기 설명을 실제 칸과 같은 모양으로 (예전엔 왼쪽 작은 글씨뿐, 0.6.20)
+    const chip = (kind, ch, label) => el('span.reg-key', el('span', { className: `reg-mark k-${kind}` }, ch), label);
+    const legend = el('div.reg-legend-bar',
+        chip('absent', '결', '결석'), chip('late', '지', '지각'), chip('early', '조', '조퇴'), chip('result', '과', '결과'), chip('out', '외', '외출'),
+        el('span.reg-key', el('span.reg-mark.k-absent.draft', '결'), '점선 = 결석계 작성 필요'),
+        el('span.reg-key.muted', '작은 글자: 질 질병 · 인 인정 · 기 기타 · 미 미인정 · ? 미정'));
+    pane.append(el('p.sub', '수업일만 보입니다 (주말·학사일정 공휴일·휴업일 제외). 칸을 눌러 체크하고, 결석은 결석계와, 조퇴는 조퇴증과 이어집니다.'), legend, box);
     const selectedMonth = passesMonth();
     const request = ++registerRequest;
     guarded(async () => {
