@@ -182,6 +182,72 @@ def clear_day(db, number, name, day, kind=None, grade="", force=False):
     return changed
 
 
+def _student_rows(db, number, name, exclude_id, start, end):
+    """같은 학생(이름이 같고 번호가 같거나 한쪽이 비어 있음)의 기간이 겹치는 결석계."""
+    return db.query("SELECT * FROM absences WHERE student_name = ? AND (student_number IS ? OR student_number IS NULL "
+                    "OR ? IS NULL) AND id != ? AND start_date <= ? AND end_date >= ? ORDER BY id",
+                    (name, number, number, exclude_id, end, start))
+
+
+def absorb_drafts(db, row, grade=""):
+    """결석계 row 와 같은 학생·같은 날을 덮는 다른 '초안' 결석계에서 그 날들을 뺌 (0.6.21).
+    출석부에서 결석을 체크(초안이 생김)한 뒤 결석계 탭에서 [+ 결석계]로 같은 날을 새로 쓰면
+    한 날이 결석계 두 장에 들어가 월별 통계의 결석일·결석계 건수가 두 배가 되던 것을 막음.
+    작성 완료·인쇄한 결석계는 건드리지 않음. 뺀 날 수를 돌려줌."""
+    if not row:
+        return 0
+    dates = set(absence.school_dates(db, date.fromisoformat(row["start_date"]),
+                                     date.fromisoformat(row["end_date"]), grade))
+    removed = 0
+    for other in _student_rows(db, row["student_number"], row["student_name"], row["id"],
+                               row["start_date"], row["end_date"]):
+        if is_locked(other):
+            continue
+        own = absence.school_dates(db, date.fromisoformat(other["start_date"]),
+                                   date.fromisoformat(other["end_date"]), grade)
+        if not dates.intersection(own):
+            continue
+        runs, run = [], []
+        for day in own:                 # 남는 날을 이어진 덩어리로 (가운데가 빠지면 둘로 나눔)
+            if day in dates:
+                removed += 1
+                if run:
+                    runs.append(run)
+                run = []
+            else:
+                run.append(day)
+        if run:
+            runs.append(run)
+        if not runs:
+            db.execute("DELETE FROM absences WHERE id = ?", (other["id"],))
+            continue
+        db.execute("UPDATE absences SET start_date = ?, end_date = ? WHERE id = ?",
+                   (runs[0][0], runs[0][-1], other["id"]))
+        keep = {k: other[k] for k in ("student_number", "student_name", "absence_type", "reason",
+                                      "guardian_name", "note", "status")}
+        for extra in runs[1:]:
+            absence.save(db, {**keep, "start_date": extra[0], "end_date": extra[-1]})
+    if removed:
+        bump_attendance_rev(db)
+        db.log(f"결석계 {row['serial']} 와 겹친 초안에서 {removed}일 뺌")
+    return removed
+
+
+def absorb_all(db, grade=""):
+    """예전에 이미 겹쳐 저장된 결석계 정리 (앱을 켤 때 한 번). 작성 완료 결석계가 겹친 초안을 흡수."""
+    removed = 0
+    for row in db.query("SELECT * FROM absences ORDER BY id"):
+        fresh = db.one("SELECT * FROM absences WHERE id = ?", (row["id"],))
+        if fresh and is_locked(fresh):
+            removed += absorb_drafts(db, fresh, grade)
+    return removed
+
+
+def _absence_order(rows):
+    """한 날이 결석계 여러 장에 걸치면 한 번만 셈: 작성 완료·인쇄한 것 먼저, 그다음 먼저 쓴 것."""
+    return sorted(rows, key=lambda row: (not is_locked(row), row["id"]))
+
+
 def month_register(db, month_start, month_end, grade=""):
     """출석부 한 달: 수업일, 학생 줄, 칸마다 기록 목록."""
     days = absence.school_dates(db, month_start, month_end, grade)
@@ -194,10 +260,14 @@ def month_register(db, month_start, month_end, grade=""):
         students.setdefault((number, name), {"student_number": number, "student_name": name})
         cells.setdefault(f"{'' if number is None else number}|{name}", {}).setdefault(day, []).append(entry)
 
-    for row in db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?",
-                        (month_end.isoformat(), month_start.isoformat())):
+    seen = set()   # (학생, 날) — 결석계가 겹쳐도 칸에는 하나만 (0.6.21)
+    for row in _absence_order(db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?",
+                                       (month_end.isoformat(), month_start.isoformat()))):
         for day in absence.school_dates(db, max(date.fromisoformat(row["start_date"]), month_start),
                                         min(date.fromisoformat(row["end_date"]), month_end), grade):
+            if (row["student_name"], day) in seen:
+                continue
+            seen.add((row["student_name"], day))
             add(row["student_number"], row["student_name"], day, {
                 "src": "absence", "kind": "absent", "id": row["id"], "type": row["absence_type"],
                 "serial": row["serial"], "draft": not is_locked(row),
@@ -229,7 +299,7 @@ def month_report(db, month_start, month_end, grade=""):
     조퇴 = 발급한 조퇴증 + 증 없이 출석부에 체크한 조퇴. 수업일이 아닌 날(주말·휴업일)의 증도 세되 따로 표시."""
     month = month_start.strftime("%Y-%m")
     school_days = set(absence.school_dates(db, month_start, month_end, grade))
-    split = {"early_pass": 0, "early_mark": 0, "off_day_passes": 0}
+    split = {"early_pass": 0, "early_mark": 0, "off_day_passes": 0, "overlap_days": 0}
 
     def new_student(number, name):
         return {
@@ -256,15 +326,20 @@ def month_report(db, month_start, month_end, grade=""):
         return rows.setdefault((number, name), new_student(number, name))
 
     absences = db.query(
-        "SELECT student_number, student_name, start_date, end_date, absence_type, reason FROM absences "
-        "WHERE start_date <= ? AND end_date >= ?",
+        "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?",
         (month_end.isoformat(), month_start.isoformat()))
-    for entry in absences:
+    counted = set()   # (학생 줄, 날): 한 날이 결석계 두 장에 들어 있어도 결석일은 한 번만 (0.6.21)
+    for entry in _absence_order(absences):
         student = row_for(entry["student_number"], entry["student_name"])
-        student["absence_forms"] += 1
-        dates = absence.school_dates(
+        all_dates = absence.school_dates(
             db, max(date.fromisoformat(entry["start_date"]), month_start),
             min(date.fromisoformat(entry["end_date"]), month_end), grade)
+        dates = [day for day in all_dates if (id(student), day) not in counted]
+        split["overlap_days"] += len(all_dates) - len(dates)
+        if all_dates and not dates:
+            continue                     # 다른 결석계와 날이 모두 겹침: 건수에도 넣지 않음
+        counted.update((id(student), day) for day in dates)
+        student["absence_forms"] += 1
         student["absence_days"][entry["absence_type"]] += len(dates)
         student["details"]["absence_forms"].append({
             "date": f"{entry['start_date']}~{entry['end_date']}",
