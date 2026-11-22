@@ -96,11 +96,7 @@ function renderSide(body, actions) {
         pickMode
             ? el('input.pick', { type: 'checkbox', checked: picked.has(it.id), title: '삭제할 항목으로 고르기 (체크한 항목을 아래 [지우기]로 지웁니다)', 'aria-label': '삭제할 항목으로 고르기',
                 onclick: e => e.stopPropagation(), onchange: togglePick })
-            : el('input', { type: 'checkbox', checked: !!it.registered,
-                title: it.event_count ? `달력에 넣기: 체크하면 일정 ${it.event_count}건이 달력·브리핑에 들어갑니다 (항목은 지워지지 않음)` : '달력에 넣기: 체크하면 이 메시지의 일정이 달력·브리핑에 들어갑니다',
-                'aria-label': '일정을 달력에 넣기',
-                onclick: e => e.stopPropagation(),
-                onchange: e => setRegistered(it.id, e.target.checked) }),
+            : null,
         !pickMode && el('button.row-del', { title: '이 항목 지우기', onclick: guarded(async e => {
             e.stopPropagation();
             if (!window.confirm(`「${it.title}」을(를) 지울까요?\n일정 후보도 함께 지워지고, 되돌릴 수 없습니다.`)) return;
@@ -114,11 +110,16 @@ function renderSide(body, actions) {
             el('span.ttl', it.title),
             (it.ai_line || it.preview) && el('span', { className: it.ai_line ? 'ai-line' : 'ai-line preview' }, it.ai_line || it.preview),
             el('span.meta', srcBadge(it.source), catBadge(it.category),
-                it.event_count ? el('span', it.registered ? `일정 ${it.event_count}` : `후보 ${it.event_count}`) : null,
+                // 달력에 넣기: 예전 체크 칸은 '고르기'로 헷갈려서 글자 단추로 (0.6.20). 일정이 있는 자료에만
+                !pickMode && (it.event_count || it.registered) ? el('button', {
+                    className: `cal-chip${it.registered ? ' on' : ''}`, 'aria-pressed': it.registered ? 'true' : 'false',
+                    title: it.registered ? '달력·브리핑에 들어가 있습니다. 누르면 뺍니다' : `누르면 일정 ${it.event_count}건을 달력·브리핑에 넣습니다 (자료는 그대로)`,
+                    onclick: e => { e.stopPropagation(); setRegistered(it.id, !it.registered); },
+                }, icon('calendar'), it.registered ? `달력에 있음 ${it.event_count || ''}`.trim() : `달력에 넣기 ${it.event_count}`) : null,
                 it.next_deadline && el('span.dl', `마감 ${dayLabel(it.next_deadline)}`),
                 el('span', it.received_at.slice(5, 16))))));
     }
-    body.append(el('p.small.muted', { style: 'margin: 6px var(--pad)' }, '체크한 메시지의 일정만 달력·브리핑에 들어갑니다.'), list);
+    body.append(el('p.small.muted', { style: 'margin: 6px var(--pad)' }, '[달력에 넣기]를 누른 자료의 일정만 달력·브리핑에 들어갑니다.'), list);
 }
 
 // ---------------------------------------------------------------- 분석 결과 미리보기 (붙여넣기 화면)
@@ -228,7 +229,7 @@ function renderItem(pane, tab, it) {
         } }, icon('pin'), '고정'),
         it.registered
             ? el('button.btn.ok', { onclick: () => patch({ registered: false }), title: '누르면 이 메시지의 일정을 달력·브리핑에서 뺍니다' }, icon('check'), '달력에 넣음')
-            : el('button.btn.primary', { onclick: () => patch({ registered: true }), title: '이 메시지의 일정을 달력·브리핑에 넣습니다' }, icon('calendar'), '일정 등록'),
+            : el('button.btn.primary', { onclick: () => patch({ registered: true }), title: '이 메시지의 일정을 달력·브리핑에 넣습니다' }, icon('calendar'), '달력에 넣기'),
         it.status !== 'done'
             ? el('button.btn', { onclick: () => patch({ status: 'done' }) }, icon('check'), '처리 완료')
             : el('button.btn', { onclick: () => patch({ status: 'read' }) }, '↺ 다시 진행 중으로'),
@@ -261,7 +262,7 @@ function renderItem(pane, tab, it) {
         it.events.length
             ? el('div.evcs', it.events.map(e => eventCard(e, it, tab)))
             : el('p.muted', '글에서 날짜를 찾지 못했습니다. 필요하면 ＋ 일정 추가로 직접 넣으세요.'),
-        !it.registered && open > 0 && el('p.small.muted', '맞으면 위의 [일정 등록] 또는 수신함 목록에서 체크. 틀린 것은 ✎ 고치기·지우기.'));
+        !it.registered && open > 0 && el('p.small.muted', '맞으면 위의 [달력에 넣기]를 누르세요. 틀린 것은 ✎ 고치기·지우기, 끝난 일정은 오른쪽 체크 칸(끝냄).'));
 
     // ---- 내용 요약
     const rules = it.summary.length
@@ -376,7 +377,8 @@ function eventCard(e, it, tab) {
             ctx && el('button.evc-ctx', { title: [ctx.before, ctx.line, ctx.after].filter(Boolean).join('\n') + '\n\n누르면 원문에서 이 줄을 보여 줍니다',
                 onclick: () => openOriginal(it, { line: ctx.index }) }, el('span.c-from', '원문'), markDates(ctx.line))),
         el('div.evc-tools',
-            el('input', { type: 'checkbox', title: '끝냄 표시', checked: !!e.done, onchange: ev => save({ done: ev.target.checked }) }),
+            el('label.evc-done', { title: '끝난 일정으로 표시' },
+                el('input', { type: 'checkbox', checked: !!e.done, onchange: ev => save({ done: ev.target.checked }) }), '끝냄'),
             el('button.icon-btn', { title: '고치기', onclick: edit }, icon('edit')),
             el('button.icon-btn', { title: '이 일정 지우기', onclick: guarded(async () => {
                 await api.del(`/api/events/${e.id}`);

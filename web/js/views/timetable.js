@@ -73,8 +73,11 @@ function periodsBox(tab, periods) {
     const lead = el('select', [[0, '시작할 때'], [5, '5분 전'], [10, '10분 전'], [15, '15분 전']].map(([v, l]) =>
         el('option', { value: v, selected: (info.bell?.lead ?? 5) === v }, l)));
     const linked = store.state?.telegram?.linked;
-    return el('section.card.tt-periods',
-        el('h3', el('span', '교시 시간 · 수업 시작 알림')),
+    // 한 번 저장한 뒤에는 접어 두고 한 줄 요약만 (매번 화면 절반을 차지하지 않게, 0.6.20)
+    const first = base['1']?.start;
+    return el('details.card.tt-periods', { open: !Object.keys(saved).length },
+        el('summary', el('b', '교시 시간 · 수업 시작 알림'),
+            el('span.small.muted', ` ${first ? `1교시 ${first} 시작` : '시각 없음'} · 알림 ${info.bell?.enabled ? '켜짐' : '꺼짐'} (누르면 펼침)`)),
         !Object.keys(saved).length && el('p.small.muted', '아래는 흔한 예시입니다 (50분 수업·10분 쉬는 시간·4교시 뒤 점심). 학교 일과에 맞게 고치고 저장하세요.'),
         el('div.tt-period-grid', rows.map(r => el('label.tt-period', el('b', `${r.p}교시`), r.start, el('span', '~'), r.end))),
         el('div.row.tt-bell',
@@ -137,11 +140,11 @@ function openCandidate(c, tab) {
 
 // ---------------------------------------------------------------- 주간 시간표
 function viewSwitch(tab) {
-    return el('label.tt-view', '보기 ', el('select', {
-        'aria-label': '시간표 보기',
-        onchange: e => { viewMode = e.target.value; picked = null; teacherReadOnly = false; tab.rerender(); },
-    }, [['teacher', '선생님'], ['class', '학급'], ['free', '같이 비는 시간']].map(([value, name]) =>
-        el('option', { value, selected: viewMode === value }, name))));
+    // 고르기 칸 대신 늘 보이는 세 단추 (왼쪽 목록의 같은 단추는 뺌, 0.6.20)
+    return el('div.seg.tt-view', { role: 'group', 'aria-label': '시간표 보기' },
+        [['teacher', '선생님별'], ['class', '학급'], ['free', '같이 비는 시간']].map(([value, name]) =>
+            el('button', { type: 'button', className: viewMode === value ? 'on' : '', 'aria-pressed': viewMode === value ? 'true' : 'false',
+                onclick: () => { if (viewMode === value) return; viewMode = value; picked = null; teacherReadOnly = false; tab.rerender(); } }, name)));
 }
 
 function weekNav(mon, tab) {
@@ -258,7 +261,9 @@ async function renderCommonFree(pane, tab, current) {
                 const s = slots.get(`${day.date}-${p}`);
                 if (!s) return el('td.cell.na');
                 const off = s.note?.level === 'off';
-                const label = off ? '수업 없는 날' : !freeTids.length ? '선생님 선택' : !s.busy.length ? '모두 빔' : `${s.free.length}/${freeTids.length} 빔`;
+                const label = off ? '수업 없는 날' : !freeTids.length ? '선생님 선택' : !s.busy.length ? '모두 빔'
+                    // '0/1 빔' 은 뜻을 알기 어려워 낱말로 (0.6.20)
+                    : !s.free.length ? (freeTids.length === 1 ? '수업 있음' : '모두 수업') : `${s.free.length}명 빔 · ${s.busy.length}명 수업`;
                 return el('td', { className: ['cell', off && 'dblk', !off && freeTids.length && !s.busy.length && 'tt-all-free', pastPeriod(s.date, p) && 'tt-past'].filter(Boolean).join(' '),
                     title: [`${day.name} ${p}교시 ${periodTime(p)}`, s.busy.length ? `수업 있음: ${s.busy.map(teacherName).join(', ')}` : '', s.note?.text].filter(Boolean).join('\n') },
                 el('span.s', label), s.note?.level === 'maybe' && el('small', '확인 필요'));
@@ -479,9 +484,6 @@ function renderSide(body, actions) {
         return;
     }
     body.append(el('div', { style: 'padding: 8px 12px' }, teacherSearch(id => { viewTeacher(id); openTimetable(); refreshSide(); }, '선생님 찾아 시간표 보기')));
-    body.append(el('div.tt-side-views',
-        el('button.btn.small', { onclick: () => { viewMode = 'class'; picked = null; openTimetable(); } }, '학급 시간표'),
-        el('button.btn.small', { onclick: () => { viewMode = 'free'; picked = null; openTimetable(); } }, '같이 비는 시간')));
     const list = el('ul.list');
     const swaps = [...info.swaps].reverse();
     if (!swaps.length) list.append(el('li.empty', '아직 기록한 교체가 없습니다. 내 시간표에서 바꿀 수업을 누르세요.'));

@@ -1577,4 +1577,20 @@ label.check.share-row > span { display: flex; flex-direction: column; }
     .brief-right { display: block; columns: 2; column-gap: 12px; min-height: 0 !important; }
     .brief-right > .card { break-inside: avoid; margin-bottom: 12px; display: block; }
     .brief-right > .new-card:not(.empty-card) { overflow: visible; min-height: 0; }
-}
+}/* 수신함 '달력에 넣기' 글자 단추 (0.6.20, 예전 체크 칸 대신) · 일정 후보의 '끝냄' 체크에 글자 */
+.cal-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 6px; border: 1px dashed var(--line-strong); background: var(--surface); color: var(--accent); font-size: calc(var(--fs) * 0.8); font-weight: 700; line-height: 1.6; cursor: pointer; }
+.cal-chip .ic { width: 1.1em; height: 1.1em; }
+.cal-chip:hover { border-style: solid; border-color: var(--accent); }
+.cal-chip.on { border: 1px solid transparent; background: var(--ok-soft); color: var(--ok); }
+.evc-done { display: inline-flex; align-items: center; gap: 3px; font-size: var(--t-sm); color: var(--muted); cursor: pointer; }
+.pass-today { max-width: 640px; } .pass-away { color: var(--warn); font-weight: 700; margin: 0 0 8px; }
+.reg-legend-bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: -6px 0 10px; font-size: var(--t-sm); } .reg-key { display: inline-flex; gap: 5px; align-items: center; }
+details.tt-periods > summary { cursor: pointer; } details.tt-periods[open] > summary { margin-bottom: 10px; }
+.seg.tt-view { gap: 0; color: var(--ink); } .seg.tt-view button { padding: 4px 12px; font-size: var(--t-sm); }
+.check-wrap { margin: 2px 0; }
+.hint-more { margin: -2px 0 6px 26px; font-size: var(--t-sm); }
+.hint-more > summary { cursor: pointer; color: var(--accent); width: max-content; list-style: none; }
+.hint-more > summary::before { content: "▸ "; }
+.hint-more[open] > summary::before { content: "▾ "; }
+.hint-more > .hint { display: block; margin-top: 2px; }
+.hint-more .hint { color: var(--muted); } .check-wrap:has(> .hint-more) > label.check { margin-bottom: 2px; }

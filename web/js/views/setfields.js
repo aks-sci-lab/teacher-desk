@@ -42,7 +42,18 @@ export function pathField(key, label, hint, purpose, placeholder = '', extra = n
 export function checkField(key, label, hint) {
     const input = el('input', { type: 'checkbox', checked: !!store.settings[key] });
     input.dataset.key = key;
-    return item(`${label} ${hint || ''}`, el('label.check', input, el('span', label), hint && el('span.hint', hint)));
+    const [head, rest] = splitHint(hint);
+    return item(`${label} ${hint || ''}`, el('div.check-wrap', el('label.check', input, el('span', label), head && el('span.hint', head)),
+        rest && el('details.hint-more', el('summary', '자세히'), el('span.hint', rest))));
+}
+
+// 긴 설명은 첫 문장만 보이고 나머지는 [자세히] 안에 (설정 화면이 글로 빽빽하지 않게, 0.6.20)
+export function splitHint(hint) {
+    if (!hint || hint.length <= 90) return [hint, null];
+    const m = hint.match(/^(.{20,120}?(?:니다|세요|요)[.)]?\s)/);
+    if (!m) return [hint, null];
+    const rest = hint.slice(m[1].length).trim();
+    return rest ? [m[1].trim(), rest] : [hint, null];
 }
 
 export function selectField(key, label, options, hint, fallback) {
