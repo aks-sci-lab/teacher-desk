@@ -1594,3 +1594,17 @@ details.tt-periods > summary { cursor: pointer; } details.tt-periods[open] > sum
 .hint-more[open] > summary::before { content: "▾ "; }
 .hint-more > .hint { display: block; margin-top: 2px; }
 .hint-more .hint { color: var(--muted); } .check-wrap:has(> .hint-more) > label.check { margin-bottom: 2px; }
+/* ---------- 검색 한 곳으로 (0.6.20) ---------- */
+.sr-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.sr-box { display: flex; align-items: center; gap: 10px; max-width: 860px; padding: 4px 14px; border: 2px solid var(--accent); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-card); }
+.sr-box .ic { width: 1.4em; height: 1.4em; color: var(--accent); }
+.sr-box .sr-input { flex: 1; border: 0; outline: none; font-size: var(--t-lg); padding: 8px 0; background: transparent; }
+.sr-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.sr-ai { max-width: 860px; margin-bottom: 12px; }
+.sr-ai .row { align-items: center; gap: 10px; flex-wrap: wrap; }
+.sr-ai-text { white-space: pre-wrap; line-height: 1.6; margin-top: 10px; }
+.sr-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 12px; align-items: start; }
+.sr-results > .empty { grid-column: 1 / -1; }
+.sr-group .meta span { overflow-wrap: anywhere; }
+mark { background: #fff1a8; color: inherit; border-radius: 3px; padding: 0 1px; }
+:root[data-theme="dark"] mark { background: #5c4d10; }
