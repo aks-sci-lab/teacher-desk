@@ -288,8 +288,62 @@ def _files(folder):
     return out
 
 
-def fetch_attachments(title, received_at, sender="", ui=None, log=None):
-    """받은 쿨메신저 쪽지의 첨부를 쿨메신저가 받게 하고(모든파일 저장) 새로 생긴 파일 [Path] 를 돌려줌."""
+KEEP_PREFIX = "~$desk-keep-"   # 받는 동안 잠깐 비켜 둔 예전 파일 이름 앞 (~$ 라 받은 파일 수집·목록에서 빠짐)
+
+
+def dated_name(folder, name, today=None):
+    """folder 에 없는 새 이름: '이름_2026-11-23.hwp', 그것도 있으면 '이름_2026-11-23_2.hwp' …"""
+    p = Path(name)
+    day = (today or datetime.now()).strftime("%Y-%m-%d")
+    for n in range(1, 1000):
+        cand = Path(folder) / f"{p.stem}_{day}{'' if n == 1 else f'_{n}'}{p.suffix}"
+        if not cand.exists():
+            return cand
+    raise SendError("같은 이름의 파일이 너무 많아 새 이름을 정하지 못했습니다.")
+
+
+def _step_aside(folder, names):
+    """받을 파일과 같은 이름의 예전 파일을 잠깐 다른 이름으로 비켜 둠 (쿨메신저가 덮어쓰거나 질문 창을 띄우지 않게).
+    {원래 경로: 비켜 둔 경로}."""
+    moved = {}
+    for name in dict.fromkeys(n for n in names if n):
+        name = Path(name).name
+        old = Path(folder) / name
+        if not name or name.startswith(("~$", ".")) or not old.is_file():
+            continue
+        tmp = Path(folder) / (KEEP_PREFIX + name)
+        try:
+            if tmp.exists():   # 지난번에 되돌리지 못한 것이 남아 있으면 그 이름은 건드리지 않음
+                continue
+            old.rename(tmp)
+            moved[old] = tmp
+        except OSError:
+            pass   # 열려 있어 못 옮기면 예전처럼 쿨메신저에 맡김
+    return moved
+
+
+def _put_back(moved, renamed, today=None):
+    """새로 받은 파일은 날짜 붙은 이름으로 바꾸고, 비켜 둔 예전 파일은 원래 이름으로 되돌림. 바뀐 이름 {원래: 새}."""
+    for old, tmp in moved.items():
+        try:
+            if old.exists():   # 새로 받은 파일이 그 이름에 있음 → 날짜 붙인 이름으로
+                new = dated_name(old.parent, old.name, today)
+                try:
+                    old.rename(new)
+                except OSError:   # 새 파일이 열려 있어(받은 뒤 바로 열기) 못 바꾸면 예전 파일 쪽에 날짜를 붙여 둘 다 지킴
+                    tmp.rename(new)
+                    continue
+                renamed[old] = new
+            tmp.rename(old)
+        except (OSError, SendError):
+            pass
+
+
+def fetch_attachments(title, received_at, sender="", ui=None, log=None, names=(), today=None, renamed=None):
+    """받은 쿨메신저 쪽지의 첨부를 쿨메신저가 받게 하고(모든파일 저장) 새로 생긴 파일 [Path] 를 돌려줌.
+    names: 그 쪽지에 붙은 파일 이름들(수신함 글의 '(첨부 파일: …)'). 저장 폴더에 같은 이름이 이미 있으면 예전 파일은 그대로 두고
+    새로 받은 파일을 '이름_오늘날짜.확장자'(그것도 있으면 _2, _3 …)로 저장 (선생님 요청 2026-11-23).
+    renamed: dict 를 주면 그렇게 이름을 바꾼 것을 {원래 경로: 새 경로} 로 채워 줌."""
     ui = ui or WinAttachUI()
     if not _lock.acquire(blocking=False):
         raise SendError("쿨메신저 창을 다른 일로 쓰는 중입니다. 끝나면 다시 보내 주세요.")
@@ -309,38 +363,51 @@ def fetch_attachments(title, received_at, sender="", ui=None, log=None):
             raise SendError("메시지관리함에서 같은 쪽지로 보이는 것이 여럿이라 멈췄습니다. PC 에서 직접 받아 주세요.")
         if not (rows[found[0]][3] or "").strip():
             raise SendError("그 쪽지에는 첨부 파일이 없습니다.")
-        # 저장 폴더에 같은 이름이 있어도 늘 새로 받음 (선생님 결정 2026-11-17: 쿨메신저가 '이름(1).pdf' 처럼 번호를 붙임)
-        before = _files(folder)
-        if not ui.select_row(manager, found[0]):
-            raise SendError("메시지관리함에서 그 쪽지를 고르지 못했습니다.")
-        # 고른 뒤 다시 읽어 같은 쪽지인지 확인 (그 사이 새 쪽지가 와서 줄이 밀렸을 수 있음)
-        again = ui.rows(manager)
-        if found[0] >= len(again) or again[found[0]] != rows[found[0]]:
-            raise SendError("그 사이 목록이 바뀌어 멈췄습니다. 다시 보내 주세요.")
-        if not ui.save_all(manager):
-            raise SendError("[모든파일 저장]을 누르지 못했습니다.")
-        new, end, last, stable = [], time.monotonic() + SAVE_WAIT, None, 0.0
-        while time.monotonic() < end:   # 새 파일이 생기고 크기가 SETTLE 초 동안 그대로면 끝
-            time.sleep(0.5)
-            now = _files(folder)
-            new = sorted(p for p, v in now.items() if before.get(p) != v)
-            if new and now == last:
-                stable += 0.5
-                if stable >= SETTLE:
-                    break
-            else:
-                stable = 0.0
-            last = now
-        if not new:
-            raise SendError("파일이 저장되지 않았습니다. 쿨메신저가 '같은 이름의 파일' 질문 창을 띄웠거나, 서버 보관 기간이 "
-                            "지났거나, 보낸 사람 PC 가 꺼져 있을 수 있습니다. PC 의 쿨메신저를 확인해 주세요.")
+        # 저장 폴더에 같은 이름이 있으면 예전 파일을 잠깐 비켜 두고 받은 뒤, 새 파일에 오늘 날짜를 붙임 (선생님 요청 2026-11-23)
+        moved = _step_aside(folder, list(names) + [rows[found[0]][3].strip()])
+        try:
+            new = _save_and_wait(ui, manager, folder, rows, found[0])
+        finally:
+            renamed = {} if renamed is None else renamed
+            _put_back(moved, renamed, today)
+        new = sorted(dict.fromkeys(renamed.get(p, p) for p in new))
         if log:
-            log(f"쿨메신저 첨부 {len(new)}개를 받았습니다 (텔레그램 요청)")
+            log(f"쿨메신저 첨부 {len(new)}개를 받았습니다 (텔레그램 요청)"
+                + (f", 같은 이름이 있어 {len(renamed)}개는 날짜를 붙여 저장" if renamed else ""))
         return new[:ATTACH_LIMIT]
     except winui.Unsupported as e:
         raise SendError(str(e))
     finally:
         _lock.release()
+
+
+def _save_and_wait(ui, manager, folder, rows, i):
+    """그 줄을 골라 [모든파일 저장]을 누르고 새로 생긴(바뀐) 파일들을 기다림."""
+    before = _files(folder)
+    if not ui.select_row(manager, i):
+        raise SendError("메시지관리함에서 그 쪽지를 고르지 못했습니다.")
+    # 고른 뒤 다시 읽어 같은 쪽지인지 확인 (그 사이 새 쪽지가 와서 줄이 밀렸을 수 있음)
+    again = ui.rows(manager)
+    if i >= len(again) or again[i] != rows[i]:
+        raise SendError("그 사이 목록이 바뀌어 멈췄습니다. 다시 보내 주세요.")
+    if not ui.save_all(manager):
+        raise SendError("[모든파일 저장]을 누르지 못했습니다.")
+    new, end, last, stable = [], time.monotonic() + SAVE_WAIT, None, 0.0
+    while time.monotonic() < end:   # 새 파일이 생기고 크기가 SETTLE 초 동안 그대로면 끝
+        time.sleep(0.5)
+        now = _files(folder)
+        new = sorted(p for p, v in now.items() if before.get(p) != v)
+        if new and now == last:
+            stable += 0.5
+            if stable >= SETTLE:
+                break
+        else:
+            stable = 0.0
+        last = now
+    if not new:
+        raise SendError("파일이 저장되지 않았습니다. 쿨메신저가 '같은 이름의 파일' 질문 창을 띄웠거나, 서버 보관 기간이 "
+                        "지났거나, 보낸 사람 PC 가 꺼져 있을 수 있습니다. PC 의 쿨메신저를 확인해 주세요.")
+    return new
 
 
 def find_people(name, ui=None):
