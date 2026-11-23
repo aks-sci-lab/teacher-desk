@@ -170,6 +170,10 @@ class App:
         self.cloud = cloudsync.Sync(db, config)   # 여러 PC 이어 쓰기·구글 드라이브 (desk.py 가 켤 때 받고 끌 때 올림)
         # 0.6.0 문서 작성: 폴더 색인·문서 만들기는 선생님이 눌렀을 때만 뒤에서 하나씩
         self.folderdoc = folderdoc.Job(db, config, Path(config.data_dir) / "documents")
+        try:   # 예전에 같은 날이 결석계 두 장(초안+작성 완료)에 들어간 것 정리 (0.6.22)
+            register.absorb_all(db, config["grade"])
+        except Exception as e:   # 정리가 안 돼도 통계는 겹친 날을 한 번만 셈
+            db.log(f"결석계 겹침 정리 실패: {type(e).__name__}")
 
 
 def make_handler(app):
@@ -797,7 +801,10 @@ def attendance_month(app, q, body):
 @api("POST", "/api/absences")
 def create_absence(app, q, body):
     fields = {**absence_fields(body), "status": "done"}   # 양식으로 종류·사유를 채워 저장 = 작성 완료
-    return absence.record(app.db, absence.save(app.db, fields), app.config["grade"])
+    saved = absence.save(app.db, fields)
+    register.absorb_drafts(app.db, saved, app.config["grade"])   # 출석부에서 체크한 같은 날 초안은 이 결석계로 (0.6.22)
+    queries.bump_attendance_rev(app.db)
+    return absence.record(app.db, saved, app.config["grade"])
 
 
 @api("DELETE", r"/api/absences/(\d+)")
@@ -884,6 +891,9 @@ def update_absence(app, q, body, absence_id):
         row = app.db.one("SELECT absence_type, reason FROM absences WHERE id = ?", (absence_id,))
         if row["absence_type"] in absence.TYPES and (row["reason"] or "").strip():   # 초안을 채워 저장 = 작성 완료
             app.db.execute("UPDATE absences SET status = 'done' WHERE id = ?", (absence_id,))
+        saved = app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,))
+        if register.is_locked(saved):
+            register.absorb_drafts(app.db, saved, app.config["grade"])
         queries.bump_attendance_rev(app.db)
     return absence.record(app.db, app.db.one("SELECT * FROM absences WHERE id = ?", (absence_id,)),
                           app.config["grade"])

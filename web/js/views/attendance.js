@@ -130,6 +130,7 @@ function earlyNote(t) {
     const parts = [];
     if (t.early_mark) parts.push(`조퇴 ${t.early_count}건 = 조퇴증 ${t.early_pass}건 + 증 없이 출석부에 체크한 조퇴 ${t.early_mark}건`);
     if (t.off_day_passes) parts.push(`수업일이 아닌 날(주말·휴업일)에 쓴 증 ${t.off_day_passes}건 포함 — 출석부 표에는 칸이 없습니다`);
+    if (t.overlap_days) parts.push(`결석계 두 장에 같이 들어 있는 날 ${t.overlap_days}일은 한 번만 셌습니다 — 결석계 탭에서 겹친 결석계를 확인하세요`);
     return parts.length ? el('p.small.muted', parts.join(' · ')) : null;
 }
 

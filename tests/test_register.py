@@ -147,3 +147,48 @@ class RegisterTests(ApiBase):
     def test_unit_neighbor(self):
         from datetime import date
         self.assertEqual(register._neighbor_school_day(self.env.db, date(2099, 3, 9), -1), date(2099, 3, 6))
+
+    # ---- 0.6.22: 출석부 초안과 같은 날 결석계를 새로 쓰면 통계가 두 배가 되던 것 ----
+    def write_form(self, start, end, kind="질병", number=1, name="가짜하나"):
+        st, saved = self.req("POST", "/api/absences", {
+            "student_number": number, "student_name": name, "start_date": start, "end_date": end,
+            "absence_type": kind, "reason": "가짜 사유"})
+        self.assertEqual(st, 200, saved)
+        return saved
+
+    def test_new_form_absorbs_register_drafts(self):
+        for day in ("2099-03-04", "2099-03-05", "2099-03-06", "2099-03-09", "2099-03-10"):
+            self.set(day, "absent")
+        self.write_form("2099-03-05", "2099-03-06")          # 가운데 이틀만 결석계로
+        rows = self.absences()
+        self.assertEqual([(r["start_date"], r["end_date"], r["status"]) for r in rows],
+                         [("2099-03-04", "2099-03-04", "draft"), ("2099-03-05", "2099-03-06", "done"),
+                          ("2099-03-09", "2099-03-10", "draft")])
+        report = self.stats()
+        row = next(r for r in report["rows"] if r["student_name"] == "가짜하나")
+        self.assertEqual((row["total_absence_days"], row["absence_days"]["질병"], row["absence_days"]["미정"]), (5, 2, 3))
+        self.assertEqual(report["totals"]["overlap_days"], 0)
+        _, reg = self.req("GET", "/api/attendance/register?month=2099-03")
+        cells = reg["cells"]["1|가짜하나"]
+        self.assertTrue(all(len(cells[d]) == 1 for d in cells))
+
+    def test_overlap_already_saved_counts_once_and_is_cleaned(self):
+        from desk import absence
+        from desk.server import App
+        for day in ("2099-03-05", "2099-03-06"):
+            self.set(day, "absent")
+        absence.save(self.env.db, {"student_number": 1, "student_name": "가짜하나", "start_date": "2099-03-05",
+                                   "end_date": "2099-03-06", "absence_type": "질병", "reason": "가짜",
+                                   "guardian_name": "", "note": "", "status": "done"})   # 예전 판처럼 겹쳐 저장
+        row = next(r for r in self.stats()["rows"] if r["student_name"] == "가짜하나")
+        self.assertEqual((row["total_absence_days"], row["absence_forms"], row["absence_days"]["질병"]), (2, 1, 2))
+        App(self.env.db, self.env.config, self.env.collector, self.app.bot)        # 앱을 켤 때 정리
+        self.assertEqual([r["status"] for r in self.absences()], ["done"])
+
+    def test_two_done_forms_overlap_counted_once(self):
+        self.write_form("2099-03-05", "2099-03-06")
+        self.write_form("2099-03-06", "2099-03-09", "기타")
+        report = self.stats()
+        row = next(r for r in report["rows"] if r["student_name"] == "가짜하나")
+        self.assertEqual((row["total_absence_days"], row["absence_days"]["질병"], row["absence_days"]["기타"]), (3, 2, 1))
+        self.assertEqual(report["totals"]["overlap_days"], 1)
