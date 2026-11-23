@@ -1576,7 +1576,7 @@ class Bot:
 
     def save_absence(self, cid, fields, dates):
         saved = absence.save(self.db, fields)
-        register.absorb_drafts(self.db, saved, self.config["grade"])   # 출석부 초안과 같은 날이 겹치지 않게 (0.6.21)
+        register.absorb_drafts(self.db, saved, self.config["grade"])   # 출석부 초안과 같은 날이 겹치지 않게 (0.6.22)
         return self.reply(cid, (
             f"✅ {fields['student_number']}번 결석계를 앱에 저장했습니다.\n"
             f"{fields['start_date']}~{fields['end_date']} · {len(dates)}일 (주말·공휴일·휴업일 제외)\n"

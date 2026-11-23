@@ -37,6 +37,24 @@ class BriefingReadTests(unittest.TestCase):
         self.add_event("어제 끝난 마감", today - timedelta(days=3), today - timedelta(days=1))
         self.assertIn("어제 끝난 마감", {e["text"] for e in queries.today_summary(self.env.db, today)["overdue"]})
 
+    def test_each_event_shows_in_one_card_only(self):
+        """브리핑의 칸(오늘 마감·오늘 일정·7일 안 마감·7일 안 일정)에 같은 일정이 두 번 나오지 않음 (0.6.21)."""
+        today = date.today()
+        self.add_event("진행 중 신청 7일 안 끝남", today - timedelta(days=2), today + timedelta(days=3))
+        self.add_event("길게 열린 신청", today - timedelta(days=2), today + timedelta(days=20))
+        self.add_event("어제 시작한 연수", today - timedelta(days=1), today + timedelta(days=2), kind="event")
+        self.add_event("모레 행사", today + timedelta(days=2), kind="event")
+        s = queries.today_summary(self.env.db, today)
+        ids = [e["id"] for k in ("overdue", "due_today", "today", "week_deadlines", "week_events") for e in s[k]]
+        self.assertEqual(len(ids), len(set(ids)))
+        texts = lambda k: {e["text"] for e in s[k]}
+        self.assertIn("진행 중 신청 7일 안 끝남", texts("week_deadlines"))   # 마감은 D-day 가 보이는 '7일 안 마감'에
+        self.assertNotIn("진행 중 신청 7일 안 끝남", texts("today"))
+        self.assertIn("길게 열린 신청", texts("today"))                       # 7일 뒤에 끝나는 마감은 오늘 일정에만
+        self.assertIn("어제 시작한 연수", texts("today"))                     # 이미 시작한 기간 일정은 오늘 일정에만
+        self.assertNotIn("어제 시작한 연수", texts("week_events"))
+        self.assertIn("모레 행사", texts("week_events"))
+
     def test_mark_read_only_listed_unread_items(self):
         db = self.env.db
         a = add_text_item(db, "cool", "읽음 시험 하나 쪽지입니다 안내", title="하나")["id"]

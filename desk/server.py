@@ -170,7 +170,7 @@ class App:
         self.cloud = cloudsync.Sync(db, config)   # 여러 PC 이어 쓰기·구글 드라이브 (desk.py 가 켤 때 받고 끌 때 올림)
         # 0.6.0 문서 작성: 폴더 색인·문서 만들기는 선생님이 눌렀을 때만 뒤에서 하나씩
         self.folderdoc = folderdoc.Job(db, config, Path(config.data_dir) / "documents")
-        try:   # 예전에 같은 날이 결석계 두 장(초안+작성 완료)에 들어간 것 정리 (0.6.21)
+        try:   # 예전에 같은 날이 결석계 두 장(초안+작성 완료)에 들어간 것 정리 (0.6.22)
             register.absorb_all(db, config["grade"])
         except Exception as e:   # 정리가 안 돼도 통계는 겹친 날을 한 번만 셈
             db.log(f"결석계 겹침 정리 실패: {type(e).__name__}")
@@ -802,7 +802,7 @@ def attendance_month(app, q, body):
 def create_absence(app, q, body):
     fields = {**absence_fields(body), "status": "done"}   # 양식으로 종류·사유를 채워 저장 = 작성 완료
     saved = absence.save(app.db, fields)
-    register.absorb_drafts(app.db, saved, app.config["grade"])   # 출석부에서 체크한 같은 날 초안은 이 결석계로 (0.6.21)
+    register.absorb_drafts(app.db, saved, app.config["grade"])   # 출석부에서 체크한 같은 날 초안은 이 결석계로 (0.6.22)
     queries.bump_attendance_rev(app.db)
     return absence.record(app.db, saved, app.config["grade"])
 

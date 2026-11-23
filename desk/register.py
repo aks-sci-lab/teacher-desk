@@ -190,7 +190,7 @@ def _student_rows(db, number, name, exclude_id, start, end):
 
 
 def absorb_drafts(db, row, grade=""):
-    """결석계 row 와 같은 학생·같은 날을 덮는 다른 '초안' 결석계에서 그 날들을 뺌 (0.6.21).
+    """결석계 row 와 같은 학생·같은 날을 덮는 다른 '초안' 결석계에서 그 날들을 뺌 (0.6.22).
     출석부에서 결석을 체크(초안이 생김)한 뒤 결석계 탭에서 [+ 결석계]로 같은 날을 새로 쓰면
     한 날이 결석계 두 장에 들어가 월별 통계의 결석일·결석계 건수가 두 배가 되던 것을 막음.
     작성 완료·인쇄한 결석계는 건드리지 않음. 뺀 날 수를 돌려줌."""
@@ -260,7 +260,7 @@ def month_register(db, month_start, month_end, grade=""):
         students.setdefault((number, name), {"student_number": number, "student_name": name})
         cells.setdefault(f"{'' if number is None else number}|{name}", {}).setdefault(day, []).append(entry)
 
-    seen = set()   # (학생, 날) — 결석계가 겹쳐도 칸에는 하나만 (0.6.21)
+    seen = set()   # (학생, 날) — 결석계가 겹쳐도 칸에는 하나만 (0.6.22)
     for row in _absence_order(db.query("SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?",
                                        (month_end.isoformat(), month_start.isoformat()))):
         for day in absence.school_dates(db, max(date.fromisoformat(row["start_date"]), month_start),
@@ -328,7 +328,7 @@ def month_report(db, month_start, month_end, grade=""):
     absences = db.query(
         "SELECT * FROM absences WHERE start_date <= ? AND end_date >= ?",
         (month_end.isoformat(), month_start.isoformat()))
-    counted = set()   # (학생 줄, 날): 한 날이 결석계 두 장에 들어 있어도 결석일은 한 번만 (0.6.21)
+    counted = set()   # (학생 줄, 날): 한 날이 결석계 두 장에 들어 있어도 결석일은 한 번만 (0.6.22)
     for entry in _absence_order(absences):
         student = row_for(entry["student_number"], entry["student_name"])
         all_dates = absence.school_dates(

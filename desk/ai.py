@@ -198,6 +198,7 @@ def weekly_summary(db, config, today=None, timeout=TIMEOUT, since=None):
     prompt, used = build_prompt(items, [s["name"] for s in db.students()], config["ai_input_size"], today)
     text = ask(base, model, prompt, timeout, db=db)
     result.update(text=text, used=used, model=model, ids=[it["id"] for it in items[:used]])
+    result["seen_id"] = max([top] + [it["id"] for it in items])   # 번호를 잰 뒤 바로 들어온 자료를 다음 '새 것만 요약'에서 또 요약하지 않게
     result["applied"] = apply_summary(db, text, result["ids"], today)
     db.set_meta("ai_weekly", result)
     db.log(f"AI 요약: {since + ' 이후' if since else f'지난 {DAYS}일'} 자료 {used}건 ({model})")
@@ -221,7 +222,7 @@ def update_summary(db, config, today=None, timeout=TIMEOUT):
               "count": len(items), "used": used, "ids": [it["id"] for it in items[:used]]}
     update["applied"] = apply_summary(db, text, update["ids"], today)
     result["updates"] = ([update] + result.get("updates", []))[:MAX_UPDATES]
-    result["seen_id"] = top
+    result["seen_id"] = max([top] + [it["id"] for it in items])
     db.set_meta("ai_weekly", result)
     db.log(f"AI 요약: 새로 들어온 자료 {used}건 덧붙임 ({model})")
     return result

@@ -148,7 +148,7 @@ class RegisterTests(ApiBase):
         from datetime import date
         self.assertEqual(register._neighbor_school_day(self.env.db, date(2099, 3, 9), -1), date(2099, 3, 6))
 
-    # ---- 0.6.21: 출석부 초안과 같은 날 결석계를 새로 쓰면 통계가 두 배가 되던 것 ----
+    # ---- 0.6.22: 출석부 초안과 같은 날 결석계를 새로 쓰면 통계가 두 배가 되던 것 ----
     def write_form(self, start, end, kind="질병", number=1, name="가짜하나"):
         st, saved = self.req("POST", "/api/absences", {
             "student_number": number, "student_name": name, "start_date": start, "end_date": end,
