@@ -400,8 +400,10 @@ function sinceList(sv) {
             : el('p.muted.small', '새로 받은 쪽지·공문이 없습니다.'));
 }
 
-function aiCard(todoCard, sv, newCard) {
+function aiCard(todoCard, sv, newCard, hideInNew = () => {}) {
     const body = el('div', el('p.muted.small', '불러오는 중…'));
+    // 요약 대신 '받은 자료 목록'을 보여 주는 동안은 '새로 받은 자료' 칸에서 같은 자료를 가림 (한 쪽지가 두 칸에 보이지 않게, 0.6.21)
+    const since = () => { hideInNew(new Set((sv?.items || []).map(it => it.id))); return sinceList(sv); };
     // 꼭 할 일: AI 요약이 보이면 요약의 '꼭 할 일' 칸 안에, 아니면 따로 카드로
     const standalone = on => { todoCard.hidden = !on; };
     // 요약을 만드는 동안에도 있던 요약은 그대로 두고, 위에 작은 진행 줄만 (5초마다 이 줄만 바꿈)
@@ -411,6 +413,7 @@ function aiCard(todoCard, sv, newCard) {
         const updates = (res && res.updates) || [];
         const main = res && res.text && [res, ...updates].some(b => parseAi(b.text || '').length > 0);
         standalone(!main);
+        hideInNew(new Set());
         progress = running ? el('div.ai-progress') : null;
         clear(body,
             progress,
@@ -450,7 +453,7 @@ function aiCard(todoCard, sv, newCard) {
             el('p.small.muted', st.kind === 'new'
                 ? '새 자료만 읽으므로 보통 1분 안쪽입니다. 다른 화면을 써도 됩니다.'
                 : 'LM Studio 가 글을 읽고 쓰는 동안 다른 화면을 써도 됩니다. 이 PC 에서 4~5분쯤 걸리고, 15분까지 기다립니다.'),
-            sinceList(sv));
+            since());
     };
     const poll = async () => {
         clearTimeout(timer);
@@ -472,12 +475,13 @@ function aiCard(todoCard, sv, newCard) {
             const note = el('p.small.muted', '설정 → AI 요약에서 LM Studio 를 연결하면 이 자료들을 AI 가 요약해 드립니다.');
             // AI 가 꺼져 있으면 이 칸은 받은 자료 목록뿐이라 '새로 받은 자료'와 거의 같음
             // → 이 자리에 '새로 받은 자료' 칸을 옮겨 와 한 번만 보이고, 안내는 그 아래에 (0.6.20)
-            if (newCard) {
+            // 새로 받은 자료가 없으면 그 칸은 이미 위의 '없음' 한 줄에 있으므로 옮기지 않고 안내만 (두 번 '없음' 이 보이지 않게)
+            if (newCard && !newCard.classList.contains('empty-card')) {
                 newCard.append(note);
                 box.replaceWith(newCard);
                 return;
             }
-            clear(body, sinceList(sv), note);
+            clear(body, newCard ? '' : since(), note);
             return;
         }
         if (st.running) return poll();
@@ -500,7 +504,7 @@ function aiCard(todoCard, sv, newCard) {
                     el('span', `PC 가 느려지지 않게 자동 요약은 수업 시간에만 합니다 · ${win.text}`),
                     el('button.btn.small', { onclick: () => run(kind, range) }, kind === 'new' ? '새 것 지금 요약' : '지금 요약'));
                 if (res.text) { show(st, st.error); body.prepend(note); }
-                else { standalone(true); clear(body, note, sinceList(sv)); }
+                else { standalone(true); clear(body, note, since()); }
                 return;
             }
         }
@@ -586,10 +590,17 @@ function renderToday(pane) {
         todoCard.classList.remove('empty-card');   // 비어도 놓을 자리는 보이게
         todoCard.hidden = true;
         const newCard = card('새로 받은 자료', s.new_items.length, s.new_items.length
-            ? el('ul.list', s.new_items.map(it => movable(el('li', { onclick: () => openItem(it.id) },
+            ? el('ul.list', s.new_items.map(it => movable(el('li', { onclick: () => openItem(it.id), dataset: { item: it.id } },
                 el('span.ttl', it.title), el('span.meta', srcBadge(it.source), catBadge(it.category), it.received_at.slice(5, 16))),
                 { text: it.title, item_id: it.id, origin: 'item' })))
             : el('p.muted.small', '없음'), { cls: 'new-card' });
+        const hideInNew = ids => {   // AI 요약 칸이 같은 자료 목록을 보여 주는 동안 이 칸에서는 가림 (다 가려지면 칸째)
+            let left = 0;
+            newCard.querySelectorAll('li[data-item]').forEach(li => { li.hidden = ids.has(Number(li.dataset.item)); left += !li.hidden; });
+            const count = newCard.querySelector('h3 .count');
+            if (count) count.textContent = left;
+            newCard.hidden = s.new_items.length > 0 && left === 0;
+        };
         pane.append(
             // 머리: 날짜 · 오늘 숫자 · 수집 한 줄 요약 · 단추를 한 줄에 (빈 곳 없이)
             el('div.brief-head',
@@ -611,7 +622,7 @@ function renderToday(pane) {
                 const left = [todoCard,
                     s.overdue.length ? card('지난 마감 (끝냄 표시 안 됨)', s.overdue.length, evList(s.overdue), { alert: true }) : null,
                     s.due_today.length ? card('오늘 마감', s.due_today.length, evList(s.due_today), { alert: true }) : null,
-                    aiCard(todoCard, s.since_visit, newCard)].filter(Boolean);
+                    aiCard(todoCard, s.since_visit, newCard, hideInNew)].filter(Boolean);
                 const right = [
                     s.lessons != null ? card('오늘 내 수업', s.lessons.length, s.lessons.length
                         ? el('ul.lessons', { onclick: openTimetable, title: '시간표 열기' }, s.lessons.map(l => el('li', { className: l.moved ? 'moved' : '' },

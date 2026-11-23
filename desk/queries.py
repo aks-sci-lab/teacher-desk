@@ -72,11 +72,14 @@ def today_summary(db, today=None):
     due_today = [e for e in events_between(db, today, today, include_done=False)
                  if e["kind"] == "deadline" and (e["end_date"] or e["date"]) == today.isoformat()]
     due_ids = {e["id"] for e in due_today}
-    todays = [e for e in events_between(db, today, today) if e["id"] not in due_ids]   # 오늘 일정과 중복 표시 안 함
     upcoming = events_between(db, today + timedelta(days=1), week_end, include_done=False)
     week = [e for e in upcoming if e["kind"] == "deadline"
             and today.isoformat() < (e["end_date"] or e["date"]) <= week_end.isoformat()]
-    week_events = [e for e in upcoming if e["kind"] != "deadline"]
+    # 한 일정은 브리핑의 한 칸에만 (0.6.21): 오늘 마감·7일 안 마감에 든 마감은 '오늘 일정'에서 빼고,
+    # 이미 시작한 기간 일정(11.20~11.25 행사)은 '오늘 일정'에만 — 예전에는 '7일 안 일정'에도 또 나왔음
+    shown = due_ids | {e["id"] for e in week}
+    todays = [e for e in events_between(db, today, today) if e["id"] not in shown]
+    week_events = [e for e in upcoming if e["kind"] != "deadline" and e["date"] > today.isoformat()]
     passes = db.query("SELECT * FROM passes WHERE date = ? AND status != 'cancelled' ORDER BY time_out, id",
                       (today.isoformat(),))
     new_items = [decode_item(r) for r in db.query(

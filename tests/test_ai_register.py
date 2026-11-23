@@ -147,6 +147,17 @@ class AITests(unittest.TestCase):
         self.assertEqual(len(self.fake.requests), n)
         self.assertEqual(ai.weekly_summary(db, self.env.config)["updates"], [])  # 전체 다시 → 덧붙인 것 비움
 
+    def test_item_arriving_while_counting_is_not_summarized_twice(self):
+        """번호를 잰 바로 뒤 들어온 쪽지가 이번 요약에 들고 다음 '새 것만 요약'에 또 들어가던 틈 (0.6.21)."""
+        from unittest import mock
+        db = self.env.db
+        add_text_item(db, "cool", "회의 11월 5일", title="회의", received_at=recent())
+        late = add_text_item(db, "cool", "체육대회 11월 20일", title="체육대회", received_at=recent())["id"]
+        with mock.patch.object(ai, "last_item_id", return_value=late - 1):   # 번호를 잰 뒤 '체육대회'가 들어온 셈
+            full = ai.weekly_summary(db, self.env.config)
+        self.assertIn(late, full["ids"])
+        self.assertEqual(ai.new_items(db, full), [])                          # 요약 뒤 새 자료로 또 세지 않음
+
     def test_old_summary_without_seen_id(self):
         db = self.env.db
         add_text_item(db, "cool", "회의 11월 5일", received_at=recent())
