@@ -24,10 +24,16 @@ class FakeUI:
         self.sent = []
         self.fail = set()       # 'title'·'body'·'send'·'chips'
 
-    def require(self):
+    def require(self, allow_locked=False):
         self.calls.append("require")
-        if self.locked:
-            raise coolsend.SendError("PC 화면이 잠겨 있어 보낼 수 없습니다.")
+        if self.locked and not allow_locked:
+            raise coolsend.Locked("PC 화면이 잠겨 있어 보낼 수 없습니다.")
+
+    def is_locked(self):
+        return self.locked
+
+    def ready(self):
+        return not self.locked and not getattr(self, "busy_hands", False)
 
     def main_window(self):
         return 1
@@ -189,7 +195,7 @@ class CoolAttachTests(unittest.TestCase):
         self.assertEqual(ui.picked, [])
 
 
-class TelegramCoolSendTests(unittest.TestCase):
+class TelegramBase(unittest.TestCase):
     def setUp(self):
         self.env = Env()
         self.fake = FakeTelegram()
@@ -205,6 +211,9 @@ class TelegramCoolSendTests(unittest.TestCase):
 
     def buttons(self):
         return [b for row in self.fake.sent[-1]["reply_markup"]["inline_keyboard"] for b in row]
+
+
+class TelegramCoolSendTests(TelegramBase):
 
     def test_new_memo_needs_button(self):
         self.bot.handle_update(msg("쪽지 이영희 내일 회의 3시로 바뀌었어요\n둘째 줄"))
@@ -272,6 +281,107 @@ class TelegramCoolSendTests(unittest.TestCase):
         self.bot.handle_update(press(self.buttons()[0]["callback_data"]))
         self.assertIn("보내지 못했습니다", self.fake.sent[-1]["text"])
         self.assertIn("열어 두었습니다", self.fake.sent[-1]["text"])
+
+
+class CoolQueueTests(TelegramBase):
+    """화면 잠금 중 [보내기]: 대기해 두었다가 잠금이 풀리면 보냄 (0.6.25)."""
+
+    def queue_one(self, text="쪽지 이영희 내일 회의 3시"):
+        self.ui.locked = True
+        self.bot.handle_update(msg(text))
+        self.assertIn("🔒 지금 PC 화면이 잠겨 있습니다", self.fake.sent[-1]["text"])   # 잠금 중에도 받는 사람은 찾음
+        self.bot.handle_update(press(self.buttons()[0]["callback_data"]))
+        self.assertIn("대기해 두었습니다", self.fake.sent[-1]["text"])
+        return self.buttons()[0]["callback_data"]
+
+    def test_locked_send_waits_then_sends_when_unlocked_and_idle(self):
+        self.queue_one()
+        self.assertEqual(self.ui.sent, [])
+        self.assertEqual(self.bot.flush_cool_queue(), 1)   # 아직 잠김: 그대로
+        self.ui.locked = False
+        self.ui.busy_hands = True                          # 잠금을 풀고 바로 쓰는 중: 창을 뺏지 않음
+        self.assertEqual(self.bot.flush_cool_queue(), 1)
+        self.assertEqual(self.ui.sent, [])
+        self.ui.busy_hands = False
+        self.assertEqual(self.bot.flush_cool_queue(), 0)
+        self.assertEqual(self.ui.sent[0]["body"], "내일 회의 3시")
+        self.assertIn("대기해 둔 쪽지를 이영희 님께 보냈습니다", self.fake.sent[-1]["text"])
+        self.assertEqual(self.bot.flush_cool_queue(), 0)   # 한 번만
+        self.assertEqual(len(self.ui.sent), 1)
+
+    def test_relocked_between_check_and_send_keeps_waiting(self):
+        self.queue_one()
+        self.ui.locked = False
+        orig = self.ui.ready
+        self.ui.ready = lambda: (orig(), setattr(self.ui, "locked", True))[0]   # 보내려는 순간 다시 잠김
+        self.assertEqual(self.bot.flush_cool_queue(), 1)
+        self.assertEqual(self.ui.sent, [])
+        self.ui.ready = orig
+        self.ui.locked = False
+        self.assertEqual(self.bot.flush_cool_queue(), 0)
+        self.assertEqual(len(self.ui.sent), 1)
+
+    def test_cancel_and_failure_and_limit(self):
+        cancel = self.queue_one()
+        self.bot.handle_update(press(cancel))
+        self.assertIn("취소했습니다", self.fake.edited[-1]["text"])
+        self.ui.locked = False
+        self.assertEqual(self.bot.flush_cool_queue(), 0)
+        self.assertEqual(self.ui.sent, [])
+        self.queue_one()
+        self.ui.fail.add("send")
+        self.ui.locked = False
+        self.assertEqual(self.bot.flush_cool_queue(), 0)   # 실패하면 알리고 대기에서 뺌 (다시 누르지 않음)
+        self.assertIn("보내지 못했습니다", self.fake.sent[-1]["text"])
+        self.ui.fail.clear()
+        for _ in range(5):
+            self.queue_one()
+        self.ui.locked = True
+        self.bot.handle_update(msg("쪽지 이영희 여섯째"))
+        self.bot.handle_update(press(self.buttons()[0]["callback_data"]))
+        self.assertIn("더 받지 않았습니다", self.fake.sent[-1]["text"])
+        self.assertEqual(len(self.bot.cool_queue), 5)
+
+    def test_background_loop_sends_and_ends(self):
+        import time
+        from desk import telegram
+        old = telegram.COOL_QUEUE_EVERY
+        telegram.COOL_QUEUE_EVERY = 0.05
+        self.addCleanup(setattr, telegram, "COOL_QUEUE_EVERY", old)
+        self.queue_one()
+        self.bot.sync = False
+        self.bot.start_cool_queue()
+        self.ui.locked = False
+        end = time.monotonic() + 5
+        while (self.ui.sent == [] or self.bot.cool_queue_thread) and time.monotonic() < end:
+            time.sleep(0.05)
+        self.assertEqual(len(self.ui.sent), 1)
+        self.assertIsNone(self.bot.cool_queue_thread)   # 대기가 비면 스레드도 끝
+
+    def test_old_day_is_dropped(self):
+        self.queue_one()
+        self.bot.cool_queue[0]["day"] = "2000-01-01"
+        self.ui.locked = False
+        self.assertEqual(self.bot.flush_cool_queue(), 0)
+        self.assertEqual(self.ui.sent, [])
+        self.assertIn("버렸습니다", self.fake.sent[-1]["text"])
+
+
+class KeepAwakeTests(unittest.TestCase):
+    def test_follows_setting(self):
+        from desk import power
+        calls = []
+        orig = power.nudge
+        power.nudge = lambda: calls.append(1) or True
+        try:
+            cfg = {"keep_awake": True}
+            k = power.KeepAwake(cfg)
+            self.assertTrue(k.tick())
+            cfg["keep_awake"] = False
+            self.assertFalse(k.tick())
+            self.assertEqual(len(calls), 1)
+        finally:
+            power.nudge = orig
 
 
 if __name__ == "__main__":

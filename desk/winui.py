@@ -213,6 +213,21 @@ def screen_locked():
         user32.CloseDesktop(h)
 
 
+def idle_seconds():
+    """선생님이 마지막으로 마우스·키보드를 쓴 뒤 지난 초 (윈도우가 아니면 아주 큰 값)."""
+    if not IS_WINDOWS:
+        return 1e9
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    if not user32.GetLastInputInfo(ctypes.byref(info)):
+        return 0.0
+    now = kernel32.GetTickCount() & 0xFFFFFFFF
+    return ((now - info.dwTime) & 0xFFFFFFFF) / 1000.0   # 49일마다 0 으로 돌아가는 값이라 차이만 씀
+
+
 # ---- 앞으로 가져오기·입력 ----
 def bring_front(hwnd, wait=0.3):
     if user32.IsIconic(hwnd) or not user32.IsWindowVisible(hwnd):

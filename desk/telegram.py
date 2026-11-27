@@ -246,6 +246,8 @@ LOG_DAYS = 3
 # 0.6.16: 쿨메신저 이름은 '민은영(민은영)' 처럼 괄호가 붙어 와서 예전 식([^)]+)으로는 못 읽어 [↩ 답장] 단추가 안 나왔음
 P_COOL_SENDER = re.compile(r"\(보낸 사람:\s*([^\n]+?)\)\s*$")
 COOL_PREVIEW = 600
+COOL_QUEUE_LIMIT = 5      # 화면 잠금 중 [보내기]를 누른 쪽지: 보낼 대기 최대 통수 (0.6.25)
+COOL_QUEUE_EVERY = 5      # 대기 쪽지가 있을 때 잠금이 풀렸는지 보는 간격 (초)
 EVENT_WEEK_HEAD = ("🔴일", "월", "화", "수", "목", "금", "🔵토")   # 일정 추가 달력의 요일 머리줄 (주말 색은 여기만)
 
 
@@ -389,6 +391,9 @@ class Bot:
         self.direct_cache = {}
         self.cool_ui = None     # 시험: 쿨메신저 창 조작을 가짜로 (None 이면 실제 윈도우)
         self.cool_attach_ui = None
+        self.cool_queue = []    # 화면 잠금 중 [보내기]를 누른 쪽지 (이 PC 메모리에만, 오늘 안에 보내거나 버림, 0.6.25)
+        self.cool_queue_lock = threading.Lock()
+        self.cool_queue_thread = None
         self.to_pdf = preview.pdf_bytes   # 시험: PDF 바꾸기를 가짜로 (실제는 이 PC 의 한글·엑셀)
         self.item_ai = None     # desk.py 가 연결: 화면과 같은 항목별 AI 요약 대기열 (ai.ItemJob, 0.6.8 쪽지 요약)
         self.cool_summary_wait = COOL_SUMMARY_WAIT
@@ -1805,6 +1810,8 @@ class Bot:
         if kind == "cs":
             dialog_id, _, action = rest.partition(":")
             return self.cool_button(cid, dialog_id, action, msg.get("message_id"))
+        if kind == "cq":
+            return self.cancel_cool_queue(cid, rest, msg.get("message_id"))
         if kind == "dlg":
             dialog_id, _, action = rest.partition(":")
             dialog = self.dialog
@@ -2869,6 +2876,8 @@ class Bot:
         else:
             lines.append("[보내기]를 누르면 이 PC 의 쿨메신저 창이 잠깐 앞으로 나오며 보냅니다. 열려 있던 쪽지 창은 닫습니다.")
             buttons = [[{"text": "📨 보내기", "callback_data": f"cs:{dialog['id']}:0"}]]
+        if self.cool_locked():
+            lines.append("🔒 지금 PC 화면이 잠겨 있습니다. 누르면 대기해 두었다가 잠금이 풀리면 보냅니다.")
         buttons.append([{"text": "✖ 취소", "callback_data": f"cs:{dialog['id']}:x"}])
         return "\n".join(lines), buttons
 
@@ -2893,6 +2902,8 @@ class Bot:
     def _cool_send(self, cid, person, dialog):
         try:
             text = coolsend.send(person, dialog["title"], dialog["body"], ui=self.cool_ui, log=self.db.log)
+        except coolsend.Locked:   # 아무것도 누르지 않았음 → 잠금이 풀리면 보냄 (0.6.25)
+            return self.queue_cool(cid, person, dialog)
         except coolsend.SendError as e:
             text = f"⚠ 보내지 못했습니다: {e}"
             if e.left_open:
@@ -2903,6 +2914,111 @@ class Bot:
             text = "⚠ 보내는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요."
         self.reply(cid, text)
         return text
+
+    # ---- 화면 잠금 중 쪽지: 보낼 대기 (0.6.25, 선생님 결정 2026-11-27) ----
+    def cool_locked(self):
+        try:
+            return bool((self.cool_ui or coolsend.WinUI()).is_locked())
+        except Exception:
+            return False
+
+    def queue_cool(self, cid, person, dialog):
+        """잠금 때문에 시작하지 못한 쪽지를 대기로. 잠금이 풀리고 선생님 손이 잠깐 쉬면 보냄, 오늘이 지나면 버림."""
+        today = date.today().isoformat()
+        with self.cool_queue_lock:
+            if len([q for q in self.cool_queue if q["day"] == today]) >= COOL_QUEUE_LIMIT:
+                text = (f"⚠ PC 화면이 잠겨 있고 보낼 대기 쪽지가 이미 {COOL_QUEUE_LIMIT}통이라 더 받지 않았습니다. "
+                        "잠금이 풀린 뒤 다시 보내 주세요.")
+                self.reply(cid, text)
+                return text
+            q = {"id": secrets.token_hex(6), "cid": cid, "person": person, "title": dialog["title"],
+                 "body": dialog["body"], "day": today, "at": datetime.now().strftime("%H:%M"), "sending": False}
+            self.cool_queue.append(q)
+            n = len(self.cool_queue)
+        self.db.log("쿨메신저 쪽지를 보낼 대기로 두었습니다 (PC 화면 잠금)")
+        text = ("🔒 PC 화면이 잠겨 있어 지금은 보내지 않고 대기해 두었습니다.\n"
+                "PC 의 잠금이 풀리면(잠금을 풀고 잠깐 마우스·키보드를 쉬면) 자동으로 보내고 알려 드립니다. "
+                "오늘 안에 풀리지 않으면 보내지 않고 버립니다." + (f"\n(보낼 대기 {n}통)" if n > 1 else ""))
+        self.send(text, cid, [[{"text": "✖ 대기 취소", "callback_data": f"cq:{q['id']}"}]])
+        self.start_cool_queue()
+        return text
+
+    def cancel_cool_queue(self, cid, qid, message_id):
+        with self.cool_queue_lock:
+            q = next((q for q in self.cool_queue if q["id"] == qid), None)
+            if q and not q["sending"]:
+                self.cool_queue.remove(q)
+        if not q:
+            return self.show(cid, message_id, "이미 보냈거나 버린 대기 쪽지입니다.", [])
+        if q["sending"]:
+            return self.show(cid, message_id, "지금 보내는 중이라 취소하지 못했습니다. 잠시 뒤 결과를 알려 드립니다.", [])
+        return self.show(cid, message_id, "대기해 둔 쪽지를 취소했습니다. 보낸 것은 없습니다.", [])
+
+    def start_cool_queue(self):
+        if self.sync:   # 시험은 flush_cool_queue 를 직접 부름
+            return
+        with self.cool_queue_lock:
+            if self.cool_queue_thread and self.cool_queue_thread.is_alive():
+                return
+            self.cool_queue_thread = threading.Thread(target=self._cool_queue_loop, name="telegram-coolqueue", daemon=True)
+            self.cool_queue_thread.start()
+
+    def _cool_queue_loop(self):
+        while not self.stop_event.wait(COOL_QUEUE_EVERY):
+            try:
+                self.flush_cool_queue()
+            except Exception as e:
+                applog.exception("telegram", "대기 쪽지 보내기", e)
+            with self.cool_queue_lock:   # 대기가 비었으면 끝 (더하는 쪽과 같은 잠금 안에서 보고 끝내야 빠뜨리지 않음)
+                if not self.cool_queue:
+                    self.cool_queue_thread = None
+                    return
+
+    def flush_cool_queue(self):
+        """보낼 수 있으면(잠금 풀림·선생님 손이 쉼) 대기 쪽지 한 통을 보냄. 오늘이 지난 대기는 버리고 알림. 남은 통수."""
+        today = date.today().isoformat()
+        with self.cool_queue_lock:
+            old = [q for q in self.cool_queue if q["day"] != today and not q["sending"]]
+            for q in old:
+                self.cool_queue.remove(q)
+        for q in old:
+            self.reply(q["cid"], f"🗑 {q['at']} 에 대기해 둔 쪽지({self.mask(q['person']['name'])} 님께)는 그날 안에 PC 잠금이 "
+                                 "풀리지 않아 보내지 않고 버렸습니다. 필요하면 다시 보내 주세요.")
+        if not self.cool_queue:
+            return 0
+        try:
+            ready = (self.cool_ui or coolsend.WinUI()).ready()
+        except Exception:
+            ready = False
+        if not ready:
+            return len(self.cool_queue)
+        with self.cool_queue_lock:
+            q = next((q for q in self.cool_queue if not q["sending"]), None)
+            if not q:
+                return len(self.cool_queue)
+            q["sending"] = True
+        who = self.mask(q["person"]["name"])
+        try:
+            coolsend.send(q["person"], q["title"], q["body"], ui=self.cool_ui, log=self.db.log)
+            text = f"✅ {q['at']} 에 대기해 둔 쪽지를 {who} 님께 보냈습니다 (PC 잠금이 풀려서)."
+        except (coolsend.Locked, coolsend.Busy):   # 그 사이 다시 잠겼거나 첨부 받는 중: 다음에 다시
+            with self.cool_queue_lock:
+                q["sending"] = False
+            return len(self.cool_queue)
+        except coolsend.SendError as e:
+            text = f"⚠ {q['at']} 에 대기해 둔 쪽지({who} 님께)를 보내지 못했습니다: {e}"
+            if e.left_open:
+                text += "\n(쓰던 쪽지 창은 PC 에 열어 두었습니다. 보내지는 않았습니다.)"
+        except Exception as e:
+            applog.exception("telegram", "대기 쪽지 보내기", e)
+            self.db.log(f"대기 쪽지 보내기 오류: {type(e).__name__}", "warn")
+            text = f"⚠ {q['at']} 에 대기해 둔 쪽지를 보내는 중 오류가 나서 멈췄습니다. PC 의 쿨메신저 창을 확인해 주세요."
+        with self.cool_queue_lock:
+            if q in self.cool_queue:
+                self.cool_queue.remove(q)
+            left = len(self.cool_queue)
+        self.reply(q["cid"], text)
+        return left
 
     def mask(self, text):
         """텔레그램으로 나가는 글의 학생 이름: 설정 '텔레그램에서 학생 이름 가리기' 를 켰을 때만 가림.
