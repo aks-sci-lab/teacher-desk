@@ -78,7 +78,8 @@ class SettingsScreenTests(unittest.TestCase):
         js = "".join((WEB / "views" / f).read_text(encoding="utf-8") for f in ("settings.js", "setfields.js", "setup.js", "cloud.js"))
         # 일반 질문 AI(외부 API 키·모델)는 AI 화면(ai.js), 화면 배치는 배치 모드에서 저장, 문서 작성 폴더는 문서 작성 화면(documents.js)
         elsewhere = {"layout", "folderdoc_folder", "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
-                     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "neis_school"}
+                     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "neis_school",
+                     "ai_claude_cli_model", "ai_gemini_cli_model", "ai_codex_cli_model"}
         for key in sorted(EDITABLE_KEYS - elsewhere):
             self.assertRegex(js, rf"['\"]{key}['\"]|\b{key}:", key)
 

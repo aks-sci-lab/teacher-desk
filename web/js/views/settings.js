@@ -383,7 +383,12 @@ const GROUPS = [
         id: 'ai', icon: '🤖', title: 'AI', desc: '이 PC 의 LM Studio 로 브리핑·수신 항목 요약 (선택)',
         status: s => (s.ai_enabled ? `켜짐 · 자동 요약 ${onOff(s.ai_auto_item !== false)}` : '꺼짐'),
         build: (st, pane) => [
-            item('AI 개인정보 LM Studio 127.0.0.1', el('p.small', '쪽지·공문은 이 PC 의 LM Studio 로만 보냅니다 (주소는 127.0.0.1 만 허용, 학생 이름은 가려서 보냄).')),
+            item('AI 개인정보 LM Studio 127.0.0.1', el('p.small', '쪽지·공문은 아래에서 고른 AI 로만 보냅니다. LM Studio 는 이 PC 안에서만(127.0.0.1), CLI 는 그 회사로 나갑니다. 어느 쪽이든 학생 이름은 가려서 보냅니다.')),
+            // 0.6.24 업무자료 AI 를 CLI 로 (선생님이 2026-11-27 업무자료를 밖으로 보내는 것을 허용)
+            selectField('ai_work_provider', '업무자료 AI (쪽지·공문 요약, AI 검색, 문서 작성)',
+                [['local', 'LM Studio — 이 PC 안에서만 (기본)'], ['claude_cli', 'Claude Code CLI — 이 PC 에 설치·로그인, 내용이 외부로 나감'],
+                    ['gemini_cli', 'Gemini CLI — 이 PC 에 설치·로그인, 내용이 외부로 나감'], ['codex_cli', 'Codex CLI — 이 PC 에 설치·로그인, 내용이 외부로 나감']],
+                'CLI 를 고르면 쪽지·공문 내용(학생 이름은 가림)이 그 회사로 전송되고 구독 이용 한도를 씁니다. CLI 모델 이름은 \'AI 질문\' 화면에서 고른 것을 같이 씁니다. 사진 읽기는 LM Studio 만 됩니다.', 'local'),
             checkField('ai_enabled', 'AI 요약 쓰기', '브리핑의 요약과 수신함 항목 요약을 만듭니다. LM Studio 서버가 켜져 있어야 합니다.'),
             checkField('ai_auto_item', '새 수신 항목을 자동으로 AI 요약 (권장)',
                 '최근 7일 안에 받은 쪽지·공문을 뒤에서 한 건씩 요약합니다 (한 건에 20~30초). 끄면 [AI 로 요약하기]를 눌렀을 때만.'),
@@ -406,7 +411,7 @@ const GROUPS = [
                             el('li', '필요할 때 불러온 모델은 5분 동안 작업이 없으면 메모리에서 내립니다. 다음 요청은 조금 느릴 수 있습니다.'),
                             el('li', '설치 도우미를 썼다면 [연결 확인 후 적용]을 눌러 모델 이름을 갱신하세요.')))),
                 item('일반 질문 AI 외부 API 브라우저 내장',
-                    el('p.small', '일반 질문(공개 자료만)은 로컬·브라우저 내장·외부 API 중에서 고를 수 있습니다. 업무자료는 언제나 이 PC 의 AI 로만 처리합니다.'),
+                    el('p.small', '일반 질문(공개 자료만)은 로컬·브라우저 내장·외부 API·CLI 중에서 고를 수 있습니다. CLI 모델 이름도 여기서 고릅니다.'),
                     el('button.btn.small', { type: 'button', onclick: openAI }, 'AI 선택·일반 질문 열기'))),
         ],
     },
