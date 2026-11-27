@@ -21,6 +21,7 @@ from desk.config import APP_DIR, Config
 from desk.db import DB
 from desk.bell import LessonBell
 from desk.scheduler import Scheduler
+from desk.power import KeepAwake
 from desk.server import App, apply_update, serve
 from desk.telegram import Bot
 from desk.watcher import Watcher
@@ -148,6 +149,8 @@ def run(args, config, db):
     bell.start()
     app.gcal.start()   # 선생님 구글 캘린더 가져오기·올리기 (설정에서 켠 경우만 실제로 보냄)
     cloud.start()      # 드라이브: 5분마다 잠금 표시·10분마다 바뀐 것 올림 (켠 경우만)
+    awake = KeepAwake(config)   # 앱이 켜진 동안 PC 가 저절로 절전에 들어가지 않게 (설정 keep_awake, 0.6.25)
+    awake.start()
     db.log("업무 데스크 시작")
     try:
         httpd.serve_forever()
@@ -155,6 +158,7 @@ def run(args, config, db):
         pass
     finally:
         app.item_ai.stop()
+        awake.stop()
         scheduler.stop()
         watcher.stop()
         bot.stop()

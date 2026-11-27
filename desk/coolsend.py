@@ -13,7 +13,8 @@
 - 클릭하기 전에 그 자리가 정말 그 단추·그 사람인지, 맨 앞 창이 쿨메신저인지 확인. 어긋나면 멈춤
 - 먼저 열려 있던 쪽지 창은 [닫기]로 닫고 시작 (선생님 결정, 그 창의 글은 보내지 않고 버려짐)
 - 중간에 멈추면 이번에 쓰던 쪽지 창은 열어 둠(보내지 않음) — 선생님이 PC 에서 마저 보내거나 닫음
-- 화면이 잠겨 있으면 시작하지 않음 (윈도우가 잠금 화면에서 클릭·입력을 막음)
+- 화면이 잠겨 있으면 시작하지 않음 (윈도우가 잠금 화면에서 클릭·입력을 막음) → Locked.
+  텔레그램은 이 쪽지를 '보낼 대기'로 두었다가 잠금이 풀리고 선생님 손이 잠깐 쉴 때 보냄 (0.6.25, ready())
 - 한 번에 한 통만 (다른 보내기가 진행 중이면 기다리지 않고 거절)
 - 기록(db.log)에는 받는 사람 이름·내용을 남기지 않음
 """
@@ -55,6 +56,17 @@ class SendError(Exception):
         self.left_open = left_open
 
 
+class Locked(SendError):
+    """PC 화면이 잠겨 있어 시작하지 않음 (아무것도 누르지 않음). 잠금이 풀리면 다시 하면 됨."""
+
+
+class Busy(SendError):
+    """다른 쪽지 보내기·첨부 받기가 쿨메신저 창을 쓰는 중 (아무것도 누르지 않음)."""
+
+
+IDLE_BEFORE_SEND = 8.0   # 대기 쪽지: 잠금을 푼 뒤 마우스·키보드를 이만큼(초) 안 쓸 때 보냄 (쓰는 중에 창을 뺏지 않게)
+
+
 def label_name(label):
     """조직도 항목 글에서 이름만 ('홍길동 1234/과학' → '홍길동')."""
     m = P_LABEL_NAME.match((label or "").strip())
@@ -81,10 +93,18 @@ def reply_title(title):
 class WinUI:
     """실제 윈도우 조작. 시험에서는 같은 메서드를 가진 가짜로 바꿔 끼움."""
 
-    def require(self):
+    def require(self, allow_locked=False):
+        """allow_locked: 조직도 읽기처럼 누르지 않는 일은 잠금 중에도 함 (창 글 읽기는 잠금과 관계없음)."""
         winui.need_windows()
-        if winui.screen_locked():
-            raise SendError("PC 화면이 잠겨 있어 보낼 수 없습니다. 잠금을 풀면 다시 보내 주세요.")
+        if not allow_locked and winui.screen_locked():
+            raise Locked("PC 화면이 잠겨 있어 보낼 수 없습니다. 잠금을 풀면 다시 보내 주세요.")
+
+    def is_locked(self):
+        return winui.IS_WINDOWS and winui.screen_locked()
+
+    def ready(self):
+        """대기 쪽지를 보내도 될 때: 잠금이 풀렸고 선생님이 잠깐(IDLE_BEFORE_SEND) 마우스·키보드를 쓰지 않음."""
+        return not self.is_locked() and winui.idle_seconds() >= IDLE_BEFORE_SEND
 
     def main_window(self):
         for h in winui.top_windows(EXE, visible_only=False):   # 트레이로 숨긴 메인 창도
@@ -292,7 +312,7 @@ def fetch_attachments(title, received_at, sender="", ui=None, log=None):
     """받은 쿨메신저 쪽지의 첨부를 쿨메신저가 받게 하고(모든파일 저장) 새로 생긴 파일 [Path] 를 돌려줌."""
     ui = ui or WinAttachUI()
     if not _lock.acquire(blocking=False):
-        raise SendError("쿨메신저 창을 다른 일로 쓰는 중입니다. 끝나면 다시 보내 주세요.")
+        raise Busy("쿨메신저 창을 다른 일로 쓰는 중입니다. 끝나면 다시 보내 주세요.")
     try:
         ui.require()
         folder = ui.download_dir()
@@ -346,7 +366,7 @@ def fetch_attachments(title, received_at, sender="", ui=None, log=None):
 def find_people(name, ui=None):
     """조직도에서 이름이 같은 사람들 [{'label', 'dept', 'name'}] (부서로 구분)."""
     ui = ui or WinUI()
-    ui.require()
+    ui.require(allow_locked=True)   # 잠금 중에도 받는 사람은 찾아 둠 (보내기는 잠금이 풀린 뒤, 0.6.25)
     want = clean_name(name)
     if not want:
         return []
@@ -365,7 +385,7 @@ def send(person, title, body, ui=None, log=None):
     if len(body) > BODY_LIMIT:
         raise SendError(f"내용이 너무 깁니다 ({BODY_LIMIT:,}자까지).")
     if not _lock.acquire(blocking=False):
-        raise SendError("다른 쪽지를 보내는 중입니다. 끝나면 다시 보내 주세요.")
+        raise Busy("다른 쪽지를 보내는 중입니다. 끝나면 다시 보내 주세요.")
     try:
         ui.require()
         main = ui.main_window()
