@@ -84,6 +84,53 @@ class CliTests(unittest.TestCase):
             self.env.config.update({"ai_codex_cli_model": "bad name!"})
 
 
+class CliWorkTests(unittest.TestCase):
+    """업무자료 AI 를 CLI 로 (선생님 허용 2026-11-27): 이름은 가려서 보냄, 기본은 LM Studio 그대로."""
+
+    def setUp(self):
+        self.env = Env()
+        self.env.db.replace_students([{"number": 7, "name": "최별빛"}])
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_default_stays_local(self):
+        self.env.config.values["ai_model"] = "gemma"
+        self.assertEqual(ai.pick_model(self.env.config), "gemma")
+
+    def test_cli_work_masks_names_and_skips_lm_studio(self):
+        self.env.config.update({"ai_work_provider": "claude_cli", "ai_claude_cli_model": "opus"})
+        model = ai.pick_model(self.env.config)
+        self.assertEqual(model, "cli:claude_cli:opus")
+        self.assertEqual(ai.model_label(model), "Claude Code CLI · opus")
+        with patch("desk.cliai.find", return_value="claude"), \
+                patch("desk.cliai.subprocess.run", return_value=done("요약")) as run, \
+                patch("desk.ai._call") as lm:
+            self.assertEqual(ai.ask(self.env.config["ai_base"], model, "최별빛 학생 결석 안내", db=self.env.db), "요약")
+            lm.assert_not_called()
+        sent = run.call_args.kwargs["input"]
+        self.assertNotIn("최별빛", sent)
+        self.assertIn("결석 안내", sent)
+        self.assertIn("--model", run.call_args.args[0])
+
+    def test_item_summary_goes_through_cli(self):
+        self.env.config.update({"ai_work_provider": "gemini_cli"})
+        it = {"source": "cool", "title": "회의 안내", "id": 1}
+        with patch("desk.cliai.find", return_value="gemini"), \
+                patch("desk.cliai.subprocess.run", return_value=done("- 11/30(월) · 회의")) as run:
+            text = ai.summarize_item("http://127.0.0.1:1234/v1", ai.pick_model(self.env.config), it,
+                                     "최별빛 관련 회의", ["최별빛"], db=self.env.db)
+        self.assertTrue(text)
+        self.assertEqual(run.call_args.args[0], ["gemini"])
+        self.assertNotIn("최별빛", run.call_args.kwargs["input"])
+
+    def test_images_refused_and_bad_value_rejected(self):
+        with self.assertRaisesRegex(ai.AIError, "사진"):
+            ai.ask("", "cli:claude_cli:", "글", images=[b"x"])
+        with self.assertRaises(ValueError):
+            self.env.config.update({"ai_work_provider": "openai"})
+
+
 class CliTelegramTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()

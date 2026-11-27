@@ -22,7 +22,7 @@
   - 구글 캘린더로 일정 보내기(기본 끔, `desk/gcal.py`).
   - 구글 드라이브 암호화 동기화·백업(기본 끔, `drive.appdata` 만, 복구 키는 이 PC config.json 에만, `desk/cloudsync.py`).
   - 자세한 범위는 `docs/DESIGN.md` 의 해당 항목.
-- **AI**: 업무자료를 쓰는 AI 는 **이 PC 의 LM Studio(127.0.0.1)로만**, 학생 이름은 가려서 보내고 답에서도 가린다. 공문·쪽지·학생 정보는 인터넷 AI 로 보내지 않는다. 일반 질문(공개 자료만, 매번 동의)만 외부 API 선택 가능. 명령 알아듣기·날짜 계산은 규칙 기반(`desk/assist.py`).
+- **AI**: 업무자료를 쓰는 AI 는 기본 **이 PC 의 LM Studio(127.0.0.1)**. 선생님이 설정에서 '업무자료 AI' 를 CLI(Claude Code·Gemini·Codex, 선생님 본인 로그인)로 고르면 그리로 보낼 수 있다(2026-11-27 선생님 허용). 어느 쪽이든 학생 이름은 가려서 보내고 답에서도 가린다. API 키 방식 외부 AI 로는 업무자료를 보내지 않는다. 일반 질문(공개 자료만, 매번 동의)만 외부 API 선택 가능. 명령 알아듣기·날짜 계산은 규칙 기반(`desk/assist.py`).
 - 서버는 `127.0.0.1` 전용, 토큰·Host·Origin 검사.
 - 빌드 도구 없음. Python 은 표준 라이브러리만(선택: PDF `pypdf`, 드라이브 동기화 `cryptography` — 없으면 그 기능만 꺼짐). 화면 외부 라이브러리는 CDN(jsdelivr)만.
 - `.bat` 은 CP949·CRLF, `if ( … )` 안 echo 에 괄호 금지(`tests/test_bats.py`).

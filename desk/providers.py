@@ -143,7 +143,7 @@ def ask(db, config, question, *, provider=None, confirmed=False):
         raise ai.AIError("공개 자료·일반 질문이며 외부 전송과 비용 발생에 동의하는지 먼저 확인하세요.")
     check_public(db, config, question)
     if provider in CLI:
-        return cliai.ask(provider, config[f"ai_{provider}_model"], question, SYSTEM)
+        return cliai.ask(provider, config[f"ai_{provider}_model"], "질문:\n" + question, SYSTEM)
     key, model = config[f"ai_{provider}_key"], config[f"ai_{provider}_model"]
     if not key or not model:
         raise ai.AIError("AI 질문 화면에서 해당 서비스의 API 키와 모델 이름을 저장하세요.")

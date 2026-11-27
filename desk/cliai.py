@@ -92,7 +92,7 @@ def models(provider):
 def ask(provider, model, question, system, timeout=TIMEOUT):
     path = need(provider)
     cmd = command(provider, path, model)
-    prompt = f"{system}\n\n질문:\n{question}\n"
+    prompt = f"{system}\n\n{question}\n"
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     label = TOOLS[provider][1]
@@ -102,7 +102,7 @@ def ask(provider, model, question, system, timeout=TIMEOUT):
                 r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
                                    errors="replace", timeout=timeout, cwd=cwd, env=env, creationflags=flags)
             except subprocess.TimeoutExpired:
-                raise ai.AIError(f"{label} 의 답이 {timeout // 60}분 안에 오지 않아 멈췄습니다.") from None
+                raise ai.AIError(f"{label} 의 답이 {max(1, timeout // 60)}분 안에 오지 않아 멈췄습니다.") from None
             except OSError:
                 raise ai.AIError(f"{label} 를 실행하지 못했습니다. 설치가 끝났는지 확인하세요.") from None
     out = ANSI.sub("", (r.stdout or "")[:MAX_OUTPUT]).strip()
