@@ -1492,9 +1492,11 @@ class Bot:
                                             "expires": time.monotonic() + DIALOG_TTL}
         while len(self.choice_requests) > 10:
             del self.choice_requests[next(iter(self.choice_requests))]
-        self.send(f"일반 질문을 {providers.PROVIDERS[provider]} API로 전송할까요?\n"
+        cost = ("이 PC 에 로그인한 CLI 의 구독 이용 한도·보관 정책이" if provider in providers.CLI
+                else "API 요금·보관 정책이")
+        self.send(f"일반 질문을 {providers.label(provider)}로 전송할까요?\n"
                   "수신함 자료는 붙이지 않습니다. 학생 정보·비공개 자료를 입력하지 마세요.\n"
-                  "입력 내용이 외부 회사로 전송되고 API 요금·보관 정책이 적용됩니다. 보조 검사는 모든 민감정보를 찾지 못합니다.",
+                  f"입력 내용이 외부 회사로 전송되고 {cost} 적용됩니다. 보조 검사는 모든 민감정보를 찾지 못합니다.",
                   cid, [[{"text": "공개 질문 · 전송 동의", "callback_data": f"general:{request_id}:send"},
                          {"text": "취소", "callback_data": f"general:{request_id}:cancel"}]])
 
@@ -2655,16 +2657,20 @@ class Bot:
         detail = self.config["telegram_detail"]
         if cmd == "status":
             try:
-                names = ai.models(self.config["ai_base"]) if self.config["ai_enabled"] else []
-                ai_status = ("AI 연결됨 · 대화용 모델 있음" if names else
-                             "AI 켜짐 · 모델을 불러오세요" if self.config["ai_enabled"] else "AI 꺼짐 · 자료 검색은 가능")
+                if ai.work_provider(self.config) != "local":   # 0.6.24 업무자료 AI 를 CLI 로
+                    ai_status = (ai.model_label(ai.pick_model(self.config)) if self.config["ai_enabled"]
+                                 else "AI 꺼짐 · 자료 검색은 가능")
+                else:
+                    names = ai.models(self.config["ai_base"]) if self.config["ai_enabled"] else []
+                    ai_status = ("AI 연결됨 · 대화용 모델 있음" if names else
+                                 "AI 켜짐 · 모델을 불러오세요" if self.config["ai_enabled"] else "AI 꺼짐 · 자료 검색은 가능")
             except ai.AIError as e:
                 ai_status = f"AI 연결 오류: {e}"
             return (f"⚙ 업무 데스크 상태 · 버전 {VERSION}\n"
                     + f"텔레그램: {self.status}" + (f" · 마지막 확인 {self.last_poll}" if self.last_poll else "")
                     + (f" · 마지막 처리 {self.last_handled}" if self.last_handled else "")
                     + (f"\n최근 오류: {self.last_error}" if self.last_error else "") + "\n"
-                    + "업무자료 요약·검색 (로컬): " + ai_status
+                    + ("업무자료 요약·검색 (로컬): " if ai.work_provider(self.config) == "local" else "업무자료 요약·검색 (CLI): ") + ai_status
                     + "\n일반 질문: " + providers.PROVIDERS.get(self.config["ai_provider"], "설정 확인 필요")
                     + (" · 텔레그램 실행 불가" if self.config["ai_provider"] == "browser" else " · /ask 질문")
                     + ("\nAI가 앞 질문에 답하는 중입니다." if self.asking else "")

@@ -172,7 +172,29 @@ def new_items(db, result, limit=MAX_NEW_ITEMS):
         (since, limit))
 
 
+CLI_PREFIX = "cli:"   # 0.6.24 업무자료 AI 를 CLI 로: 모델 자리에 'cli:claude_cli:sonnet' 처럼 넣어 ask() 가 CLI 로 보냄
+
+
+def work_provider(config):
+    try:
+        return config["ai_work_provider"] or "local"
+    except KeyError:
+        return "local"
+
+
+def model_label(model):
+    """'cli:claude_cli:sonnet' → 'Claude Code CLI · sonnet' (LM Studio 모델은 그대로)."""
+    if not (model or "").startswith(CLI_PREFIX):
+        return model
+    from . import cliai
+    _, provider, name = model.split(":", 2)
+    return cliai.TOOLS.get(provider, (provider, provider))[1] + " · " + (name or "기본 모델")
+
+
 def pick_model(config):
+    provider = work_provider(config)
+    if provider != "local":
+        return f"{CLI_PREFIX}{provider}:{config[f'ai_{provider}_model']}"
     model = config["ai_model"] or (models(config["ai_base"]) or [None])[0]
     if not model:
         raise AIError("LM Studio 에 불러온 모델이 없습니다. LM Studio 에서 모델을 하나 불러오세요.")
@@ -341,11 +363,26 @@ def ask(base, model, prompt, timeout=TIMEOUT, system=SYSTEM, max_tokens=2500, db
     """LM Studio 에 요약(또는 텔레그램 질문의 답)을 부탁하고 글만 돌려줌.
     images: 함께 보낼 사진 바이트(jpg·png) — 사진을 읽는 모델(예: Gemma 4)만 (0.6.11 텔레그램 참고자료 사진).
     0.6.15 사용 기록: 모델·글자 수·걸린 시간·부른 곳만 남김 (보낸 글·답은 남기지 않음)."""
+    if model.startswith(CLI_PREFIX):
+        return _ask_cli(model, prompt, timeout, system, db, images)
     with applog.timed("ai", "LM Studio 요청", model=model, chars_in=len(prompt), images=len(images) or None,
                       timeout=timeout, **{"from": applog.caller({"ask", "_ask_lm", "<lambda>"})}) as extra:
         text = _ask_lm(base, model, prompt, timeout, system, max_tokens, db, images)
         extra["chars_out"] = len(text)
         return text
+
+
+def _ask_cli(model, prompt, timeout, system, db, images):
+    """0.6.24 업무자료 AI 를 CLI 로. 부르는 곳에서 이미 이름을 가리지만, 한 번 더 가려서 보냄."""
+    from . import cliai
+    if images:
+        raise AIError("사진 읽기는 이 PC 의 LM Studio(사진을 읽는 모델)로만 됩니다. 설정 → AI 의 '업무자료 AI' 를 LM Studio 로 바꾸세요.")
+    _, provider, name = model.split(":", 2)
+    if provider not in cliai.TOOLS:
+        raise AIError("업무자료 AI 사용 방식이 잘못되었습니다. 설정 → AI 에서 다시 고르세요.")
+    if db is not None:
+        prompt = mask_names(prompt, [s["name"] for s in db.students()])
+    return cliai.ask(provider, name, prompt, system, timeout=timeout)
 
 
 def _ask_lm(base, model, prompt, timeout, system, max_tokens, db, images):
