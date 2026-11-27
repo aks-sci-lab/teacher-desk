@@ -1,6 +1,7 @@
 """쿨메신저 쪽지 보내기 (0.6.5): 창 조작은 가짜(FakeUI)로 바꿔 순서·안전 확인만 시험.
 실제 쿨메신저 창에서 되는지는 학교 PC 에서만 알 수 있음 (조직도 두 번 클릭·[보내기] 마우스 클릭 시험은 2026-11-17 확인)."""
 
+from datetime import datetime
 import tempfile
 import unittest
 from pathlib import Path
@@ -174,10 +175,62 @@ class CoolAttachTests(unittest.TestCase):
         files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui)
         self.assertEqual([p.name for p in files], ["안내문.pdf"])
         self.assertEqual(ui.picked, [1])
-        ui.save_all = lambda m: (Path(self.tmp.name) / "안내문(1).pdf").write_bytes(b"%PDF again") or True
-        files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui)
-        self.assertEqual([p.name for p in files], ["안내문(1).pdf"])   # 같은 이름이 있어도 새로 받음 (번호 붙은 새 파일)
-        self.assertEqual(ui.picked, [1, 1])
+        self.assertEqual(ui.picked, [1])
+
+    def test_same_name_saved_with_today(self):
+        """같은 이름이 이미 있으면 예전 파일은 그대로, 새 파일은 '이름_오늘날짜' (선생님 요청 2026-11-23)."""
+        folder = Path(self.tmp.name)
+        day = datetime(2026, 11, 23)
+        (folder / "안내문.pdf").write_bytes(b"old")
+
+        def save_all(m):   # 쿨메신저는 원래 이름으로 저장. 그 이름에 예전 파일이 있으면 안 됨 (덮어쓰기·질문 창)
+            target = folder / "안내문.pdf"
+            if target.exists():
+                raise AssertionError("예전 파일이 비켜 있지 않음")
+            target.write_bytes(b"%PDF new")
+            return True
+        ui = FakeAttachUI(self.tmp.name, self.ROWS)
+        ui.save_all = save_all
+        renamed = {}
+        files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui,
+                                           names=["안내문.pdf"], today=day, renamed=renamed)
+        self.assertEqual([p.name for p in files], ["안내문_2026-11-23.pdf"])
+        self.assertEqual(files[0].read_bytes(), b"%PDF new")
+        self.assertEqual((folder / "안내문.pdf").read_bytes(), b"old")   # 예전 파일은 그대로
+        self.assertEqual({a.name: b.name for a, b in renamed.items()}, {"안내문.pdf": "안내문_2026-11-23.pdf"})
+        # 한 번 더 받으면 번호를 덧붙임
+        files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui,
+                                           names=["안내문.pdf"], today=day)
+        self.assertEqual([p.name for p in files], ["안내문_2026-11-23_2.pdf"])
+        self.assertEqual(sorted(p.name for p in folder.iterdir()),
+                         ["안내문.pdf", "안내문_2026-11-23.pdf", "안내문_2026-11-23_2.pdf"])   # 비켜 둔 임시 파일은 남지 않음
+
+    def test_same_name_restored_when_save_fails(self):
+        folder = Path(self.tmp.name)
+        (folder / "안내문.pdf").write_bytes(b"old")
+        ui = FakeAttachUI(self.tmp.name, self.ROWS)
+        ui.save_all = lambda m: False
+        with self.assertRaises(coolsend.SendError):
+            coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui, names=["안내문.pdf"])
+        self.assertEqual([p.name for p in folder.iterdir()], ["안내문.pdf"])
+        self.assertEqual((folder / "안내문.pdf").read_bytes(), b"old")
+
+    def test_first_attachment_name_from_list_row(self):
+        """수신함 글에 첨부 이름이 없어도 메시지관리함 목록의 첫 첨부 이름으로 같은 이름을 찾음."""
+        folder = Path(self.tmp.name)
+        (folder / "안내문.pdf").write_bytes(b"old")
+        ui = FakeAttachUI(self.tmp.name, self.ROWS)
+        files = coolsend.fetch_attachments("협의회 안내 자료입니다", "2026-11-17 13:45:00", "이영희", ui=ui,
+                                           today=datetime(2026, 11, 23))
+        self.assertEqual([p.name for p in files], ["안내문_2026-11-23.pdf"])
+        self.assertEqual((folder / "안내문.pdf").read_bytes(), b"old")
+
+    def test_dated_name(self):
+        folder = Path(self.tmp.name)
+        day = datetime(2026, 11, 23)
+        self.assertEqual(coolsend.dated_name(folder, "계획.hwp", day).name, "계획_2026-11-23.hwp")
+        (folder / "계획_2026-11-23.hwp").write_bytes(b"x")
+        self.assertEqual(coolsend.dated_name(folder, "계획.hwp", day).name, "계획_2026-11-23_2.hwp")
 
     def test_no_attachment_or_not_found(self):
         ui = FakeAttachUI(self.tmp.name, self.ROWS)
@@ -263,6 +316,21 @@ class TelegramCoolSendTests(unittest.TestCase):
         self.assertEqual(self.bot.cool_attach_ui.picked, [1])
         self.bot.handle_update(msg("파일 1"))   # '파일 n' 은 그대로, 첨부 안내만
         self.assertIn("'첨부 1'", self.fake.sent[-1]["text"])
+
+    def test_attach_same_name_tells_new_name(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        coolsend.SETTLE = 0.5
+        (Path(tmp.name) / "안내문.pdf").write_bytes(b"old")
+        self.bot.cool_attach_ui = FakeAttachUI(tmp.name, CoolAttachTests.ROWS)
+        item = add_text_item(self.env.db, "cool", "자료 첨부합니다\n(첨부 파일: 안내문.pdf)\n\n(보낸 사람: 이영희)",
+                             title="협의회 안내 자료입니다", received_at="2026-11-17 13:45:00")["id"]
+        self.env.db.set_meta("telegram_refs", [item])
+        self.bot.handle_update(msg("첨부 1"))
+        text = self.fake.sent[-1]["text"]
+        self.assertIn("첨부 1개를 보냈습니다", text)
+        self.assertRegex(text, r"안내문\.pdf → 안내문_\d{4}-\d{2}-\d{2}\.pdf")
+        self.assertEqual((Path(tmp.name) / "안내문.pdf").read_bytes(), b"old")
 
     def test_not_found_and_failure_message(self):
         self.bot.handle_update(msg("쪽지 박없음 안녕하세요"))

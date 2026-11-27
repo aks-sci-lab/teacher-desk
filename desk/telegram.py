@@ -2823,9 +2823,11 @@ class Bot:
         return "받는 중"
 
     def _cool_attach(self, cid, it, sender, pdf=False):
+        renamed = {}
         try:
             files = coolsend.fetch_attachments(it["title"], it["received_at"], sender, ui=self.cool_attach_ui,
-                                               log=self.db.log)
+                                               log=self.db.log, names=coolmsg.files_in_text(it["body"]),
+                                               renamed=renamed)
         except coolsend.SendError as e:
             return self.reply(cid, f"⚠ 첨부를 받지 못했습니다: {e}")
         except Exception as e:
@@ -2850,6 +2852,9 @@ class Bot:
             except OSError:
                 big.append(p.name)
         text = f"📎 첨부 {len(sent)}개를 보냈습니다." + (f" {len(big)}개는 너무 크거나 읽지 못해 PC 의 쿨메신저 저장 폴더에만 있습니다." if big else "")
+        if renamed:   # 저장 폴더에 같은 이름이 있어 새 파일에 오늘 날짜를 붙임 (선생님 요청 2026-11-23)
+            text += "\n💾 PC 에 같은 이름의 파일이 있어 새로 받은 파일은 다른 이름으로 저장했습니다: " + ", ".join(
+                f"{a.name} → {b.name}" for a, b in renamed.items())
         if notes:
             text += "\n" + "\n".join(dict.fromkeys(notes))
         return self.reply(cid, text)
@@ -3085,7 +3090,8 @@ class Bot:
         for attempt in range(4):   # 다른 쿨메신저 창 조작(답장·첨부 받기)이 끝날 때까지 조금 기다림
             try:
                 files = coolsend.fetch_attachments(it["title"], it["received_at"], m.group(1) if m else "",
-                                                   ui=self.cool_attach_ui, log=self.db.log)
+                                                   ui=self.cool_attach_ui, log=self.db.log,
+                                                   names=coolmsg.files_in_text(it["body"]))
                 break
             except coolsend.SendError as e:
                 if "다른 일로 쓰는 중" in str(e) and attempt < 3 and not self.stop_event.wait(0.1 if self.sync else 15):
