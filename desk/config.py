@@ -51,6 +51,9 @@ DEFAULTS = {
     "ai_openai_model": "",
     "ai_anthropic_model": "",
     "ai_gemini_model": "",
+    "ai_claude_cli_model": "",    # 0.6.24 CLI 모델 (비우면 그 CLI 의 기본 모델)
+    "ai_gemini_cli_model": "",
+    "ai_codex_cli_model": "",
     "ai_openai_key": "",
     "ai_anthropic_key": "",
     "ai_gemini_key": "",
@@ -106,6 +109,7 @@ EDITABLE_KEYS = {
     "pass_page_url", "telegram_token", "telegram_detail", "telegram_photos", "telegram_cool_photo_fetch", "telegram_cool_text", "telegram_cool_summary", "telegram_calllog", "telegram_mask_names", "telegram_docwrite", "telegram_cool_send", "layout", "neis_key", "neis_school",
     "watch_enabled", "auto_update", "app_window", "ai_enabled", "ai_auto_item", "ai_auto_class_only", "ai_base", "ai_model", "ai_input_size",
     "ai_provider", "ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
+    "ai_claude_cli_model", "ai_gemini_cli_model", "ai_codex_cli_model",
     "ai_openai_key", "ai_anthropic_key", "ai_gemini_key", "setup_wizard",
     "gcal_import", "gcal_ical_url", "gcal_push", "gcal_push_url", "gcal_push_types", "gcal_mask",
     "gdrive_enabled", "gdrive_client_id", "gdrive_client_secret", "gdrive_pc_name", "usage_log",
@@ -188,10 +192,11 @@ class Config:
                     raise ValueError(str(e))
                 clean[k] = v.strip()
             elif k == "ai_provider":
-                if v not in ("local", "browser", "openai", "anthropic", "gemini"):
+                if v not in ("local", "browser", "openai", "anthropic", "gemini", "claude_cli", "gemini_cli", "codex_cli"):
                     raise ValueError("AI 사용 방식이 잘못되었습니다")
                 clean[k] = v
-            elif k in ("ai_openai_model", "ai_anthropic_model", "ai_gemini_model"):
+            elif k in ("ai_openai_model", "ai_anthropic_model", "ai_gemini_model",
+                       "ai_claude_cli_model", "ai_gemini_cli_model", "ai_codex_cli_model"):
                 if not isinstance(v, str) or (v.strip() and not re.fullmatch(r"[A-Za-z0-9._:-]{1,120}", v.strip())):
                     raise ValueError("API 모델 이름은 영문·숫자·점·밑줄·하이픈·콜론 120자 이내로 입력하세요")
                 clean[k] = v.strip()

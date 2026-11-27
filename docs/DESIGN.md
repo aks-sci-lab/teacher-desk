@@ -141,6 +141,14 @@
 - 로컬(LM Studio): 설정 → AI 의 'AI 모델' 에 고르기 칸 + [목록 불러오기] + 직접 입력 칸. 목록은 `POST /api/ai/models {provider:"local"}` → `ai.models()`(LM Studio `/v1/models`, 이 PC 주소만, 임베딩 모델 뺌). AI 요약이 켜져 있으면 화면을 열 때 바로 불러옴. 고르면 `ai_model` 칸에 넣어 바로 저장, '자동' 은 빈 값(불러온 첫 모델, 예전 그대로). 목록에 없는 이름은 '직접 입력한 이름' 으로 보임. 모델은 하나만(요약·AI 검색·문서 작성·텔레그램 질문 공통) — 기능별로 다르게 고르기는 하지 않음.
 - 외부 API(일반 질문 전용, AI 질문 화면): [목록 불러오기]를 **누를 때만** 그 회사의 모델 목록 주소(OpenAI `/v1/models`, Anthropic `/v1/models`, Gemini `/v1beta/models`)에 API 키로 GET (`providers.list_models`). 질문·학교 자료는 보내지 않음. 입력만 하고 저장 안 한 키도 쓸 수 있음(키는 이 PC 서버로만 가고 저장되지 않음). 글 대화용만 남김(OpenAI 는 gpt-/o숫자/chatgpt- 중 음성·그림·검색·임베딩 등 제외, Gemini 는 generateContent 지원만). 고른 뒤 예전처럼 [선택·API 설정 저장]. 목록을 못 불러오면 안내하고 직접 입력.
 
+## CLI 모델로 일반 질문 (0.6.24, 선생님 요청 2026-11-27 "AI 모델은 CLI 모델로 선택할 수 있도록")
+
+- AI 질문 화면 'AI 사용 방식' 에 CLI 세 가지: Claude Code(`claude -p --output-format text [--model]`), Gemini CLI(`gemini [-m]`), Codex CLI(`codex exec --skip-git-repo-check --sandbox read-only --color never [-m] -`). API 키 없이 이 PC 에 설치·로그인한 CLI(구독)를 씀. `desk/cliai.py`.
+- CLI 도 질문이 그 회사로 나가므로 **외부 API 와 똑같이**: 일반 질문만, 매번 동의, `check_public`(명단 이름·연락처·받은 자료 겹침). 업무자료 AI(쪽지·공문 요약, AI 검색, 문서 작성)는 이 선택과 관계없이 LM Studio 그대로(AGENTS.md 규칙).
+- 질문은 표준 입력으로만, 명령줄에는 고정 옵션 + 정규식 검사한 모델 이름만. 빈 임시 폴더에서 실행(업무 데스크 폴더를 못 읽게), 창 안 띄움, 5분 제한, 사용 기록엔 CLI 이름·모델·시간만.
+- 모델: `ai_claude_cli_model` 등, 비우면 CLI 기본 모델. CLI 에는 목록 명령이 없어 [목록 불러오기]는 설치 여부만 보고 자주 쓰는 이름(PRESETS)을 보여 줌, 없으면 직접 입력.
+- 찾기: PATH(`shutil.which`) → 윈도우 흔한 자리(`%APPDATA%\npm\*.cmd`, `~\.local\bin`). 텔레그램 `/ask` 도 같은 길(동의 단추 문구는 '구독 이용 한도').
+
 ## 쿨메신저 쪽지 AI 요약 → 텔레그램 (0.6.8, 선생님 요청 2026-11-17 "메신저도 AI로 요약해서 텔레그램에 표시")
 - 형식: 선생님이 정한 다섯 칸(보낸 사람·업무 내용·마감 기한·첨부파일·긴급 여부). 쿨메신저 쪽지의 항목별 AI 요약 자체를 이 형식으로 바꿈(`ai.COOL_INSTRUCTION`) — 수신함 목록의 한 줄은 '업무 내용'. 공문 요약 형식은 그대로.
 - 보낸 사람은 쪽지 끝 '(보낸 사람: …)' 이 있으면 그것(AI 가 옮겨 쓰다 틀리지 않게). 첨부파일은 쿨메신저 `.udb` 에 파일 이름이 없어 쪽지 글에 적힌 이름만(AI 가 '없음' 이라도 본문의 `…hwp`·`…pdf` 등을 찾아 씀). 실제 파일은 `첨부 n`. 긴급 여부는 '긴급'/'보통' 두 가지.

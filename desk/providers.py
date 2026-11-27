@@ -6,11 +6,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import ai, applog
+from . import ai, applog, cliai
 
 PROVIDERS = {"local": "로컬", "browser": "브라우저 내장", "openai": "OpenAI",
-             "anthropic": "Claude", "gemini": "Gemini"}
-EXTERNAL = {"openai", "anthropic", "gemini"}
+             "anthropic": "Claude", "gemini": "Gemini",
+             "claude_cli": "Claude Code CLI", "gemini_cli": "Gemini CLI", "codex_cli": "Codex CLI"}
+EXTERNAL = {"openai", "anthropic", "gemini"}   # API 키로 부르는 외부 AI
+CLI = set(cliai.TOOLS)                         # 0.6.24 이 PC 에 설치·로그인한 명령줄 AI (이것도 외부로 나감)
+
+
+def label(provider):
+    """'OpenAI API' / 'Claude Code CLI' 처럼 화면·텔레그램에 쓸 이름."""
+    name = PROVIDERS.get(provider, provider)
+    return name + " API" if provider in EXTERNAL else name
 SYSTEM = "일반 지식 질문에 답하는 도우미입니다. 자료에 없는 학교 내부 사정은 추측하지 마세요. 한국어로 답하세요."
 MAX_QUESTION = 4000
 MAX_RESPONSE = 1024 * 1024
@@ -85,9 +93,12 @@ def _key_ok(key):
 
 
 def list_models(config, provider, key=None):
-    """외부 API 에서 쓸 수 있는 모델 이름 목록. 질문·학교 자료는 보내지 않고 API 키로 목록만 읽음."""
+    """외부 API 에서 쓸 수 있는 모델 이름 목록. 질문·학교 자료는 보내지 않고 API 키로 목록만 읽음.
+    CLI 는 설치돼 있는지만 보고 자주 쓰는 모델 이름을 돌려줌 (CLI 에는 목록 명령이 없음)."""
+    if provider in CLI:
+        return cliai.models(provider)
     if provider not in EXTERNAL:
-        raise ai.AIError("모델 목록은 외부 API(OpenAI·Claude·Gemini)만 불러올 수 있습니다.")
+        raise ai.AIError("모델 목록은 외부 API(OpenAI·Claude·Gemini)와 CLI 만 불러올 수 있습니다.")
     key = (key or "").strip() or config[f"ai_{provider}_key"]
     if not key:
         raise ai.AIError("API 키를 먼저 입력하거나 저장하세요.")
@@ -131,6 +142,8 @@ def ask(db, config, question, *, provider=None, confirmed=False):
     if confirmed is not True:
         raise ai.AIError("공개 자료·일반 질문이며 외부 전송과 비용 발생에 동의하는지 먼저 확인하세요.")
     check_public(db, config, question)
+    if provider in CLI:
+        return cliai.ask(provider, config[f"ai_{provider}_model"], question, SYSTEM)
     key, model = config[f"ai_{provider}_key"], config[f"ai_{provider}_model"]
     if not key or not model:
         raise ai.AIError("AI 질문 화면에서 해당 서비스의 API 키와 모델 이름을 저장하세요.")

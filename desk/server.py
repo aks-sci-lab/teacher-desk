@@ -1914,7 +1914,7 @@ def ai_models(app, q, body):
             return {"models": ai.models(base), "current": app.config["ai_model"]}
         key = text_field(body.get("key"), "API 키", 512)
         return {"models": providers.list_models(app.config, provider, key),
-                "current": app.config[f"ai_{provider}_model"] if provider in providers.EXTERNAL else ""}
+                "current": app.config[f"ai_{provider}_model"] if provider in providers.EXTERNAL | providers.CLI else ""}
     except ai.AIError as e:
         raise ApiError(400, str(e)) from e
 
